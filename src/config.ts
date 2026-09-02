@@ -3,11 +3,15 @@ import {
   lstat,
   mkdir,
   readFile,
+  rename,
+  rm,
   rmdir,
   stat,
+  unlink,
   writeFile,
 } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 import { parse, stringify } from 'yaml';
 
@@ -16,8 +20,10 @@ export const STATE_DIRECTORY = '.autocode';
 const IGNORE_ENTRY = '.autocode/';
 const MAX_CONFIG_BYTES = 64 * 1024;
 const GITIGNORE_LOCK = '.autocode/init.lock';
-const LOCK_RETRY_COUNT = 200;
+const LOCK_OWNER_FILE = 'owner.json';
+const LOCK_RETRY_COUNT = 240;
 const LOCK_RETRY_DELAY_MS = 25;
+const OWNERLESS_LOCK_STALE_MS = 5_000;
 const CONFIG_KEYS = new Set(['version', 'stateDirectory', 'telemetry']);
 
 export interface AutoCodeConfig {
@@ -110,7 +116,7 @@ export async function initializeProject(
 
   await mkdir(runsDirectory, { recursive: true });
   await withInitializationLock(stateDirectory, () =>
-    ensureGitignore(gitignorePath),
+    ensureGitignore(projectDirectory, gitignorePath),
   );
   return result;
 }
@@ -173,23 +179,100 @@ async function withInitializationLock<T>(
       if (!isAlreadyExists(error)) {
         throw error;
       }
+      await reclaimStaleLock(lockPath, stateDirectory);
       await delay(LOCK_RETRY_DELAY_MS);
       continue;
     }
     try {
+      await writeFile(
+        path.join(lockPath, LOCK_OWNER_FILE),
+        JSON.stringify({ hostname: os.hostname(), pid: process.pid }),
+        { encoding: 'utf8', flag: 'wx' },
+      );
+    } catch (error: unknown) {
+      await rm(lockPath, { recursive: true, force: true });
+      throw error;
+    }
+    try {
       return await operation();
     } finally {
+      await unlink(path.join(lockPath, LOCK_OWNER_FILE));
       await rmdir(lockPath);
     }
   }
   throw new Error(`timed out waiting for initialization lock: ${lockPath}`);
 }
 
+async function reclaimStaleLock(
+  lockPath: string,
+  stateDirectory: string,
+): Promise<void> {
+  if (!(await isLockStale(lockPath))) {
+    return;
+  }
+
+  const stalePath = path.join(
+    stateDirectory,
+    `init.lock.stale-${process.pid}-${Date.now()}`,
+  );
+  try {
+    await rename(lockPath, stalePath);
+  } catch (error: unknown) {
+    if (isFileNotFound(error)) {
+      return;
+    }
+    throw error;
+  }
+  await rm(stalePath, { recursive: true, force: true });
+}
+
+async function isLockStale(lockPath: string): Promise<boolean> {
+  try {
+    const rawOwner = await readFile(
+      path.join(lockPath, LOCK_OWNER_FILE),
+      'utf8',
+    );
+    const owner = JSON.parse(rawOwner) as { hostname?: unknown; pid?: unknown };
+    return (
+      owner.hostname === os.hostname() &&
+      typeof owner.pid === 'number' &&
+      Number.isInteger(owner.pid) &&
+      owner.pid > 0 &&
+      !isProcessAlive(owner.pid)
+    );
+  } catch (error: unknown) {
+    if (!isFileNotFound(error) && !(error instanceof SyntaxError)) {
+      throw error;
+    }
+    try {
+      const lockStats = await stat(lockPath);
+      return Date.now() - lockStats.mtimeMs >= OWNERLESS_LOCK_STALE_MS;
+    } catch (statError: unknown) {
+      if (isFileNotFound(statError)) {
+        return false;
+      }
+      throw statError;
+    }
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    return !hasErrorCode(error, 'ESRCH');
+  }
+}
+
 async function delay(milliseconds: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function ensureGitignore(gitignorePath: string): Promise<void> {
+async function ensureGitignore(
+  projectDirectory: string,
+  gitignorePath: string,
+): Promise<void> {
   let contents: string;
   try {
     contents = await readFile(gitignorePath, 'utf8');
@@ -204,18 +287,52 @@ async function ensureGitignore(gitignorePath: string): Promise<void> {
         if (!isAlreadyExists(writeError)) {
           throw writeError;
         }
-        await ensureGitignore(gitignorePath);
+        await ensureGitignore(projectDirectory, gitignorePath);
       }
       return;
     }
     throw error;
   }
 
-  if (!contents.split(/\r?\n/).includes(IGNORE_ENTRY)) {
+  const hasRule = contents.split(/\r?\n/).includes(IGNORE_ENTRY);
+  const isIgnored = hasRule
+    ? await isConfigEffectivelyIgnored(projectDirectory)
+    : false;
+  if (hasRule && isIgnored !== false) {
+    return;
+  }
+  if (!hasRule || !isIgnored) {
     const separator =
       contents.length > 0 && !contents.endsWith('\n') ? '\n' : '';
     await appendFile(gitignorePath, `${separator}${IGNORE_ENTRY}\n`, 'utf8');
   }
+}
+
+async function isConfigEffectivelyIgnored(
+  projectDirectory: string,
+): Promise<boolean | undefined> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'git',
+      ['check-ignore', '--quiet', '--no-index', '--', CONFIG_FILE],
+      { cwd: projectDirectory, windowsHide: true },
+      (error, _stdout, stderr) => {
+        if (error === null) {
+          resolve(true);
+          return;
+        }
+        if (error.code === 1) {
+          resolve(false);
+          return;
+        }
+        if (error.code === 128 && stderr.includes('not a git repository')) {
+          resolve(undefined);
+          return;
+        }
+        reject(error);
+      },
+    );
+  });
 }
 
 async function rejectSymbolicLink(

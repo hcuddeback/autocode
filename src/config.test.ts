@@ -201,3 +201,49 @@ test('initialization refuses AutoCode files already tracked by Git', async () =>
     await rm(project, { recursive: true, force: true });
   }
 });
+
+test('initialization reclaims a lock owned by a terminated process', async () => {
+  const project = await temporaryProject();
+  try {
+    await mkdir(path.join(project, '.autocode', 'init.lock'), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(project, '.autocode', 'init.lock', 'owner.json'),
+      JSON.stringify({ hostname: os.hostname(), pid: 2_147_483_647 }),
+    );
+
+    assert.equal(await initializeProject(project), 'created');
+    await assert.rejects(
+      () => stat(path.join(project, '.autocode', 'init.lock')),
+      /ENOENT/,
+    );
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test('initialization appends a rule after a Git ignore negation', async () => {
+  const project = await temporaryProject();
+  try {
+    await execFileAsync('git', ['init'], { cwd: project });
+    await writeFile(
+      path.join(project, '.gitignore'),
+      '.autocode/\n!.autocode/\n!.autocode/config.yaml\n',
+    );
+
+    await initializeProject(project);
+
+    assert.equal(
+      await readFile(path.join(project, '.gitignore'), 'utf8'),
+      '.autocode/\n!.autocode/\n!.autocode/config.yaml\n.autocode/\n',
+    );
+    await execFileAsync(
+      'git',
+      ['check-ignore', '--quiet', '--no-index', '--', '.autocode/config.yaml'],
+      { cwd: project },
+    );
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
