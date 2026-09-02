@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import {
   mkdir,
   mkdtemp,
@@ -11,8 +12,11 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { promisify } from 'node:util';
 import { parse } from 'yaml';
 import { initializeProject, validateConfig } from './config.js';
+
+const execFileAsync = promisify(execFile);
 
 async function temporaryProject(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), 'autocode-'));
@@ -111,14 +115,14 @@ test('initialization rejects a missing project directory', async () => {
 test('concurrent initialization remains idempotent', async () => {
   const project = await temporaryProject();
   try {
-    const results = await Promise.all([
-      initializeProject(project),
-      initializeProject(project),
-    ]);
+    await writeFile(path.join(project, '.gitignore'), 'dist/\n');
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () => initializeProject(project)),
+    );
     assert.equal(results.includes('created'), true);
     assert.equal(
       await readFile(path.join(project, '.gitignore'), 'utf8'),
-      '.autocode/\n',
+      'dist/\n.autocode/\n',
     );
     validateConfig(
       parse(
@@ -146,5 +150,54 @@ test('initialization refuses a symbolic-link state directory', async () => {
   } finally {
     await rm(project, { recursive: true, force: true });
     await rm(externalState, { recursive: true, force: true });
+  }
+});
+
+test('initialization refuses a symbolic-link runs directory', async () => {
+  const project = await temporaryProject();
+  const externalRuns = await temporaryProject();
+  try {
+    await mkdir(path.join(project, '.autocode'));
+    await symlink(
+      externalRuns,
+      path.join(project, '.autocode', 'runs'),
+      'junction',
+    );
+    await assert.rejects(
+      () => initializeProject(project),
+      /runs directory must not be a symbolic link/,
+    );
+    await assert.rejects(
+      () => stat(path.join(project, '.autocode', 'config.yaml')),
+      /ENOENT/,
+    );
+  } finally {
+    await rm(project, { recursive: true, force: true });
+    await rm(externalRuns, { recursive: true, force: true });
+  }
+});
+
+test('initialization refuses AutoCode files already tracked by Git', async () => {
+  const project = await temporaryProject();
+  try {
+    await execFileAsync('git', ['init'], { cwd: project });
+    await mkdir(path.join(project, '.autocode'));
+    const configPath = path.join(project, '.autocode', 'config.yaml');
+    await writeFile(configPath, 'tracked placeholder\n');
+    await execFileAsync('git', ['add', '--', '.autocode/config.yaml'], {
+      cwd: project,
+    });
+
+    await assert.rejects(
+      () => initializeProject(project),
+      /contains files tracked by Git/,
+    );
+    assert.equal(await readFile(configPath, 'utf8'), 'tracked placeholder\n');
+    await assert.rejects(
+      () => stat(path.join(project, '.autocode', 'runs')),
+      /ENOENT/,
+    );
+  } finally {
+    await rm(project, { recursive: true, force: true });
   }
 });

@@ -3,9 +3,11 @@ import {
   lstat,
   mkdir,
   readFile,
+  rmdir,
   stat,
   writeFile,
 } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { parse, stringify } from 'yaml';
 
@@ -13,6 +15,9 @@ export const CONFIG_FILE = '.autocode/config.yaml';
 export const STATE_DIRECTORY = '.autocode';
 const IGNORE_ENTRY = '.autocode/';
 const MAX_CONFIG_BYTES = 64 * 1024;
+const GITIGNORE_LOCK = '.autocode/init.lock';
+const LOCK_RETRY_COUNT = 200;
+const LOCK_RETRY_DELAY_MS = 25;
 const CONFIG_KEYS = new Set(['version', 'stateDirectory', 'telemetry']);
 
 export interface AutoCodeConfig {
@@ -57,6 +62,7 @@ export async function initializeProject(
 ): Promise<'created' | 'existing'> {
   const stateDirectory = path.join(projectDirectory, STATE_DIRECTORY);
   const configPath = path.join(projectDirectory, CONFIG_FILE);
+  const runsDirectory = path.join(stateDirectory, 'runs');
   const gitignorePath = path.join(projectDirectory, '.gitignore');
 
   const projectStats = await stat(projectDirectory);
@@ -65,7 +71,9 @@ export async function initializeProject(
   }
   await rejectSymbolicLink(stateDirectory, 'state directory');
   await rejectSymbolicLink(configPath, 'configuration file');
+  await rejectSymbolicLink(runsDirectory, 'runs directory');
   await rejectSymbolicLink(gitignorePath, '.gitignore');
+  await rejectTrackedState(projectDirectory);
 
   let result: 'created' | 'existing';
   try {
@@ -100,9 +108,85 @@ export async function initializeProject(
     }
   }
 
-  await mkdir(path.join(stateDirectory, 'runs'), { recursive: true });
-  await ensureGitignore(gitignorePath);
+  await mkdir(runsDirectory, { recursive: true });
+  await withInitializationLock(stateDirectory, () =>
+    ensureGitignore(gitignorePath),
+  );
   return result;
+}
+
+async function rejectTrackedState(projectDirectory: string): Promise<void> {
+  const tracked = await gitOutput(projectDirectory, [
+    'ls-files',
+    '--',
+    STATE_DIRECTORY,
+  ]);
+  if (tracked.trim().length > 0) {
+    throw new Error(
+      '.autocode contains files tracked by Git; remove them from the index before initialization (for example: git rm --cached -r -- .autocode)',
+    );
+  }
+}
+
+async function gitOutput(
+  projectDirectory: string,
+  args: string[],
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'git',
+      args,
+      {
+        cwd: projectDirectory,
+        encoding: 'utf8',
+        maxBuffer: 64 * 1024,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        if (error === null) {
+          resolve(stdout);
+          return;
+        }
+        if (
+          typeof error.code === 'number' &&
+          error.code === 128 &&
+          stderr.includes('not a git repository')
+        ) {
+          resolve('');
+          return;
+        }
+        reject(error);
+      },
+    );
+  });
+}
+
+async function withInitializationLock<T>(
+  stateDirectory: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const lockPath = path.join(stateDirectory, path.basename(GITIGNORE_LOCK));
+  for (let attempt = 0; attempt < LOCK_RETRY_COUNT; attempt += 1) {
+    try {
+      await mkdir(lockPath);
+    } catch (error: unknown) {
+      if (!isAlreadyExists(error)) {
+        throw error;
+      }
+      await delay(LOCK_RETRY_DELAY_MS);
+      continue;
+    }
+    try {
+      return await operation();
+    } finally {
+      await rmdir(lockPath);
+    }
+  }
+  throw new Error(`timed out waiting for initialization lock: ${lockPath}`);
+}
+
+async function delay(milliseconds: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function ensureGitignore(gitignorePath: string): Promise<void> {
