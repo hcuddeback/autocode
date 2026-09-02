@@ -24,13 +24,13 @@ Operator → AutoCode CLI → workflow engine → policy/gates
 
 ## Selected stack
 
-| Concern | Choice | Why | Revisit trigger |
-|---|---|---|---|
-| Runtime | Node.js 24+ / strict TypeScript | Cross-platform orchestration | Demonstrated limitation |
-| Packages | pnpm | Reproducible and aligned | Distribution requires otherwise |
-| State | `.autocode/` versioned files | Local and inspectable | Measured concurrency/query needs |
-| Agent | Codex CLI adapter | Reuses authenticated sessions | Expansion is justified |
-| Concurrency | One task | Safer recovery | Proven independent scheduling |
+| Concern     | Choice                          | Why                           | Revisit trigger                  |
+| ----------- | ------------------------------- | ----------------------------- | -------------------------------- |
+| Runtime     | Node.js 24+ / strict TypeScript | Cross-platform orchestration  | Demonstrated limitation          |
+| Packages    | pnpm                            | Reproducible and aligned      | Distribution requires otherwise  |
+| State       | `.autocode/` versioned files    | Local and inspectable         | Measured concurrency/query needs |
+| Agent       | Codex CLI adapter               | Reuses authenticated sessions | Expansion is justified           |
+| Concurrency | One task                        | Safer recovery                | Proven independent scheduling    |
 
 ## Proposed boundaries
 

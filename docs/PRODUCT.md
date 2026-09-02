@@ -41,19 +41,19 @@ A developer needs to hand an approved MVP task to a local orchestrator so Codex 
 
 ## Functional requirements
 
-| ID | Requirement | Acceptance evidence |
-|---|---|---|
-| FR-001 | Initialize project-local configuration and state safely. | A fixture receives validated, gitignored configuration without overwrites. |
-| FR-002 | Select one ready task with satisfied dependencies. | Tests cover ready, blocked, malformed, and completed tasks. |
-| FR-003 | Create/refine task detail and plan just in time. | Artifacts reference the selected task/current commit and exclude later work. |
-| FR-004 | Run role-separated Codex CLI sessions. | Implementation and review have distinct session identities and scoped inputs. |
-| FR-005 | Run deterministic verification and retain evidence. | Commands, exits, duration, bounded output, and commit identity are persisted. |
-| FR-006 | Apply bounded fix loops. | Retry ceilings and terminal outcomes have transition tests. |
-| FR-007 | Run QA for applicable behavior. | QA evidence or a structured not-applicable decision is recorded. |
-| FR-008 | Address applicable Codex PR-review findings. | Findings are resolved, disputed with evidence, or escalated. |
-| FR-009 | Enforce configured merge and production gates. | Missing, stale, or failed required signals prevent completion. |
-| FR-010 | Pause/resume without repeated side effects. | A forced-interruption integration test reconciles and resumes safely. |
-| FR-011 | Persist pacing, waits, and retry policy. | Restarting does not reset budgets or backoff. |
+| ID     | Requirement                                              | Acceptance evidence                                                           |
+| ------ | -------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| AC-001 | Initialize project-local configuration and state safely. | A fixture receives validated, gitignored configuration without overwrites.    |
+| AC-002 | Select one ready task with satisfied dependencies.       | Tests cover ready, blocked, malformed, and completed tasks.                   |
+| AC-003 | Create/refine task detail and plan just in time.         | Artifacts reference the selected task/current commit and exclude later work.  |
+| AC-004 | Run role-separated Codex CLI sessions.                   | Implementation and review have distinct session identities and scoped inputs. |
+| AC-005 | Run deterministic verification and retain evidence.      | Commands, exits, duration, bounded output, and commit identity are persisted. |
+| AC-006 | Apply bounded fix loops.                                 | Retry ceilings and terminal outcomes have transition tests.                   |
+| AC-007 | Run QA for applicable behavior.                          | QA evidence or a structured not-applicable decision is recorded.              |
+| AC-008 | Address applicable Codex PR-review findings.             | Findings are resolved, disputed with evidence, or escalated.                  |
+| AC-009 | Enforce configured merge and production gates.           | Missing, stale, or failed required signals prevent completion.                |
+| AC-010 | Pause/resume without repeated side effects.              | A forced-interruption integration test reconciles and resumes safely.         |
+| AC-011 | Persist pacing, waits, and retry policy.                 | Restarting does not reset budgets or backoff.                                 |
 
 ## Non-functional requirements
 

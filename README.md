@@ -10,7 +10,7 @@ AutoCode will be a local-first TypeScript CLI that runs durable software-enginee
 
 **Last updated:** 2026-09-02
 
-> Current reality: this repository contains the approved product and workflow baseline. The CLI is not implemented yet.
+> Current reality: the `autocode init` CLI foundation is implemented. Workflow orchestration is not implemented yet.
 
 ## Who it is for
 
@@ -52,7 +52,21 @@ approved MVP → select next outcome → create/refine JIT task
 
 ## Local setup and validation
 
-Pending the first executable foundation task. Commands will be added only when they are real and runnable.
+```shell
+pnpm install
+pnpm format:check
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
+Initialize an existing project directory without overwriting valid configuration:
+
+```shell
+pnpm build
+node dist/cli.js init path/to/project
+```
 
 ## Documentation
 
@@ -68,7 +82,7 @@ Pending the first executable foundation task. Commands will be added only when t
 
 ## Current next step
 
-Create and approve the first foundation task from `tasks/TASK_TEMPLATE.md`, then implement only that task.
+Finish the AC-001 review and merge gates, then select the next bounded workflow-runtime task.
 
 ## Guardrail
 

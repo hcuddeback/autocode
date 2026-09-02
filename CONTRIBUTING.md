@@ -29,4 +29,4 @@ Pull requests should explain:
 - State-schema or compatibility impact.
 - Any follow-up deliberately left out of scope.
 
-Setup commands and the complete quality command set will be added with the executable CLI foundation.
+Run `pnpm install`, then `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` before submitting a change.

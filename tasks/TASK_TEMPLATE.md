@@ -10,6 +10,7 @@ owner: unassigned
 last_updated: YYYY-MM-DD
 qa: auto
 deployment: auto
+pull_request: required
 ---
 
 # Outcome
@@ -47,6 +48,7 @@ Remove unneeded documents. Do not import the whole roadmap into implementation c
 - Preserve documented architecture/security invariants.
 - Reuse patterns before adding dependencies/abstractions.
 - Do not expose secrets, broaden permissions, or modify unrelated work.
+- Implement only from the declared feature branch and isolated worktree; never implement directly on `main`.
 - Create a fresh plan against the current commit before coding.
 
 ## Done when
@@ -78,6 +80,7 @@ Replace pending commands before marking ready once the repository provides them.
 
 ## PR, merge, and production gates
 
+- PR applicability: required | not applicable (include a reason when not applicable)
 - Codex PR review: required | not applicable | auto
 - Merge authorization: human | policy | not applicable
 - Production verification: required | not applicable | auto

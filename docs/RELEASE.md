@@ -1,6 +1,6 @@
 # AutoCode release runbook
 
-This is a pre-implementation runbook. Replace pending items with real commands/evidence as packaging is built.
+This runbook tracks release gates as the CLI and workflow are built.
 
 ## Release identity
 
@@ -20,7 +20,7 @@ This is a pre-implementation runbook. Replace pending items with real commands/e
 
 ## Repository validation
 
-Pending the foundation task. The release must run real lint/format, typecheck, test, build, package-smoke, and fixture-workflow commands. Skipped checks must be explicit.
+Run `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build`. Package-install and fixture-workflow commands remain pending later tasks; skipped checks must be explicit.
 
 ## Package smoke
 
