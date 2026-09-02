@@ -51,6 +51,14 @@ Remove unneeded documents. Do not import the whole roadmap into implementation c
 - Implement only from the declared feature branch and isolated worktree; never implement directly on `main`.
 - Create a fresh plan against the current commit before coding.
 
+## Required execution sequence
+
+1. Create the declared feature branch from current `main` and attach it to an isolated worktree.
+2. Confirm the isolated checkout is on that feature branch; stop if it is on `main`.
+3. Implement, verify, independently review, fix, reverify, and complete applicable QA.
+4. Push the feature branch and open the required PR only after implementation gates pass.
+5. After merge gates pass, mark the task `done` and move this file to `tasks/completed/`.
+
 ## Done when
 
 - [ ] Observable positive result.

@@ -1,9 +1,10 @@
 import { constants } from 'node:fs';
-import { lstat, open, readdir } from 'node:fs/promises';
+import { lstat, open, readdir, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { parse } from 'yaml';
 
 const TASK_DIRECTORY = 'tasks';
+const COMPLETED_TASK_DIRECTORY = 'completed';
 const TASK_FILE_PATTERN = /^AC-\d{3}\.md$/;
 const TASK_LIKE_FILE_PATTERN = /^AC-.*\.md$/i;
 const TASK_ID_PATTERN = /^AC-\d{3}$/;
@@ -59,10 +60,42 @@ export async function loadTaskCatalog(
   projectDirectory: string,
 ): Promise<TaskRecord[]> {
   const taskDirectory = path.join(projectDirectory, TASK_DIRECTORY);
-  const directoryStats = await lstat(taskDirectory);
-  if (directoryStats.isSymbolicLink() || !directoryStats.isDirectory()) {
-    throw new Error('tasks path must be a real directory');
+  const activeTasks = await loadTaskDirectory(taskDirectory, false);
+  const completedTasks = await loadTaskDirectory(
+    path.join(taskDirectory, COMPLETED_TASK_DIRECTORY),
+    true,
+  );
+  const tasks = [...activeTasks, ...completedTasks];
+
+  const byId = new Map<string, TaskRecord>();
+  for (const task of tasks) {
+    if (byId.has(task.taskId)) {
+      throw new Error(`duplicate task_id: ${task.taskId}`);
+    }
+    byId.set(task.taskId, task);
   }
+  return tasks;
+}
+
+async function loadTaskDirectory(
+  taskDirectory: string,
+  completed: boolean,
+): Promise<TaskRecord[]> {
+  let directoryStats;
+  try {
+    directoryStats = await lstat(taskDirectory);
+  } catch (error: unknown) {
+    if (completed && hasErrorCode(error, 'ENOENT')) {
+      return [];
+    }
+    throw error;
+  }
+  if (directoryStats.isSymbolicLink() || !directoryStats.isDirectory()) {
+    throw new Error(
+      `${completed ? 'completed tasks' : 'tasks'} path must be a real directory`,
+    );
+  }
+  const canonicalDirectory = await realpath(taskDirectory);
 
   const entries = await readdir(taskDirectory, { withFileTypes: true });
   const candidateNames = entries
@@ -81,21 +114,22 @@ export async function loadTaskCatalog(
     if (!name.isFile()) {
       throw new Error(`task path must be a regular file: ${name.name}`);
     }
-    const task = parseTask(await readTaskFile(filePath, name.name), filePath);
+    const task = parseTask(
+      await readTaskFile(filePath, name.name, canonicalDirectory),
+      filePath,
+    );
     if (`${task.taskId}.md` !== name.name) {
       throw new Error(
         `task_id ${task.taskId} does not match filename ${name.name}`,
       );
     }
-    tasks.push(task);
-  }
-
-  const byId = new Map<string, TaskRecord>();
-  for (const task of tasks) {
-    if (byId.has(task.taskId)) {
-      throw new Error(`duplicate task_id: ${task.taskId}`);
+    if (completed && task.status !== 'done') {
+      throw new Error(`completed task must have done status: ${task.taskId}`);
     }
-    byId.set(task.taskId, task);
+    if (!completed && task.status === 'done') {
+      throw new Error(`done task must be in completed folder: ${task.taskId}`);
+    }
+    tasks.push(task);
   }
   return tasks;
 }
@@ -103,6 +137,7 @@ export async function loadTaskCatalog(
 async function readTaskFile(
   filePath: string,
   fileName: string,
+  canonicalDirectory: string,
 ): Promise<string> {
   let handle;
   try {
@@ -116,12 +151,28 @@ async function readTaskFile(
     throw error;
   }
   try {
-    const stats = await handle.stat();
-    if (!stats.isFile()) {
+    const openedStats = await handle.stat();
+    if (!openedStats.isFile()) {
       throw new Error(`task path must be a regular file: ${fileName}`);
     }
-    if (stats.size > MAX_TASK_BYTES) {
+    if (openedStats.size > MAX_TASK_BYTES) {
       throw new Error(`task file exceeds ${MAX_TASK_BYTES} bytes: ${fileName}`);
+    }
+    const resolvedPath = await realpath(filePath);
+    const relativePath = path.relative(canonicalDirectory, resolvedPath);
+    if (
+      relativePath.startsWith('..') ||
+      path.isAbsolute(relativePath) ||
+      relativePath.includes(path.sep)
+    ) {
+      throw new Error(`task file resolves outside its directory: ${fileName}`);
+    }
+    const resolvedStats = await stat(resolvedPath);
+    if (
+      openedStats.dev !== resolvedStats.dev ||
+      openedStats.ino !== resolvedStats.ino
+    ) {
+      throw new Error(`task file changed while being read: ${fileName}`);
     }
     return await handle.readFile('utf8');
   } finally {

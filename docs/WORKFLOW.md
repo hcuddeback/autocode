@@ -16,6 +16,8 @@ Implementation must take place in an isolated feature branch and worktree. Direc
 
 Later tasks stay coarse until dependencies and current reality are known. The task is an implementation contract; its detailed plan is a run artifact.
 
+Before implementation begins, create the task's feature branch from current `main`, attach it to an isolated worktree, and verify that worktree is not on `main`. After implementation, deterministic verification, independent review, fixes, re-verification, and applicable QA pass, push the feature branch and open the required PR.
+
 ## Lifecycle
 
 | Phase                       | Purpose                                                          | Required exit evidence                                                      |
@@ -53,6 +55,7 @@ Pure internal changes may record QA as not applicable when deterministic tests c
 - After deterministic verification, independent critical review, and applicable QA pass, push the feature branch and open a PR unless a genuine not-applicable exception is explicitly documented.
 - A PR is genuinely not applicable only when the task contract records the reason and the configured policy permits proceeding without one.
 - Merge only through configured gates; a successful local check or agent claim cannot replace required remote checks or approvals.
+- After merge gates pass, mark the task `done` and move its record from `tasks/` to `tasks/completed/`; completed records remain available for dependency resolution.
 - Timeouts become waiting, paused, blocked, or failed—not success.
 - Retry budgets and pacing survive restart.
 
