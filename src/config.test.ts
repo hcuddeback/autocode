@@ -7,6 +7,7 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile,
 } from 'node:fs/promises';
 import os from 'node:os';
@@ -242,6 +243,68 @@ test('initialization appends a rule after a Git ignore negation', async () => {
       'git',
       ['check-ignore', '--quiet', '--no-index', '--', '.autocode/config.yaml'],
       { cwd: project },
+    );
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test('initialization restores ignore coverage for run evidence', async () => {
+  const project = await temporaryProject();
+  try {
+    await execFileAsync('git', ['init'], { cwd: project });
+    await writeFile(
+      path.join(project, '.gitignore'),
+      '.autocode/\n!.autocode/\n.autocode/config.yaml\n!.autocode/runs/\n!.autocode/runs/**\n',
+    );
+
+    await initializeProject(project);
+
+    await execFileAsync(
+      'git',
+      [
+        'check-ignore',
+        '--quiet',
+        '--no-index',
+        '--',
+        '.autocode/runs/evidence.txt',
+      ],
+      { cwd: project },
+    );
+    assert.equal(
+      (await readFile(path.join(project, '.gitignore'), 'utf8')).endsWith(
+        '.autocode/\n',
+      ),
+      true,
+    );
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test('initialization reclaims an expired lock from another host', async () => {
+  const project = await temporaryProject();
+  try {
+    await mkdir(path.join(project, '.autocode', 'init.lock'), {
+      recursive: true,
+    });
+    const ownerPath = path.join(
+      project,
+      '.autocode',
+      'init.lock',
+      'owner.json',
+    );
+    await writeFile(
+      ownerPath,
+      JSON.stringify({ hostname: 'previous-host', pid: process.pid }),
+    );
+    const expired = new Date(Date.now() - 120_000);
+    await utimes(ownerPath, expired, expired);
+
+    assert.equal(await initializeProject(project), 'created');
+    await assert.rejects(
+      () => stat(path.join(project, '.autocode', 'init.lock')),
+      /ENOENT/,
     );
   } finally {
     await rm(project, { recursive: true, force: true });

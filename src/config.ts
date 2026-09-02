@@ -23,7 +23,9 @@ const GITIGNORE_LOCK = '.autocode/init.lock';
 const LOCK_OWNER_FILE = 'owner.json';
 const LOCK_RETRY_COUNT = 240;
 const LOCK_RETRY_DELAY_MS = 25;
+const FOREIGN_LOCK_LEASE_MS = 60_000;
 const OWNERLESS_LOCK_STALE_MS = 5_000;
+const IGNORE_PROBES = [CONFIG_FILE, '.autocode/runs/evidence.txt'];
 const CONFIG_KEYS = new Set(['version', 'stateDirectory', 'telemetry']);
 
 export interface AutoCodeConfig {
@@ -186,7 +188,11 @@ async function withInitializationLock<T>(
     try {
       await writeFile(
         path.join(lockPath, LOCK_OWNER_FILE),
-        JSON.stringify({ hostname: os.hostname(), pid: process.pid }),
+        JSON.stringify({
+          createdAt: Date.now(),
+          hostname: os.hostname(),
+          pid: process.pid,
+        }),
         { encoding: 'utf8', flag: 'wx' },
       );
     } catch (error: unknown) {
@@ -227,26 +233,35 @@ async function reclaimStaleLock(
 }
 
 async function isLockStale(lockPath: string): Promise<boolean> {
+  const ownerPath = path.join(lockPath, LOCK_OWNER_FILE);
   try {
-    const rawOwner = await readFile(
-      path.join(lockPath, LOCK_OWNER_FILE),
-      'utf8',
-    );
-    const owner = JSON.parse(rawOwner) as { hostname?: unknown; pid?: unknown };
-    return (
-      owner.hostname === os.hostname() &&
+    const rawOwner = await readFile(ownerPath, 'utf8');
+    const owner = JSON.parse(rawOwner) as {
+      createdAt?: unknown;
+      hostname?: unknown;
+      pid?: unknown;
+    };
+    const hasValidPid =
       typeof owner.pid === 'number' &&
       Number.isInteger(owner.pid) &&
-      owner.pid > 0 &&
-      !isProcessAlive(owner.pid)
-    );
+      owner.pid > 0;
+    if (owner.hostname === os.hostname() && hasValidPid) {
+      return !isProcessAlive(owner.pid as number);
+    }
+    if (
+      typeof owner.createdAt === 'number' &&
+      Number.isFinite(owner.createdAt) &&
+      Date.now() - owner.createdAt >= FOREIGN_LOCK_LEASE_MS
+    ) {
+      return true;
+    }
+    return isOlderThan(ownerPath, FOREIGN_LOCK_LEASE_MS);
   } catch (error: unknown) {
     if (!isFileNotFound(error) && !(error instanceof SyntaxError)) {
       throw error;
     }
     try {
-      const lockStats = await stat(lockPath);
-      return Date.now() - lockStats.mtimeMs >= OWNERLESS_LOCK_STALE_MS;
+      return await isOlderThan(lockPath, OWNERLESS_LOCK_STALE_MS);
     } catch (statError: unknown) {
       if (isFileNotFound(statError)) {
         return false;
@@ -254,6 +269,11 @@ async function isLockStale(lockPath: string): Promise<boolean> {
       throw statError;
     }
   }
+}
+
+async function isOlderThan(targetPath: string, ageMilliseconds: number) {
+  const targetStats = await stat(targetPath);
+  return Date.now() - targetStats.mtimeMs >= ageMilliseconds;
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -296,7 +316,7 @@ async function ensureGitignore(
 
   const hasRule = contents.split(/\r?\n/).includes(IGNORE_ENTRY);
   const isIgnored = hasRule
-    ? await isConfigEffectivelyIgnored(projectDirectory)
+    ? await isStateEffectivelyIgnored(projectDirectory)
     : false;
   if (hasRule && isIgnored !== false) {
     return;
@@ -308,13 +328,27 @@ async function ensureGitignore(
   }
 }
 
-async function isConfigEffectivelyIgnored(
+async function isStateEffectivelyIgnored(
   projectDirectory: string,
+): Promise<boolean | undefined> {
+  const results = await Promise.all(
+    IGNORE_PROBES.map((probe) =>
+      isPathEffectivelyIgnored(projectDirectory, probe),
+    ),
+  );
+  return results.includes(undefined)
+    ? undefined
+    : results.every((result) => result);
+}
+
+async function isPathEffectivelyIgnored(
+  projectDirectory: string,
+  targetPath: string,
 ): Promise<boolean | undefined> {
   return new Promise((resolve, reject) => {
     execFile(
       'git',
-      ['check-ignore', '--quiet', '--no-index', '--', CONFIG_FILE],
+      ['check-ignore', '--quiet', '--no-index', '--', targetPath],
       { cwd: projectDirectory, windowsHide: true },
       (error, _stdout, stderr) => {
         if (error === null) {
