@@ -24,7 +24,7 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 
 ## Immediate queue
 
-No executable task is approved yet. The first should be `AC-001`: bootstrap the strict TypeScript CLI foundation and real quality commands. Create it from `TASK_TEMPLATE.md` only when ready to implement it.
+`AC-001` is the active foundation task: bootstrap the strict TypeScript CLI foundation and real quality commands.
 
 ## JIT task process
 

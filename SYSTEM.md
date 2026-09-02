@@ -2,7 +2,7 @@
 
 **Last verified:** 2026-09-02
 
-**Stage:** MVP foundation
+**Stage:** AC-001 foundation implemented
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -19,12 +19,12 @@
 | Claim | Evidence | Confidence |
 |---|---|---|
 | Documentation baseline exists | Repository files and internal-link validation | High |
-| CLI is usable | No implementation exists | High confidence that it is not yet usable |
+| CLI is usable | `pnpm build` and CLI initialization smoke test | High |
 | Workflow is implemented | Design contract only | High confidence that it is not implemented |
 
 ## Known gaps and blockers
 
-- Package scaffold, lockfile, executable CLI, tests, and CI are absent.
+- CI, workflow phases, durable run state, and Codex adapter are absent.
 - No workflow phase, durable state, or Codex adapter is implemented.
 - License has not been selected and added.
 
@@ -36,9 +36,14 @@
 
 **Stop condition:** Pause scope expansion if the vertical slice requires a hosted service, direct provider API, or broad multi-agent runtime.
 
+## AC-001 evidence
+
+- `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` pass.
+- `autocode init` creates `.autocode/config.yaml`, state directories, and a `.gitignore` rule without overwriting valid configuration.
+
 ## Next task
 
-Create `AC-001` from `tasks/TASK_TEMPLATE.md`: bootstrap the strict TypeScript CLI foundation and real quality commands.
+Complete AC-001 gates, then select the workflow runtime task.
 
 ## Recently completed
 

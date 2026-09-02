@@ -52,7 +52,21 @@ approved MVP → select next outcome → create/refine JIT task
 
 ## Local setup and validation
 
-Pending the first executable foundation task. Commands will be added only when they are real and runnable.
+```text
+pnpm install
+pnpm format:check
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
+Initialize a project without overwriting existing valid state:
+
+```text
+pnpm build
+node dist/cli.js init path/to/project
+```
 
 ## Documentation
 
@@ -68,7 +82,7 @@ Pending the first executable foundation task. Commands will be added only when t
 
 ## Current next step
 
-Create and approve the first foundation task from `tasks/TASK_TEMPLATE.md`, then implement only that task.
+Implement the workflow runtime and durable phase transitions in the next bounded task.
 
 ## Guardrail
 

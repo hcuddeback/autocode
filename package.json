@@ -1,0 +1,36 @@
+{
+  "name": "autocode",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first durable workflow CLI for Codex CLI.",
+  "type": "module",
+  "bin": {
+    "autocode": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "format": "prettier --write \"src/**/*.ts\" \"*.json\" \"*.js\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"*.json\" \"*.js\"",
+    "lint": "eslint .",
+    "test": "tsx --test src/**/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@8.15.6",
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0",
+    "typescript-eslint": "^8.0.0"
+  },
+  "dependencies": {
+    "yaml": "^2.0.0"
+  }
+}

@@ -10,6 +10,7 @@ owner: unassigned
 last_updated: YYYY-MM-DD
 qa: auto
 deployment: auto
+pull_request: required
 ---
 
 # Outcome
@@ -47,6 +48,7 @@ Remove unneeded documents. Do not import the whole roadmap into implementation c
 - Preserve documented architecture/security invariants.
 - Reuse patterns before adding dependencies/abstractions.
 - Do not expose secrets, broaden permissions, or modify unrelated work.
+- Implement only from the declared feature branch and isolated worktree; never implement directly on `main`.
 - Create a fresh plan against the current commit before coding.
 
 ## Done when
@@ -75,6 +77,16 @@ Replace pending commands before marking ready once the repository provides them.
 
 - Runtime/user-journey scenarios and required evidence if applicable.
 - Persist a reason when not applicable.
+
+## Pull request and merge gates
+
+- Push the feature branch and open a PR after deterministic verification, independent critical review, and applicable QA pass.
+- A PR may be marked `not_applicable` only with an explicit reason, evidence that the task is genuinely not applicable to PR review, and confirmation that configured policy permits the exception.
+- Merge only through configured gates, including required checks, approvals, freshness, and any task-specific controls.
+
+**PR applicability:** `required` | `not_applicable`
+
+**Not-applicable reason:** Required when PR applicability is `not_applicable`; otherwise write `None`.
 
 ## PR, merge, and production gates
 
