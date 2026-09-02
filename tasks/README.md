@@ -24,7 +24,7 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 
 ## Immediate queue
 
-`AC-001` is in review on `feat/AC-001-cli-foundation`: bootstrap the strict TypeScript CLI foundation and real quality commands.
+`AC-002` is in review on `feat/AC-002-task-selection`: select one ready task only when all declared dependencies are complete.
 
 ## JIT task process
 

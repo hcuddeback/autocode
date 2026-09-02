@@ -2,6 +2,7 @@
 
 import path from 'node:path';
 import { initializeProject } from './config.js';
+import { selectProjectTask } from './tasks.js';
 
 async function main(args: string[]): Promise<void> {
   const [command, ...options] = args;
@@ -9,27 +10,48 @@ async function main(args: string[]): Promise<void> {
     printHelp();
     return;
   }
-  if (command !== 'init') {
-    throw new Error(`unknown command: ${command}`);
-  }
-
   const target = options[0] ?? process.cwd();
   if (options.length > 1) {
-    throw new Error('init accepts at most one project directory');
+    throw new Error(`${command} accepts at most one project directory`);
   }
   const projectDirectory = path.resolve(target);
-  const result = await initializeProject(projectDirectory);
-  console.log(
-    result === 'created'
-      ? `Initialized AutoCode in ${projectDirectory}`
-      : `AutoCode already initialized in ${projectDirectory}`,
-  );
+  if (command === 'init') {
+    const result = await initializeProject(projectDirectory);
+    console.log(
+      result === 'created'
+        ? `Initialized AutoCode in ${projectDirectory}`
+        : `AutoCode already initialized in ${projectDirectory}`,
+    );
+    return;
+  }
+  if (command === 'select') {
+    const selection = await selectProjectTask(projectDirectory);
+    if (selection.kind === 'selected') {
+      console.log(`${selection.task.taskId}: ${selection.task.title}`);
+      return;
+    }
+    if (selection.kind === 'blocked') {
+      const reasons = selection.tasks.map(
+        (task) =>
+          `${task.taskId} (${task.dependencies
+            .map((dependency) => `${dependency.taskId}: ${dependency.status}`)
+            .join(', ')})`,
+      );
+      console.log(
+        `No task is selectable; blocked dependencies: ${reasons.join('; ')}`,
+      );
+      return;
+    }
+    console.log('No ready tasks.');
+    return;
+  }
+  throw new Error(`unknown command: ${command}`);
 }
 
 function printHelp(): void {
   console.log('Usage: autocode <command> [project-directory]');
   console.log(
-    '\nCommands:\n  init    Initialize project-local configuration and state',
+    '\nCommands:\n  init      Initialize project-local configuration and state\n  select    Select the first ready task with completed dependencies',
   );
 }
 
