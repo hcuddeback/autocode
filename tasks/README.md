@@ -4,15 +4,15 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 
 ## Status
 
-| Status | Meaning |
-|---|---|
-| `ready` | Dependencies resolved; may be selected/refined JIT |
-| `in_progress` | Owned by an active run |
-| `review` | Implementation complete; gates still running |
-| `done` | Acceptance and all applicable gates passed |
-| `blocked` | Named blocker prevents progress |
-| `later` | Outside the immediate queue/current release |
-| `canceled` | Rejected or superseded |
+| Status        | Meaning                                            |
+| ------------- | -------------------------------------------------- |
+| `ready`       | Dependencies resolved; may be selected/refined JIT |
+| `in_progress` | Owned by an active run                             |
+| `review`      | Implementation complete; gates still running       |
+| `done`        | Acceptance and all applicable gates passed         |
+| `blocked`     | Named blocker prevents progress                    |
+| `later`       | Outside the immediate queue/current release        |
+| `canceled`    | Rejected or superseded                             |
 
 ## Current milestone
 
@@ -24,7 +24,7 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 
 ## Immediate queue
 
-`AC-001` is the active foundation task: bootstrap the strict TypeScript CLI foundation and real quality commands.
+`AC-001` is in review on `feat/AC-001-cli-foundation`: bootstrap the strict TypeScript CLI foundation and real quality commands.
 
 ## JIT task process
 

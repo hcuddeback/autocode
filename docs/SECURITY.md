@@ -6,12 +6,12 @@
 
 ## Data classification
 
-| Data | Classification | Stored where | Retention |
-|---|---|---|---|
-| Tasks/configuration | Internal | Repository and `.autocode/` | Project controlled |
-| Run evidence | Potentially sensitive | Gitignored `.autocode/runs/` | Configurable/operator deletable |
-| Credentials | Secret | Existing OS/CLI/provider stores | Never copied into AutoCode state |
-| Repository content | Project-defined | Repository/worktree | Repository policy |
+| Data                | Classification        | Stored where                    | Retention                        |
+| ------------------- | --------------------- | ------------------------------- | -------------------------------- |
+| Tasks/configuration | Internal              | Repository and `.autocode/`     | Project controlled               |
+| Run evidence        | Potentially sensitive | Gitignored `.autocode/runs/`    | Configurable/operator deletable  |
+| Credentials         | Secret                | Existing OS/CLI/provider stores | Never copied into AutoCode state |
+| Repository content  | Project-defined       | Repository/worktree             | Repository policy                |
 
 ## Trust boundary
 

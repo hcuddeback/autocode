@@ -12,20 +12,19 @@
 
 - The clean public repository exists.
 - The product, architecture, workflow, security, release, and task contracts are documented.
-- No executable AutoCode CLI or orchestration runtime exists in this repository yet.
+- A strict TypeScript `autocode init` CLI foundation exists; the orchestration runtime does not.
 
 ## Evidence level
 
-| Claim | Evidence | Confidence |
-|---|---|---|
-| Documentation baseline exists | Repository files and internal-link validation | High |
-| CLI is usable | `pnpm build` and CLI initialization smoke test | High |
-| Workflow is implemented | Design contract only | High confidence that it is not implemented |
+| Claim                         | Evidence                                       | Confidence                                 |
+| ----------------------------- | ---------------------------------------------- | ------------------------------------------ |
+| Documentation baseline exists | Repository files and internal-link validation  | High                                       |
+| CLI is usable                 | `pnpm build` and CLI initialization smoke test | High                                       |
+| Workflow is implemented       | Design contract only                           | High confidence that it is not implemented |
 
 ## Known gaps and blockers
 
-- CI, workflow phases, durable run state, and Codex adapter are absent.
-- No workflow phase, durable state, or Codex adapter is implemented.
+- CI, workflow phases, durable run state, and the Codex adapter are absent.
 - License has not been selected and added.
 
 ## Current milestone
@@ -43,10 +42,11 @@
 
 ## Next task
 
-Complete AC-001 gates, then select the workflow runtime task.
+Finish AC-001 review and merge gates, then select the workflow runtime task.
 
 ## Recently completed
 
 - 2026-09-02 — Established the clean repository and documentation baseline.
+- 2026-09-02 — Implemented the AC-001 CLI foundation on its feature branch.
 
 Update this file when a major capability, blocker, milestone, or release fact changes.

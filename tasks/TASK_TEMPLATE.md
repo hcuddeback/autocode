@@ -78,18 +78,9 @@ Replace pending commands before marking ready once the repository provides them.
 - Runtime/user-journey scenarios and required evidence if applicable.
 - Persist a reason when not applicable.
 
-## Pull request and merge gates
-
-- Push the feature branch and open a PR after deterministic verification, independent critical review, and applicable QA pass.
-- A PR may be marked `not_applicable` only with an explicit reason, evidence that the task is genuinely not applicable to PR review, and confirmation that configured policy permits the exception.
-- Merge only through configured gates, including required checks, approvals, freshness, and any task-specific controls.
-
-**PR applicability:** `required` | `not_applicable`
-
-**Not-applicable reason:** Required when PR applicability is `not_applicable`; otherwise write `None`.
-
 ## PR, merge, and production gates
 
+- PR applicability: required | not applicable (include a reason when not applicable)
 - Codex PR review: required | not applicable | auto
 - Merge authorization: human | policy | not applicable
 - Production verification: required | not applicable | auto

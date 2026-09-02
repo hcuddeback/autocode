@@ -18,23 +18,23 @@ Later tasks stay coarse until dependencies and current reality are known. The ta
 
 ## Lifecycle
 
-| Phase | Purpose | Required exit evidence |
-| --- | --- | --- |
-| Intake | Validate task, dependencies, repository, and authority | Ready task and policy decision |
-| JIT task refinement | Turn the next outcome into an executable contract | Scope, criteria, risk, relevant docs, validation |
-| JIT implementation plan | Plan against the current commit | Intended changes, sequence, risks, verification plan |
-| Implementation | Change an isolated feature-branch worktree | Diff, summary, assumptions, session identity |
-| Deterministic verification | Run configured checks | Commands, exits, duration, bounded output, commit |
-| Independent critical review | Challenge correctness in a separate session | Structured findings with severity/evidence |
-| Fix and re-verify | Address actionable failures/findings | Updated diff, dispositions, fresh verification |
-| QA applicability | Decide whether runtime/browser QA is needed | Required scenarios or recorded not-applicable reason |
-| QA | Exercise applicable user-visible behavior | Scenario evidence, screenshots/logs, findings |
-| Pull request | Push the verified feature branch and publish a PR | PR identity and exact head commit, or a documented not-applicable exception |
-| Codex PR review | Observe and address actionable review | Resolved findings, evidenced disputes, or escalation |
-| Merge gate | Evaluate configured CI, approvals, risk, findings, and freshness | Recorded authorization; merge is prohibited outside configured gates |
-| Production applicability | Decide whether deployment verification applies | Target/checks or recorded not-applicable reason |
-| Production verification | Confirm deployed behavior | Deployment identity, smoke results, rollback signal |
-| Complete | Update task/system state and select next work | Immutable run summary |
+| Phase                       | Purpose                                                          | Required exit evidence                                                      |
+| --------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Intake                      | Validate task, dependencies, repository, and authority           | Ready task and policy decision                                              |
+| JIT task refinement         | Turn the next outcome into an executable contract                | Scope, criteria, risk, relevant docs, validation                            |
+| JIT implementation plan     | Plan against the current commit                                  | Intended changes, sequence, risks, verification plan                        |
+| Implementation              | Change an isolated feature-branch worktree                       | Diff, summary, assumptions, session identity                                |
+| Deterministic verification  | Run configured checks                                            | Commands, exits, duration, bounded output, commit                           |
+| Independent critical review | Challenge correctness in a separate session                      | Structured findings with severity/evidence                                  |
+| Fix and re-verify           | Address actionable failures/findings                             | Updated diff, dispositions, fresh verification                              |
+| QA applicability            | Decide whether runtime/browser QA is needed                      | Required scenarios or recorded not-applicable reason                        |
+| QA                          | Exercise applicable user-visible behavior                        | Scenario evidence, screenshots/logs, findings                               |
+| Pull request                | Push the verified feature branch and publish a PR                | PR identity and exact head commit, or a documented not-applicable exception |
+| Codex PR review             | Observe and address actionable review                            | Resolved findings, evidenced disputes, or escalation                        |
+| Merge gate                  | Evaluate configured CI, approvals, risk, findings, and freshness | Recorded authorization; merge is prohibited outside configured gates        |
+| Production applicability    | Decide whether deployment verification applies                   | Target/checks or recorded not-applicable reason                             |
+| Production verification     | Confirm deployed behavior                                        | Deployment identity, smoke results, rollback signal                         |
+| Complete                    | Update task/system state and select next work                    | Immutable run summary                                                       |
 
 ## QA policy
 

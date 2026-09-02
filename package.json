@@ -11,9 +11,10 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
-    "format": "prettier --write \"src/**/*.ts\" \"*.json\" \"*.js\"",
-    "format:check": "prettier --check \"src/**/*.ts\" \"*.json\" \"*.js\"",
+    "build": "node -e \"import('node:fs').then(({ rmSync }) => rmSync('dist', { recursive: true, force: true }))\" && tsc -p tsconfig.build.json",
+    "clean": "node -e \"import('node:fs').then(({ rmSync }) => rmSync('dist', { recursive: true, force: true }))\"",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "lint": "eslint .",
     "test": "tsx --test src/**/*.test.ts",
     "typecheck": "tsc --noEmit"
@@ -21,16 +22,17 @@
   "engines": {
     "node": ">=24"
   },
-  "packageManager": "pnpm@8.15.6",
+  "packageManager": "pnpm@11.25.0",
   "devDependencies": {
-    "@types/node": "^24.0.0",
-    "eslint": "^9.0.0",
-    "prettier": "^3.0.0",
-    "tsx": "^4.0.0",
-    "typescript": "^5.0.0",
-    "typescript-eslint": "^8.0.0"
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.13.3",
+    "eslint": "^10.9.1",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.13",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.69.0"
   },
   "dependencies": {
-    "yaml": "^2.0.0"
+    "yaml": "^2.9.0"
   }
 }
