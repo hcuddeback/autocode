@@ -66,7 +66,7 @@ test('selects an independent task before a completed folder exists', async () =>
 test('reports missing and incomplete dependencies without selecting', async () => {
   const project = await temporaryProject();
   try {
-    await writeTask(project, 'AC-001', 'review');
+    await writeTask(project, 'AC-001', 'blocked');
     await writeTask(project, 'AC-002', 'ready', ['AC-001', 'AC-099']);
 
     assert.deepEqual(await selectProjectTask(project), {
@@ -75,11 +75,26 @@ test('reports missing and incomplete dependencies without selecting', async () =
         {
           taskId: 'AC-002',
           dependencies: [
-            { taskId: 'AC-001', status: 'review' },
+            { taskId: 'AC-001', status: 'blocked' },
             { taskId: 'AC-099', status: 'missing' },
           ],
         },
       ],
+    });
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test('refuses selection while another task is active', async () => {
+  const project = await temporaryProject();
+  try {
+    await writeTask(project, 'AC-001', 'review');
+    await writeTask(project, 'AC-002', 'ready');
+
+    assert.deepEqual(await selectProjectTask(project), {
+      kind: 'active',
+      tasks: [{ taskId: 'AC-001', status: 'review' }],
     });
   } finally {
     await rm(project, { recursive: true, force: true });
@@ -103,6 +118,30 @@ test('rejects malformed task front matter', async () => {
     await assert.rejects(
       () => loadTaskCatalog(project),
       /missing YAML front matter/,
+    );
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test('rejects control characters in an untrusted task title', async () => {
+  const project = await temporaryProject();
+  try {
+    await writeTask(project, 'AC-001', 'ready');
+    const taskPath = path.join(project, 'tasks', 'AC-001.md');
+    const contents = await import('node:fs/promises').then(({ readFile }) =>
+      readFile(taskPath, 'utf8'),
+    );
+    await writeFile(
+      taskPath,
+      contents.replace(
+        'title: Task AC-001',
+        'title: "Task AC-001\\nForged output\\u001b[31m"',
+      ),
+    );
+    await assert.rejects(
+      () => loadTaskCatalog(project),
+      /title must not contain control characters/,
     );
   } finally {
     await rm(project, { recursive: true, force: true });

@@ -43,9 +43,9 @@
 
 ## AC-002 evidence
 
-- `autocode select` validates the task catalog and selects the first ready task only when every dependency is `done`.
-- Tests cover initialization plus ready, blocked, malformed, completed, deterministic-ordering, and symlink-boundary behavior.
-- Independent critical review findings on malformed filenames and symlink races were corrected; the fresh review found no actionable defects.
+- `autocode select` validates the task catalog and selects the first ready task only when every dependency is `done` and no task is already active.
+- Tests cover initialization plus ready, active-work, blocked, malformed, completed, deterministic-ordering, untrusted-title, and symlink-boundary behavior.
+- Independent and Codex PR-review findings on malformed filenames, filesystem replacement races, single-task WIP enforcement, and terminal-safe titles were corrected and reverified.
 
 ## Next task
 

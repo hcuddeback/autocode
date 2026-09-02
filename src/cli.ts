@@ -30,6 +30,15 @@ async function main(args: string[]): Promise<void> {
       console.log(`${selection.task.taskId}: ${selection.task.title}`);
       return;
     }
+    if (selection.kind === 'active') {
+      const activeTasks = selection.tasks
+        .map((task) => `${task.taskId}: ${task.status}`)
+        .join(', ');
+      console.log(
+        `No task is selectable; active work must complete first: ${activeTasks}`,
+      );
+      return;
+    }
     if (selection.kind === 'blocked') {
       const reasons = selection.tasks.map(
         (task) =>

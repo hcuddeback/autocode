@@ -68,7 +68,7 @@ pnpm build
 node dist/cli.js init path/to/project
 ```
 
-Select the first ready task whose dependencies are complete:
+Select the first ready task whose dependencies are complete, provided no task is already in progress or review:
 
 ```shell
 node dist/cli.js select path/to/project

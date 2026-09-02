@@ -1,4 +1,4 @@
-import { constants } from 'node:fs';
+import { constants, type Stats } from 'node:fs';
 import { lstat, open, readdir, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { parse } from 'yaml';
@@ -51,6 +51,10 @@ export interface DependencyBlocker {
 export type TaskSelection =
   | { kind: 'selected'; task: TaskRecord }
   | {
+      kind: 'active';
+      tasks: Array<{ taskId: string; status: 'in_progress' | 'review' }>;
+    }
+  | {
       kind: 'blocked';
       tasks: Array<{ taskId: string; dependencies: DependencyBlocker[] }>;
     }
@@ -96,8 +100,16 @@ async function loadTaskDirectory(
     );
   }
   const canonicalDirectory = await realpath(taskDirectory);
+  const canonicalStats = await stat(canonicalDirectory);
+  assertSameDirectory(directoryStats, canonicalStats, completed);
 
   const entries = await readdir(taskDirectory, { withFileTypes: true });
+  await assertDirectoryUnchanged(
+    taskDirectory,
+    canonicalDirectory,
+    directoryStats,
+    completed,
+  );
   const candidateNames = entries
     .filter((entry) => TASK_LIKE_FILE_PATTERN.test(entry.name))
     .sort((left, right) => left.name.localeCompare(right.name, 'en'));
@@ -131,7 +143,50 @@ async function loadTaskDirectory(
     }
     tasks.push(task);
   }
+  await assertDirectoryUnchanged(
+    taskDirectory,
+    canonicalDirectory,
+    directoryStats,
+    completed,
+  );
   return tasks;
+}
+
+async function assertDirectoryUnchanged(
+  taskDirectory: string,
+  canonicalDirectory: string,
+  originalStats: Stats,
+  completed: boolean,
+): Promise<void> {
+  const currentStats = await lstat(taskDirectory);
+  if (currentStats.isSymbolicLink() || !currentStats.isDirectory()) {
+    throw directoryChangedError(completed);
+  }
+  const currentCanonicalDirectory = await realpath(taskDirectory);
+  if (currentCanonicalDirectory !== canonicalDirectory) {
+    throw directoryChangedError(completed);
+  }
+  assertSameDirectory(originalStats, currentStats, completed);
+}
+
+function assertSameDirectory(
+  originalStats: Stats,
+  currentStats: Stats,
+  completed: boolean,
+): void {
+  if (
+    !currentStats.isDirectory() ||
+    originalStats.dev !== currentStats.dev ||
+    originalStats.ino !== currentStats.ino
+  ) {
+    throw directoryChangedError(completed);
+  }
+}
+
+function directoryChangedError(completed: boolean): Error {
+  return new Error(
+    `${completed ? 'completed tasks' : 'tasks'} directory changed while being read`,
+  );
 }
 
 async function readTaskFile(
@@ -182,6 +237,14 @@ async function readTaskFile(
 
 export function selectReadyTask(tasks: TaskRecord[]): TaskSelection {
   const byId = new Map(tasks.map((task) => [task.taskId, task]));
+  const activeTasks = tasks.flatMap((task) =>
+    task.status === 'in_progress' || task.status === 'review'
+      ? [{ taskId: task.taskId, status: task.status }]
+      : [],
+  );
+  if (activeTasks.length > 0) {
+    return { kind: 'active', tasks: activeTasks };
+  }
   const blocked: Array<{
     taskId: string;
     dependencies: DependencyBlocker[];
@@ -281,13 +344,26 @@ function parseTask(contents: string, filePath: string): TaskRecord {
     requiredString(fields, field, filePath);
   }
 
+  const title = requiredString(fields, 'title', filePath);
+  if ([...title].some(isControlCharacter)) {
+    throw new Error(`title must not contain control characters: ${taskId}`);
+  }
+
   return {
     taskId,
-    title: requiredString(fields, 'title', filePath),
+    title,
     status,
     dependsOn: [...dependsOn],
     filePath,
   };
+}
+
+function isControlCharacter(character: string): boolean {
+  const codePoint = character.codePointAt(0);
+  return (
+    codePoint !== undefined &&
+    (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f))
+  );
 }
 
 function requiredString(
