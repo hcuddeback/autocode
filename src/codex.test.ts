@@ -64,10 +64,7 @@ test('runs scoped implementation and independent read-only review sessions', asy
     ) as { arguments: string[] };
     assert.deepEqual(implementationRecord.arguments.slice(-1), ['-']);
     assert.ok(reviewRecord.arguments.includes('read-only'));
-    assert.deepEqual(reviewRecord.arguments.slice(-2), [
-      'review',
-      '--uncommitted',
-    ]);
+    assert.deepEqual(reviewRecord.arguments.slice(-1), ['-']);
     assert.ok(!reviewRecord.arguments.includes('--approve-for-me'));
   } finally {
     if (previousPrivateKey === undefined)
@@ -170,17 +167,16 @@ test('terminates a Codex session whose output exceeds the configured bound', asy
       /output limit/,
     );
     assert.equal(
-      (
-        await readFile(
-          path.join(
-            fixture.runDirectory,
-            'sessions',
-            'implementation',
-            'events.jsonl',
-          ),
-        )
-      ).length,
-      128,
+      await readFile(
+        path.join(
+          fixture.runDirectory,
+          'sessions',
+          'implementation',
+          'events.jsonl',
+        ),
+        'utf8',
+      ),
+      '[output omitted: exceeded configured limit]\n',
     );
   } finally {
     await fixture.cleanup();
@@ -294,7 +290,7 @@ import { writeFile } from 'node:fs/promises';
 import { spawn, spawnSync } from 'node:child_process';
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
-const review = process.argv.includes('review');
+const review = input.includes('independent critical-review role');
 if (mode === 'timeout') await new Promise(resolve => setTimeout(resolve, 10_000));
 if (mode === 'timeout-tree') { spawn(process.execPath, ['-e', "process.on('SIGTERM',()=>{}); setTimeout(()=>require('node:fs').writeFileSync('escaped.txt','escaped'),1500); setTimeout(()=>{},10000)"], { stdio: 'ignore' }); await new Promise(resolve => setTimeout(resolve, 10_000)); }
 if (mode === 'overflow') { process.stdout.write('x'.repeat(4096)); await new Promise(resolve => setTimeout(resolve, 10_000)); }

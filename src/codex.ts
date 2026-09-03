@@ -17,6 +17,7 @@ const MAX_INPUT_BYTES = 1024 * 1024;
 const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 const TERMINATION_GRACE_MS = 1_000;
+const OMITTED_OUTPUT = '[output omitted: exceeded configured limit]\n';
 const SESSION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -184,7 +185,7 @@ async function runRole(
     role === 'implementation' ? 'workspace-write' : 'read-only',
     '-C',
     root,
-    ...(role === 'implementation' ? ['-'] : ['review', '--uncommitted']),
+    '-',
   ];
   const startedAt = new Date().toISOString();
   const result = await runProcess(
@@ -297,8 +298,8 @@ function runProcess(
         return;
       }
       resolve({
-        stdout: stdout.toString('utf8'),
-        stderr: stderr.toString('utf8'),
+        stdout: overflowed ? OMITTED_OUTPUT : stdout.toString('utf8'),
+        stderr: overflowed ? OMITTED_OUTPUT : stderr.toString('utf8'),
         exitCode,
         timedOut,
         overflowed,
@@ -337,11 +338,9 @@ function runProcess(
       if (current.length + chunk.length > maxOutputBytes) {
         overflowed = true;
         terminate();
-        return Buffer.concat([
-          current,
-          chunk.subarray(0, Math.max(0, maxOutputBytes - current.length)),
-        ]);
+        return Buffer.from(OMITTED_OUTPUT);
       }
+      if (overflowed) return current;
       return Buffer.concat([current, chunk]);
     };
     child.stdout.on('data', (chunk: Buffer) => {
@@ -356,7 +355,11 @@ function runProcess(
     });
     child.on('close', (code) => {
       closeCode = code ?? -1;
-      if (!terminating || process.platform === 'win32') finish(closeCode);
+      if (!terminating) {
+        if (process.platform !== 'win32')
+          signalPosixProcessGroup(child.pid, true);
+        finish(closeCode);
+      } else if (process.platform === 'win32') finish(closeCode);
     });
     child.stdin.on('error', (error: NodeJS.ErrnoException) => {
       if (error.code !== 'EPIPE' && fatalError === undefined) {
