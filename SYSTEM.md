@@ -63,11 +63,13 @@
 ## AC-004 evidence
 
 - `autocode sessions` consumes the commit-bound preparation and starts fresh implementation and independent-review Codex CLI sessions.
-- Implementation uses workspace-write with approval review; review uses a read-only sandbox against uncommitted changes.
+- Implementation uses the cross-version Codex workspace-write interface; review uses a read-only sandbox against uncommitted changes.
 - Valid distinct thread identities and bounded JSONL, stderr, final message, and metadata are retained per role.
 - Review starts only while the prepared branch and commit remain unchanged and implementation changes remain uncommitted; captured output and arguments are redacted before persistence.
 - Timeout and output-limit termination escalate to forceful process-tree shutdown and return within a fixed grace period.
-- Deterministic fake-Codex tests cover scoped prompts plus malformed events, duplicate identity, Git-state drift, timeout, output overflow, artifact redaction, stale preparation, existing artifacts, and failed exits.
+- Non-`EPIPE` prompt-delivery failures terminate the subprocess before reporting failure, and successful sessions require a non-empty final
+  agent message.
+- Deterministic fake-Codex tests cover scoped prompts plus malformed events, missing final messages, duplicate identity, Git-state drift, timeout, output overflow, artifact redaction, stale preparation, existing artifacts, and failed exits.
 
 ## Next task
 

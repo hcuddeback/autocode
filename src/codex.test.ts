@@ -13,6 +13,8 @@ const IMPLEMENTATION_ID = '11111111-1111-4111-8111-111111111111';
 const REVIEW_ID = '22222222-2222-4222-8222-222222222222';
 
 test('runs scoped implementation and independent read-only review sessions', async () => {
+  const previousPrivateKey = process.env.AUTOCODE_TEST_PRIVATE_KEY;
+  process.env.AUTOCODE_TEST_PRIVATE_KEY = 'line one\n"line two"';
   const fixture = await sessionFixture('success');
   try {
     const result = await runRoleSeparatedCodexSessions(
@@ -41,6 +43,7 @@ test('runs scoped implementation and independent read-only review sessions', asy
       'utf8',
     );
     assert.ok(!events.includes('sk_fixture_secret_123456789'));
+    assert.ok(!events.includes('line one'));
     assert.ok(events.includes('<redacted>'));
     const implementationRecord = JSON.parse(
       await readFile(
@@ -59,14 +62,14 @@ test('runs scoped implementation and independent read-only review sessions', asy
         'utf8',
       ),
     ) as { arguments: string[] };
-    assert.deepEqual(implementationRecord.arguments.slice(-2), [
-      '--approve-for-me',
-      '-',
-    ]);
+    assert.deepEqual(implementationRecord.arguments.slice(-1), ['-']);
     assert.ok(reviewRecord.arguments.includes('read-only'));
     assert.ok(reviewRecord.arguments.includes('--uncommitted'));
     assert.ok(!reviewRecord.arguments.includes('--approve-for-me'));
   } finally {
+    if (previousPrivateKey === undefined)
+      delete process.env.AUTOCODE_TEST_PRIVATE_KEY;
+    else process.env.AUTOCODE_TEST_PRIVATE_KEY = previousPrivateKey;
     await fixture.cleanup();
   }
 });
@@ -91,6 +94,7 @@ test('refuses review when implementation changes the prepared Git identity', asy
 
 for (const [mode, message] of [
   ['malformed', /valid thread identity/],
+  ['missing-final', /did not contain a final message/],
   ['nonzero', /exited with code 7/],
   ['duplicate', /distinct Codex sessions/],
 ] as const) {
@@ -276,6 +280,8 @@ if (mode === 'malformed') { console.log('{bad json'); process.exit(0); }
 const id = review && mode !== 'duplicate' ? '${REVIEW_ID}' : '${IMPLEMENTATION_ID}';
 console.log(JSON.stringify({ type: 'thread.started', thread_id: id }));
 console.log(JSON.stringify({ type: 'diagnostic', text: 'sk_fixture_secret_123456789' }));
+console.log(JSON.stringify({ type: 'diagnostic', text: process.env.AUTOCODE_TEST_PRIVATE_KEY }));
+if (mode === 'missing-final') process.exit(0);
 console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'role=' + (review ? 'review' : 'implementation') + ';task=' + input.includes('<task>') + ';plan=' + input.includes('<plan>') } }));
 if (mode === 'nonzero') process.exit(7);
 `;

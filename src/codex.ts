@@ -184,9 +184,7 @@ async function runRole(
     role === 'implementation' ? 'workspace-write' : 'read-only',
     '-C',
     root,
-    ...(role === 'implementation'
-      ? ['--approve-for-me', '-']
-      : ['review', '--uncommitted', '-']),
+    ...(role === 'implementation' ? ['-'] : ['review', '--uncommitted', '-']),
   ];
   const startedAt = new Date().toISOString();
   const result = await runProcess(
@@ -236,7 +234,7 @@ async function runRole(
     sessionsIdentity,
     role,
     result,
-    finalMessage,
+    finalMessage ?? '',
     record,
   );
   if (result.timedOut) throw new Error(`${role} Codex session timed out`);
@@ -251,6 +249,9 @@ async function runRole(
     throw new Error(
       `${role} Codex output did not contain one valid thread identity`,
     );
+  }
+  if (finalMessage === undefined) {
+    throw new Error(`${role} Codex output did not contain a final message`);
   }
   return record;
 }
@@ -280,6 +281,7 @@ function runProcess(
     let timedOut = false;
     let overflowed = false;
     let settled = false;
+    let fatalError: Error | undefined;
     let terminationTimer: NodeJS.Timeout | undefined;
     const finish = (exitCode: number): void => {
       if (settled) return;
@@ -288,6 +290,10 @@ function runProcess(
       if (terminationTimer !== undefined) clearTimeout(terminationTimer);
       child.stdout.destroy();
       child.stderr.destroy();
+      if (fatalError !== undefined) {
+        reject(fatalError);
+        return;
+      }
       resolve({
         stdout: stdout.toString('utf8'),
         stderr: stderr.toString('utf8'),
@@ -332,15 +338,17 @@ function runProcess(
       stderr = collect(stderr, chunk);
     });
     child.on('error', (error) => {
-      clearTimeout(timer);
-      if (terminationTimer !== undefined) clearTimeout(terminationTimer);
-      reject(error);
+      fatalError = error;
+      finish(-1);
     });
     child.on('close', (code) => {
       finish(code ?? -1);
     });
     child.stdin.on('error', (error: NodeJS.ErrnoException) => {
-      if (error.code !== 'EPIPE') reject(error);
+      if (error.code !== 'EPIPE' && fatalError === undefined) {
+        fatalError = error;
+        terminate();
+      }
     });
     child.stdin.end(input, 'utf8');
   });
@@ -446,8 +454,8 @@ function parseSessionId(stdout: string): string | undefined {
   return identities.length === 1 ? identities[0] : undefined;
 }
 
-function parseFinalMessage(stdout: string): string {
-  let message = '';
+function parseFinalMessage(stdout: string): string | undefined {
+  let message: string | undefined;
   for (const line of stdout.split(/\r?\n/).filter(Boolean)) {
     try {
       const event = JSON.parse(line) as {
@@ -459,9 +467,9 @@ function parseFinalMessage(stdout: string): string {
         event.item?.type === 'agent_message' &&
         typeof event.item.text === 'string'
       )
-        message = event.item.text;
+        message = event.item.text.trim() === '' ? undefined : event.item.text;
     } catch {
-      return '';
+      return undefined;
     }
   }
   return message;
@@ -529,6 +537,8 @@ function redactSecrets(value: string): string {
       )
     ) {
       redacted = redacted.split(secret).join('<redacted>');
+      const encodedSecret = JSON.stringify(secret).slice(1, -1);
+      redacted = redacted.split(encodedSecret).join('<redacted>');
     }
   }
   return redacted
