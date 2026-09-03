@@ -3,6 +3,7 @@
 import path from 'node:path';
 import { initializeProject } from './config.js';
 import { selectProjectTask } from './tasks.js';
+import { prepareImplementationPlan } from './planning.js';
 
 async function main(args: string[]): Promise<void> {
   const [command, ...options] = args;
@@ -54,13 +55,20 @@ async function main(args: string[]): Promise<void> {
     console.log('No ready tasks.');
     return;
   }
+  if (command === 'prepare') {
+    const result = await prepareImplementationPlan(projectDirectory);
+    console.log(
+      `${result.kind === 'created' ? 'Created' : 'Reused'} planning artifacts for ${result.metadata.taskId} at ${result.runDirectory}`,
+    );
+    return;
+  }
   throw new Error(`unknown command: ${command}`);
 }
 
 function printHelp(): void {
   console.log('Usage: autocode <command> [project-directory]');
   console.log(
-    '\nCommands:\n  init      Initialize project-local configuration and state\n  select    Select the first ready task with completed dependencies',
+    '\nCommands:\n  init      Initialize project-local configuration and state\n  select    Select the first ready task with completed dependencies\n  prepare   Validate the selected task and create commit-bound planning artifacts',
   );
 }
 

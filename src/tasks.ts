@@ -41,6 +41,7 @@ export interface TaskRecord {
   status: TaskStatus;
   dependsOn: string[];
   filePath: string;
+  contents: string;
 }
 
 export interface DependencyBlocker {
@@ -355,6 +356,7 @@ function parseTask(contents: string, filePath: string): TaskRecord {
     status,
     dependsOn: [...dependsOn],
     filePath,
+    contents,
   };
 }
 

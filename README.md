@@ -10,7 +10,7 @@ AutoCode will be a local-first TypeScript CLI that runs durable software-enginee
 
 **Last updated:** 2026-09-02
 
-> Current reality: `autocode init` and deterministic ready-task selection are implemented. Workflow orchestration is not implemented yet.
+> Current reality: `autocode init`, deterministic ready-task selection, and commit-bound JIT planning preparation are implemented. Workflow orchestration is not implemented yet.
 
 ## Who it is for
 
@@ -74,6 +74,14 @@ Select the first ready task whose dependencies are complete, provided no task is
 node dist/cli.js select path/to/project
 ```
 
+From the selected task's non-`main` Git worktree, validate its contract and create an editable, commit-bound plan under `.autocode/runs/`:
+
+```shell
+node dist/cli.js prepare path/to/project
+```
+
+Repeating `prepare` for the same task and commit preserves the existing editable plan. A changed commit receives a distinct run directory, while conflicting task snapshots or metadata fail safely.
+
 ## Documentation
 
 - [Product and MVP requirements](docs/PRODUCT.md)
@@ -88,7 +96,7 @@ node dist/cli.js select path/to/project
 
 ## Current next step
 
-Merge AC-002, then implement just-in-time task refinement and planning for the selected task.
+Complete AC-003 gates, then implement role-separated Codex CLI sessions in AC-004.
 
 ## Guardrail
 

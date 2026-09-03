@@ -12,6 +12,8 @@ AutoCode uses three planning horizons:
 2. `tasks/README.md` holds a small ordered queue of outcomes, not speculative implementation detail.
 3. The selected task is created/refined just in time, then a fresh implementation plan is generated against the current commit before coding.
 
+For MVP 1, task refinement remains an operator-authored repository contract. AutoCode validates that selected contract and prepares a deterministic task snapshot, commit-bound metadata, and editable plan template. Model-authored plan content begins only after role-separated Codex sessions are available.
+
 Implementation must take place in an isolated feature branch and worktree. Direct implementation on `main` is prohibited.
 
 Later tasks stay coarse until dependencies and current reality are known. The task is an implementation contract; its detailed plan is a run artifact.
