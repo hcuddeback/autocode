@@ -10,7 +10,7 @@ AutoCode will be a local-first TypeScript CLI that runs durable software-enginee
 
 **Last updated:** 2026-09-02
 
-> Current reality: `autocode init`, deterministic ready-task selection, and commit-bound JIT planning preparation are implemented. Workflow orchestration is not implemented yet.
+> Current reality: `autocode init`, deterministic ready-task selection, commit-bound JIT planning preparation, and role-separated Codex sessions are implemented. Durable workflow orchestration is not implemented yet.
 
 ## Who it is for
 
@@ -82,6 +82,14 @@ node dist/cli.js prepare path/to/project
 
 Repeating `prepare` for the same task and commit preserves the existing editable plan. A changed commit receives a distinct run directory, while conflicting task snapshots or metadata fail safely.
 
+After filling the prepared plan, run a writable implementation session followed by a fresh read-only critical-review session:
+
+```shell
+node dist/cli.js sessions path/to/project
+```
+
+The command atomically reserves its session output, passes scoped prompts through stdin, captures distinct Codex thread IDs, and stores bounded, redacted JSONL, stderr, final-message, and session metadata artifacts below the prepared run. It protects ignored credential files from implementation changes and runs default Linux sessions in transient systemd user units so daemonized descendants remain contained. It stops on stale preparation, changed Git or protected local state, missing uncommitted implementation changes, existing evidence, timeout, output overflow, malformed events, failed exit, or reused session identity. Session resume, verification, and review-fix loops are not part of this command yet.
+
 ## Documentation
 
 - [Product and MVP requirements](docs/PRODUCT.md)
@@ -96,7 +104,7 @@ Repeating `prepare` for the same task and commit preserves the existing editable
 
 ## Current next step
 
-Complete AC-003 gates, then implement role-separated Codex CLI sessions in AC-004.
+Add deterministic verification and retained evidence in AC-005 after AC-004 passes its remaining gates.
 
 ## Guardrail
 

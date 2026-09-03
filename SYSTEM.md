@@ -2,7 +2,7 @@
 
 **Last verified:** 2026-09-02
 
-**Stage:** AC-003 JIT planning preparation implemented
+**Stage:** AC-004 role-separated Codex sessions implemented on its feature branch
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -12,7 +12,7 @@
 
 - The clean public repository exists.
 - The product, architecture, workflow, security, release, and task contracts are documented.
-- A strict TypeScript CLI initializes local state, deterministically selects dependency-ready tasks, validates selected task contracts, and prepares commit-bound planning artifacts; the orchestration runtime does not.
+- A strict TypeScript CLI initializes local state, deterministically selects dependency-ready tasks, prepares commit-bound planning artifacts, and invokes scoped role-separated Codex implementation/review sessions; durable phase orchestration does not exist yet.
 
 ## Evidence level
 
@@ -22,11 +22,12 @@
 | CLI is usable                 | Build, initialization, and selection tests      | High                                       |
 | Task selection is implemented | Ready/blocked/malformed/completed fixture tests | High                                       |
 | JIT planning is implemented   | Commit/task binding and artifact safety tests   | High                                       |
+| Codex session roles exist     | Fake-Codex subprocess and failure-path tests    | High                                       |
 | Workflow is implemented       | Design contract only                            | High confidence that it is not implemented |
 
 ## Known gaps and blockers
 
-- CI, workflow phases, durable run state, and the Codex adapter are absent.
+- CI, workflow phases, durable run state, verification evidence, and session resume are absent.
 - License has not been selected and added.
 
 ## Current milestone
@@ -59,9 +60,21 @@
 - Task validation rejects the editable placeholder prompts from `tasks/TASK_TEMPLATE.md`.
 - Plan context contains only the selected task snapshot, leaving Codex execution to AC-004.
 
+## AC-004 evidence
+
+- `autocode sessions` consumes the commit-bound preparation and starts fresh implementation and independent-review Codex CLI sessions.
+- The sessions directory is reserved atomically before Codex starts, so concurrent invocations cannot share or overwrite a run.
+- Implementation uses the cross-version Codex workspace-write interface; review uses a read-only sandbox against uncommitted changes.
+- Valid distinct thread identities and bounded JSONL, stderr, final message, and metadata are retained per role.
+- Review starts only while the prepared branch and commit remain unchanged, implementation changes remain uncommitted, and protected `.autocode` plus ignored credential state remains identical; captured output and arguments are redacted using environment values, dotenv/JSON/YAML credential values, and known secret formats before persistence.
+- Timeout and output-limit termination escalate to forceful process-tree shutdown and return within a fixed grace period. Default Linux Codex sessions run in a transient systemd user unit, providing kernel-enforced cgroup containment for daemonized descendants; unsupported non-Windows platforms fail closed.
+- Non-`EPIPE` prompt-delivery failures terminate the subprocess before reporting failure, and successful sessions require a non-empty final
+  agent message.
+- Deterministic fake-Codex tests cover scoped prompts plus malformed events, missing final messages, duplicate identity, Git-state, protected-state and credential-state drift, timeout, output overflow, concurrent reservation, multi-format credential redaction, stale preparation, existing artifacts, and failed exits.
+
 ## Next task
 
-Complete AC-003 gates, then select AC-004 for role-separated Codex CLI sessions.
+Complete AC-004 review and PR gates, then select AC-005 for deterministic verification evidence.
 
 ## Recently completed
 
@@ -69,5 +82,7 @@ Complete AC-003 gates, then select AC-004 for role-separated Codex CLI sessions.
 - 2026-09-02 — Implemented the AC-001 CLI foundation on its feature branch.
 - 2026-09-02 — Merged AC-001 through PR #1 and implemented AC-002 task selection on its feature branch.
 - 2026-09-02 — Merged AC-002 through PR #2 and implemented AC-003 JIT planning preparation on its feature branch.
+- 2026-09-02 — Merged AC-003 through PR #3 and selected AC-004 for role-separated Codex CLI sessions.
+- 2026-09-02 — Implemented the AC-004 Codex session boundary on its isolated feature worktree.
 
 Update this file when a major capability, blocker, milestone, or release fact changes.
