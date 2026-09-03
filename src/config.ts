@@ -26,18 +26,55 @@ const LOCK_RETRY_DELAY_MS = 25;
 const FOREIGN_LOCK_LEASE_MS = 60_000;
 const OWNERLESS_LOCK_STALE_MS = 5_000;
 const IGNORE_PROBES = [CONFIG_FILE, '.autocode/runs/evidence.txt'];
-const CONFIG_KEYS = new Set(['version', 'stateDirectory', 'telemetry']);
+const CONFIG_KEYS = new Set([
+  'version',
+  'stateDirectory',
+  'telemetry',
+  'verification',
+]);
+const VERIFICATION_KEYS = new Set(['commands', 'timeoutMs', 'maxOutputBytes']);
+const COMMAND_KEYS = new Set(['name', 'command', 'args']);
+const SHELL_EXECUTABLES = new Set([
+  'bash',
+  'cmd',
+  'cmd.exe',
+  'fish',
+  'powershell',
+  'powershell.exe',
+  'pwsh',
+  'pwsh.exe',
+  'sh',
+  'zsh',
+]);
+
+export interface VerificationCommandConfig {
+  name: string;
+  command: string;
+  args: string[];
+}
+
+export interface VerificationConfig {
+  commands: VerificationCommandConfig[];
+  timeoutMs: number;
+  maxOutputBytes: number;
+}
 
 export interface AutoCodeConfig {
   version: 1;
   stateDirectory: '.autocode';
   telemetry: false;
+  verification: VerificationConfig;
 }
 
 const defaultConfig: AutoCodeConfig = {
   version: 1,
   stateDirectory: STATE_DIRECTORY,
   telemetry: false,
+  verification: {
+    commands: [],
+    timeoutMs: 10 * 60 * 1000,
+    maxOutputBytes: 1024 * 1024,
+  },
 };
 
 export function validateConfig(value: unknown): AutoCodeConfig {
@@ -62,7 +99,111 @@ export function validateConfig(value: unknown): AutoCodeConfig {
     throw new Error(`unknown configuration key: ${unexpectedKeys[0]}`);
   }
 
-  return { ...defaultConfig };
+  const verification = validateVerificationConfig(config.verification);
+  return { ...defaultConfig, verification };
+}
+
+function validateVerificationConfig(value: unknown): VerificationConfig {
+  if (value === undefined) return structuredClone(defaultConfig.verification);
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('verification configuration must be a mapping');
+  }
+  const record = value as Record<string, unknown>;
+  rejectUnknownKeys(record, VERIFICATION_KEYS, 'verification');
+  if (!Array.isArray(record.commands) || record.commands.length > 32) {
+    throw new Error(
+      'verification.commands must be an array of at most 32 commands',
+    );
+  }
+  const commands = record.commands.map((candidate, index) =>
+    validateVerificationCommand(candidate, index),
+  );
+  if (
+    new Set(commands.map((command) => command.name)).size !== commands.length
+  ) {
+    throw new Error('verification command names must be unique');
+  }
+  const timeoutMs = boundedPositiveInteger(
+    record.timeoutMs,
+    'verification.timeoutMs',
+    24 * 60 * 60 * 1000,
+  );
+  const maxOutputBytes = positiveInteger(
+    record.maxOutputBytes,
+    'verification.maxOutputBytes',
+  );
+  if (maxOutputBytes > 16 * 1024 * 1024) {
+    throw new Error('verification.maxOutputBytes exceeds 16777216 bytes');
+  }
+  return { commands, timeoutMs, maxOutputBytes };
+}
+
+function validateVerificationCommand(
+  value: unknown,
+  index: number,
+): VerificationCommandConfig {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`verification.commands[${index}] must be a mapping`);
+  }
+  const record = value as Record<string, unknown>;
+  rejectUnknownKeys(record, COMMAND_KEYS, `verification.commands[${index}]`);
+  const { name, command, args } = record;
+  if (typeof name !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(name)) {
+    throw new Error(`verification.commands[${index}].name is invalid`);
+  }
+  if (
+    typeof command !== 'string' ||
+    command.trim() !== command ||
+    command.length === 0 ||
+    command.includes('\0') ||
+    path.isAbsolute(command) ||
+    command.includes('/') ||
+    command.includes('\\') ||
+    SHELL_EXECUTABLES.has(command.toLowerCase())
+  ) {
+    throw new Error(`verification.commands[${index}].command is invalid`);
+  }
+  if (
+    !Array.isArray(args) ||
+    args.length > 128 ||
+    args.some(
+      (argument) =>
+        typeof argument !== 'string' ||
+        argument.includes('\0') ||
+        Buffer.byteLength(argument) > 16 * 1024,
+    )
+  ) {
+    throw new Error(`verification.commands[${index}].args is invalid`);
+  }
+  return { name, command, args: [...(args as string[])] };
+}
+
+function positiveInteger(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
+    throw new Error(`${field} must be a positive integer`);
+  }
+  return value as number;
+}
+
+function boundedPositiveInteger(
+  value: unknown,
+  field: string,
+  maximum: number,
+): number {
+  const result = positiveInteger(value, field);
+  if (result > maximum) throw new Error(`${field} exceeds ${maximum}`);
+  return result;
+}
+
+function rejectUnknownKeys(
+  record: Record<string, unknown>,
+  allowed: ReadonlySet<string>,
+  field: string,
+): void {
+  const unexpected = Object.keys(record).find((key) => !allowed.has(key));
+  if (unexpected !== undefined) {
+    throw new Error(`unknown ${field} key: ${unexpected}`);
+  }
 }
 
 export async function initializeProject(

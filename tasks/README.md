@@ -24,7 +24,7 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 
 ## Immediate queue
 
-`AC-004` is in review on `feat/AC-004-codex-sessions`: implementation and local gates pass; independent Codex review, PR, Codex PR review, and human merge authorization remain.
+`AC-005` is in review on `feat/AC-005-deterministic-verification`: implementation and local gates pass; independent Codex review and PR gates remain.
 
 ## JIT task process
 

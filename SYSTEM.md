@@ -1,8 +1,8 @@
 # AutoCode system state
 
-**Last verified:** 2026-09-02
+**Last verified:** 2026-09-03
 
-**Stage:** AC-004 role-separated Codex sessions implemented on its feature branch
+**Stage:** AC-005 deterministic verification implemented on its feature branch
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -12,7 +12,7 @@
 
 - The clean public repository exists.
 - The product, architecture, workflow, security, release, and task contracts are documented.
-- A strict TypeScript CLI initializes local state, deterministically selects dependency-ready tasks, prepares commit-bound planning artifacts, and invokes scoped role-separated Codex implementation/review sessions; durable phase orchestration does not exist yet.
+- A strict TypeScript CLI initializes local state, selects dependency-ready tasks, prepares commit-bound planning artifacts, invokes scoped role-separated Codex sessions, and runs configured deterministic checks with retained evidence; durable phase orchestration does not exist yet.
 
 ## Evidence level
 
@@ -23,11 +23,12 @@
 | Task selection is implemented | Ready/blocked/malformed/completed fixture tests | High                                       |
 | JIT planning is implemented   | Commit/task binding and artifact safety tests   | High                                       |
 | Codex session roles exist     | Fake-Codex subprocess and failure-path tests    | High                                       |
+| Verification evidence exists  | Deterministic subprocess and artifact fixtures  | High                                       |
 | Workflow is implemented       | Design contract only                            | High confidence that it is not implemented |
 
 ## Known gaps and blockers
 
-- CI, workflow phases, durable run state, verification evidence, and session resume are absent.
+- CI, workflow phases, bounded fix loops, durable run state, and session resume are absent.
 - License has not been selected and added.
 
 ## Current milestone
@@ -72,9 +73,17 @@
   agent message.
 - Deterministic fake-Codex tests cover scoped prompts plus malformed events, missing final messages, duplicate identity, Git-state, protected-state and credential-state drift, timeout, output overflow, concurrent reservation, multi-format credential redaction, stale preparation, existing artifacts, and failed exits.
 
+## AC-005 evidence
+
+- `autocode verify` validates configured executable-and-argument arrays and runs them sequentially without a shell from the prepared worktree.
+- The evidence directory is reserved before execution; each attempted check retains bounded redacted output, command identity, timing, exit status, and the prepared Git branch and commit.
+- Verification stops on the first nonzero exit, timeout, output overflow, Git-identity change, or worktree change, retaining partial evidence and refusing to overwrite an existing run.
+- Default Linux verification runs in a transient systemd user unit so detached descendants remain contained; unsupported non-Windows containment fails closed.
+- Fixture tests cover successful sequences, partial failure, timeout, overflow, stale preparation, artifact collision, and unsafe configuration.
+
 ## Next task
 
-Complete AC-004 review and PR gates, then select AC-005 for deterministic verification evidence.
+Complete AC-005 review and PR gates, then select AC-006 for bounded fix loops.
 
 ## Recently completed
 
@@ -84,5 +93,6 @@ Complete AC-004 review and PR gates, then select AC-005 for deterministic verifi
 - 2026-09-02 — Merged AC-002 through PR #2 and implemented AC-003 JIT planning preparation on its feature branch.
 - 2026-09-02 — Merged AC-003 through PR #3 and selected AC-004 for role-separated Codex CLI sessions.
 - 2026-09-02 — Implemented the AC-004 Codex session boundary on its isolated feature worktree.
+- 2026-09-03 — Merged AC-004 through PR #4 and implemented AC-005 deterministic verification on its isolated feature worktree.
 
 Update this file when a major capability, blocker, milestone, or release fact changes.

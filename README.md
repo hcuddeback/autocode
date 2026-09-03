@@ -90,6 +90,29 @@ node dist/cli.js sessions path/to/project
 
 The command atomically reserves its session output, passes scoped prompts through stdin, captures distinct Codex thread IDs, and stores bounded, redacted JSONL, stderr, final-message, and session metadata artifacts below the prepared run. It protects ignored credential files from implementation changes and runs default Linux sessions in transient systemd user units so daemonized descendants remain contained. It stops on stale preparation, changed Git or protected local state, missing uncommitted implementation changes, existing evidence, timeout, output overflow, malformed events, failed exit, or reused session identity. Session resume, verification, and review-fix loops are not part of this command yet.
 
+Configure deterministic checks in `.autocode/config.yaml` as executable and argument arrays:
+
+```yaml
+verification:
+  commands:
+    - name: format
+      command: pnpm
+      args: [format:check]
+    - name: test
+      command: pnpm
+      args: [test]
+  timeoutMs: 600000
+  maxOutputBytes: 1048576
+```
+
+Then run them from the prepared task worktree:
+
+```shell
+node dist/cli.js verify path/to/project
+```
+
+`verify` runs each command directly without a shell and stops on the first nonzero exit, timeout, output overflow, Git-identity change, or worktree change. It atomically reserves `.autocode/runs/<run>/evidence/` and retains redacted stdout, stderr, command arguments, exit status, timing, and the exact branch and commit for every attempted check. Default Linux checks run in transient systemd user units so daemonized descendants remain contained; unsupported non-Windows containment fails closed. Existing evidence and stale preparation fail closed. Automatic fix loops and resumable phase orchestration remain later tasks.
+
 ## Documentation
 
 - [Product and MVP requirements](docs/PRODUCT.md)
@@ -104,7 +127,7 @@ The command atomically reserves its session output, passes scoped prompts throug
 
 ## Current next step
 
-Add deterministic verification and retained evidence in AC-005 after AC-004 passes its remaining gates.
+Complete AC-005 review and PR gates, then select AC-006 for bounded fix loops.
 
 ## Guardrail
 
