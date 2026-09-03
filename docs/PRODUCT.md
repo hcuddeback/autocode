@@ -79,6 +79,6 @@ A developer needs to hand an approved MVP task to a local orchestrator so Codex 
 
 ## Open questions
 
-- [ ] Finalize the boundary between JIT task refinement and JIT implementation planning during schema work.
+- [x] Finalize the boundary between JIT task refinement and JIT implementation planning during schema work: operators author task contracts; AutoCode validates and snapshots them before model-authored planning begins.
 - [ ] Select the public package/binary name after checking registry availability.
 - [ ] Decide which PR/production phases enter MVP 1 after the local slice is proven.
