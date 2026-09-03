@@ -25,6 +25,7 @@ const REQUIRED_SECTIONS = [
   'Required context',
   'Scope',
   'Implementation constraints',
+  'Required execution sequence',
   'Done when',
   'Deterministic validation',
   'Independent critical-review focus',
@@ -33,34 +34,60 @@ const REQUIRED_SECTIONS = [
   'Files/areas expected',
   'Manual owner steps or blockers',
 ] as const;
-const TEMPLATE_PLACEHOLDERS = [
-  'Replace with one observable outcome',
-  'YYYY-MM-DD',
-  'Describe one observable user or system result.',
-  'Link this task to the MVP milestone, evidence, defect, security need, or release gate.',
-  'relevant sections only.',
-  'affected phases/gates only.',
-  'relevant sections or not applicable.',
-  'Remove unneeded documents.',
-  'Specific behavior or deliverable.',
-  'Important integration boundaries.',
-  'Adjacent work excluded.',
-  'Later outcome not to implement early.',
-  'Observable positive result.',
-  'Important failure, empty, interruption, or recovery result.',
-  'Applicable data, authorization, process, or provider boundary.',
-  'PENDING_REAL_COMMAND',
-  'Replace pending commands before marking ready',
-  'Assumptions, edge cases, safety boundaries, and regression surfaces to challenge.',
-  'Runtime/user-journey scenarios and required evidence if applicable.',
-  'PR applicability: required | not applicable',
-  'Codex PR review: required | not applicable | auto',
-  'Merge authorization: human | policy | not applicable',
-  'Production verification: required | not applicable | auto',
-  'Task-specific CI, freshness, deployment, smoke, or rollback evidence.',
-  'Likely paths/components',
-  '`None`, or account/provider/credential/approval work',
-] as const;
+const SECTION_PLACEHOLDER_LINES: Readonly<Record<string, readonly string[]>> = {
+  Outcome: ['Describe one observable user or system result.'],
+  'Why now': [
+    'Link this task to the MVP milestone, evidence, defect, security need, or release gate.',
+  ],
+  'Required context': [
+    '- `docs/PRODUCT.md` — relevant sections only.',
+    '- `docs/ARCHITECTURE.md` — relevant sections only.',
+    '- `docs/WORKFLOW.md` — affected phases/gates only.',
+    '- `docs/SECURITY.md` — relevant sections or not applicable.',
+    'Remove unneeded documents. Do not import the whole roadmap into implementation context.',
+  ],
+  'Scope In': [
+    '- Specific behavior or deliverable.',
+    '- Important integration boundaries.',
+  ],
+  'Scope Out': [
+    '- Adjacent work excluded.',
+    '- Later outcome not to implement early.',
+  ],
+  'Done when': [
+    '- [ ] Observable positive result.',
+    '- [ ] Important failure, empty, interruption, or recovery result.',
+    '- [ ] Applicable data, authorization, process, or provider boundary.',
+  ],
+  'Deterministic validation': [
+    '- [ ] Formatting/lint: `PENDING_REAL_COMMAND`',
+    '- [ ] Typecheck: `PENDING_REAL_COMMAND`',
+    '- [ ] Tests: `PENDING_REAL_COMMAND`',
+    '- [ ] Build/package smoke: `PENDING_REAL_COMMAND`',
+    'Replace pending commands before marking ready once the repository provides them.',
+  ],
+  'Independent critical-review focus': [
+    '- Assumptions, edge cases, safety boundaries, and regression surfaces to challenge.',
+  ],
+  QA: [
+    '**Applicability:** `auto`',
+    '- Runtime/user-journey scenarios and required evidence if applicable.',
+    '- Persist a reason when not applicable.',
+  ],
+  'PR, merge, and production gates': [
+    '- PR applicability: required | not applicable (include a reason when not applicable)',
+    '- Codex PR review: required | not applicable | auto',
+    '- Merge authorization: human | policy | not applicable',
+    '- Production verification: required | not applicable | auto',
+    '- Task-specific CI, freshness, deployment, smoke, or rollback evidence.',
+  ],
+  'Files/areas expected': [
+    '- Likely paths/components; this does not authorize unrelated cleanup.',
+  ],
+  'Manual owner steps or blockers': [
+    '- `None`, or account/provider/credential/approval work and what it blocks. Never include secrets.',
+  ],
+};
 const EMPTY_COMPLETION_FIELD_PATTERN =
   /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+(?:Branch\/PR|Final commit|Validation evidence|Review disposition|QA evidence or not-applicable reason|Production evidence or not-applicable reason|Remaining limitation):[ \t]*$/m;
 const MAX_ARTIFACT_BYTES = 1024 * 1024;
@@ -145,9 +172,12 @@ export async function prepareImplementationPlan(
   if (await pathExists(runDirectory)) {
     await assertPlanningIdentity(root, selection.task, branch, headCommit);
     await validateExistingRun(
+      root,
       runDirectory,
       expectedMetadata,
       selection.task,
+      branch,
+      headCommit,
       runsIdentity,
       options,
     );
@@ -167,6 +197,11 @@ export async function prepareImplementationPlan(
       'temporary planning directory',
     );
     await options.onCheckpoint?.('after-temporary-identity');
+    await assertDirectoryIdentity(runsIdentity, 'runs directory');
+    await assertDirectoryIdentity(
+      temporaryIdentity,
+      'temporary planning directory',
+    );
     await writeFile(
       path.join(temporaryDirectory, 'planning.json'),
       expectedMetadata,
@@ -216,9 +251,12 @@ export async function prepareImplementationPlan(
     await assertDirectoryIdentity(runsIdentity, 'runs directory');
     if (await pathExists(runDirectory)) {
       await validateExistingRun(
+        root,
         runDirectory,
         expectedMetadata,
         selection.task,
+        branch,
+        headCommit,
         runsIdentity,
         options,
       );
@@ -230,6 +268,7 @@ export async function prepareImplementationPlan(
 }
 
 function validateTaskContract(task: TaskRecord): void {
+  const sectionBodies = new Map<string, string>();
   for (const section of REQUIRED_SECTIONS) {
     const heading = section === 'Outcome' ? '#' : '##';
     const match = new RegExp(
@@ -244,29 +283,87 @@ function validateTaskContract(task: TaskRecord): void {
         `task contract has an empty required section: ${section}`,
       );
     }
+    sectionBodies.set(section, match[1] ?? '');
   }
-  validateScopeSubsection(task.contents, 'In');
-  validateScopeSubsection(task.contents, 'Out');
+  const scopeBody = sectionBodies.get('Scope') ?? '';
+  const scopeIn = validateScopeSubsection(scopeBody, 'In');
+  const scopeOut = validateScopeSubsection(scopeBody, 'Out');
+  const title = task.title.trim();
+  const lastUpdated = taskFrontmatterValue(task.contents, 'last_updated');
+  const qa = taskFrontmatterValue(task.contents, 'qa');
+  const deployment = taskFrontmatterValue(task.contents, 'deployment');
+  const completionRecord = optionalSectionBody(
+    task.contents,
+    'Completion record',
+  );
   if (
-    TEMPLATE_PLACEHOLDERS.some((placeholder) =>
-      task.contents.includes(placeholder),
-    ) ||
-    EMPTY_COMPLETION_FIELD_PATTERN.test(task.contents)
+    title === 'Replace with one observable outcome' ||
+    (typeof lastUpdated === 'string' && lastUpdated.trim() === 'YYYY-MM-DD') ||
+    qa === 'auto' ||
+    deployment === 'auto' ||
+    containsScopedTemplatePlaceholder(sectionBodies, scopeIn, scopeOut) ||
+    (completionRecord !== undefined &&
+      EMPTY_COMPLETION_FIELD_PATTERN.test(completionRecord))
   ) {
     throw new Error('task contract contains template placeholder content');
   }
 }
 
-function validateScopeSubsection(contents: string, subsection: 'In' | 'Out') {
-  const match = new RegExp(
-    `^### ${subsection}\\s*$([\\s\\S]*?)(?=^#{1,3} |(?![\\s\\S]))`,
+function optionalSectionBody(
+  contents: string,
+  section: string,
+): string | undefined {
+  return new RegExp(
+    `^## ${escapeRegExp(section)}\\s*$([\\s\\S]*?)(?=^#{1,2} |(?![\\s\\S]))`,
     'm',
-  ).exec(contents);
+  ).exec(contents)?.[1];
+}
+
+function containsScopedTemplatePlaceholder(
+  sections: ReadonlyMap<string, string>,
+  scopeIn: string,
+  scopeOut: string,
+): boolean {
+  for (const [section, placeholders] of Object.entries(
+    SECTION_PLACEHOLDER_LINES,
+  )) {
+    const body =
+      section === 'Scope In'
+        ? scopeIn
+        : section === 'Scope Out'
+          ? scopeOut
+          : (sections.get(section) ?? '');
+    const lines = body.split(/\r?\n/).map((line) => line.trim());
+    if (placeholders.some((placeholder) => lines.includes(placeholder))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function taskFrontmatterValue(contents: string, field: string): unknown {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(contents);
+  if (match === null) return undefined;
+  const value: unknown = parse(match[1] ?? '');
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)[field]
+    : undefined;
+}
+
+function validateScopeSubsection(
+  scopeBody: string,
+  subsection: 'In' | 'Out',
+): string {
+  const match = new RegExp(
+    `^### ${subsection}\\s*$([\\s\\S]*?)(?=^### |(?![\\s\\S]))`,
+    'm',
+  ).exec(scopeBody);
   if (match === null || !hasSubstantiveContent(match[1] ?? '')) {
     throw new Error(
       `task contract has an empty Scope ${subsection} subsection`,
     );
   }
+  return match[1] ?? '';
 }
 
 function hasSubstantiveContent(contents: string): boolean {
@@ -450,9 +547,12 @@ async function removeOwnedDirectory(
 }
 
 async function validateExistingRun(
+  root: string,
   runDirectory: string,
   expectedMetadata: string,
   task: TaskRecord,
+  branch: string,
+  headCommit: string,
   runsIdentity: DirectoryIdentity,
   options: PlanningOptions,
 ): Promise<void> {
@@ -479,6 +579,7 @@ async function validateExistingRun(
       'existing planning artifacts conflict with the selected task and commit',
     );
   }
+  await assertPlanningIdentity(root, task, branch, headCommit);
 }
 
 async function readRealFile(

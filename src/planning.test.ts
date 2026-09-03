@@ -110,6 +110,10 @@ Required for the fixture milestone.
 
 - Preserve project boundaries.
 
+## Required execution sequence
+
+1. Implement and verify in the isolated worktree.
+
 ## Done when
 
 - [ ] The task result is observable.
@@ -205,7 +209,7 @@ test('rejects task contracts with template placeholders', async () => {
       taskPath,
       (await readFile(taskPath, 'utf8')).replace(
         'pnpm test',
-        'PENDING_REAL_COMMAND',
+        '`PENDING_REAL_COMMAND`',
       ),
     );
     await assert.rejects(
@@ -218,21 +222,48 @@ test('rejects task contracts with template placeholders', async () => {
 });
 
 test('rejects remaining editable placeholders copied from the task template', async () => {
-  const placeholders = [
-    'Describe one observable user or system result.',
-    'Important integration boundaries.',
-    'Likely paths/components',
+  const replacements = [
+    ['Deliver AC-003.', 'Describe one observable user or system result.'],
+    ['- This task only.', '- Important integration boundaries.'],
+    [
+      '- src/',
+      '- Likely paths/components; this does not authorize unrelated cleanup.',
+    ],
+    ['Not applicable.', '**Applicability:** `auto`'],
+    ['Not applicable.', '- Persist a reason when not applicable.'],
+    ['Not applicable.', '**Applicability:** `auto`'],
+    ['Not applicable.', '- Persist a reason when not applicable.'],
   ];
-  for (const placeholder of placeholders) {
+  for (const [target, placeholder] of replacements) {
+    const project = await fixtureProject();
+    try {
+      const taskPath = path.join(project, 'tasks', 'AC-003.md');
+      const updatedTask = (await readFile(taskPath, 'utf8')).replace(
+        target!,
+        placeholder!,
+      );
+      await writeFile(taskPath, updatedTask);
+      await assert.rejects(
+        () => prepareImplementationPlan(project),
+        /template placeholder/,
+      );
+    } finally {
+      await removeFixture(project);
+    }
+  }
+});
+
+test('rejects quoted frontmatter placeholder values', async () => {
+  for (const [target, replacement] of [
+    ['title: Task AC-003', 'title: "Replace with one observable outcome "'],
+    ['last_updated: 2026-09-02', "last_updated: ' YYYY-MM-DD'"],
+  ]) {
     const project = await fixtureProject();
     try {
       const taskPath = path.join(project, 'tasks', 'AC-003.md');
       await writeFile(
         taskPath,
-        (await readFile(taskPath, 'utf8')).replace(
-          'Deliver AC-003.',
-          placeholder,
-        ),
+        (await readFile(taskPath, 'utf8')).replace(target!, replacement!),
       );
       await assert.rejects(
         () => prepareImplementationPlan(project),
@@ -241,6 +272,87 @@ test('rejects remaining editable placeholders copied from the task template', as
     } finally {
       await removeFixture(project);
     }
+  }
+});
+
+test('rejects unresolved QA and deployment applicability', async () => {
+  for (const [target, replacement] of [
+    ['qa: not_applicable', 'qa: auto'],
+    ['deployment: not_applicable', 'deployment: auto'],
+  ]) {
+    const project = await fixtureProject();
+    try {
+      const taskPath = path.join(project, 'tasks', 'AC-003.md');
+      await writeFile(
+        taskPath,
+        (await readFile(taskPath, 'utf8')).replace(target!, replacement!),
+      );
+      await assert.rejects(
+        () => prepareImplementationPlan(project),
+        /template placeholder/,
+      );
+    } finally {
+      await removeFixture(project);
+    }
+  }
+});
+
+test('allows template tokens when they are substantive content outside the template field', async () => {
+  const project = await fixtureProject();
+  try {
+    const taskPath = path.join(project, 'tasks', 'AC-003.md');
+    await writeFile(
+      taskPath,
+      (await readFile(taskPath, 'utf8')).replace(
+        'Required for the fixture milestone.',
+        'Describe one observable user or system result, using YYYY-MM-DD dates.',
+      ),
+    );
+    await git(project, ['add', '--', 'tasks/AC-003.md']);
+    await git(project, ['commit', '-m', 'document date format']);
+    assert.equal((await prepareImplementationPlan(project)).kind, 'created');
+  } finally {
+    await removeFixture(project);
+  }
+});
+
+test('rejects a missing Required execution sequence section', async () => {
+  const project = await fixtureProject();
+  try {
+    const taskPath = path.join(project, 'tasks', 'AC-003.md');
+    await writeFile(
+      taskPath,
+      (await readFile(taskPath, 'utf8')).replace(
+        /## Required execution sequence[\s\S]*?(?=## Done when)/,
+        '',
+      ),
+    );
+    await assert.rejects(
+      () => prepareImplementationPlan(project),
+      /missing required section: Required execution sequence/,
+    );
+  } finally {
+    await removeFixture(project);
+  }
+});
+
+test('requires Scope subsections to be inside Scope', async () => {
+  const project = await fixtureProject();
+  try {
+    const taskPath = path.join(project, 'tasks', 'AC-003.md');
+    await writeFile(
+      taskPath,
+      (await readFile(taskPath, 'utf8')).replace(
+        /### In[\s\S]*?(?=## Implementation constraints)/,
+        '',
+      ) + '\n### In\n\n- Stray.\n\n### Out\n\n- Stray.\n',
+    );
+    await assert.rejects(
+      () => prepareImplementationPlan(project),
+      /empty required section: Scope|empty Scope In subsection/,
+    );
+  } finally {
+    await removeFixture(project);
   }
 });
 
@@ -272,6 +384,25 @@ test('rejects an empty completion-record field', async () => {
       () => prepareImplementationPlan(project),
       /template placeholder/,
     );
+  } finally {
+    await removeFixture(project);
+  }
+});
+
+test('allows completion labels outside the Completion record', async () => {
+  const project = await fixtureProject();
+  try {
+    const taskPath = path.join(project, 'tasks', 'AC-003.md');
+    await writeFile(
+      taskPath,
+      (await readFile(taskPath, 'utf8')).replace(
+        'Required for the fixture milestone.',
+        'Required for the fixture milestone.\n\n- Final commit:',
+      ),
+    );
+    await git(project, ['add', '--', 'tasks/AC-003.md']);
+    await git(project, ['commit', '-m', 'document completion label example']);
+    assert.equal((await prepareImplementationPlan(project)).kind, 'created');
   } finally {
     await removeFixture(project);
   }
@@ -378,6 +509,27 @@ test('detects replacement of an existing planning run during validation', async 
   }
 });
 
+test('rechecks Git identity after validating an existing run', async () => {
+  const project = await fixtureProject();
+  try {
+    await prepareImplementationPlan(project);
+    await assert.rejects(
+      () =>
+        prepareImplementationPlan(project, {
+          onCheckpoint: async (checkpoint) => {
+            if (checkpoint !== 'after-existing-run-identity') return;
+            await writeFile(path.join(project, 'concurrent.txt'), 'change\n');
+            await git(project, ['add', '--', 'concurrent.txt']);
+            await git(project, ['commit', '-m', 'concurrent existing change']);
+          },
+        }),
+      /task or Git identity changed/,
+    );
+  } finally {
+    await removeFixture(project);
+  }
+});
+
 test('removes its temporary directory after a preparation failure', async () => {
   const project = await fixtureProject();
   try {
@@ -398,6 +550,32 @@ test('removes its temporary directory after a preparation failure', async () => 
     );
   } finally {
     await removeFixture(project);
+  }
+});
+
+test('rejects a replaced temporary directory before artifact writes', async () => {
+  const project = await fixtureProject();
+  const external = await mkdtemp(path.join(os.tmpdir(), 'autocode-temp-race-'));
+  try {
+    const runs = path.join(project, '.autocode', 'runs');
+    await assert.rejects(
+      () =>
+        prepareImplementationPlan(project, {
+          onCheckpoint: async (checkpoint) => {
+            if (checkpoint !== 'after-temporary-identity') return;
+            const [temporaryName] = await readdir(runs);
+            assert.ok(temporaryName);
+            const temporary = path.join(runs, temporaryName);
+            await rename(temporary, `${temporary}-original`);
+            await symlink(external, temporary, 'junction');
+          },
+        }),
+      /temporary planning directory must be a real directory|temporary planning directory changed/,
+    );
+    assert.deepEqual(await readdir(external), []);
+  } finally {
+    await removeFixture(project);
+    await rm(external, { recursive: true, force: true });
   }
 });
 
