@@ -40,7 +40,9 @@ export interface TaskRecord {
   title: string;
   status: TaskStatus;
   dependsOn: string[];
+  branch: string;
   filePath: string;
+  contents: string;
 }
 
 export interface DependencyBlocker {
@@ -334,7 +336,6 @@ function parseTask(contents: string, filePath: string): TaskRecord {
   for (const field of [
     'priority',
     'risk',
-    'branch',
     'owner',
     'last_updated',
     'qa',
@@ -342,6 +343,10 @@ function parseTask(contents: string, filePath: string): TaskRecord {
     'pull_request',
   ]) {
     requiredString(fields, field, filePath);
+  }
+  const branch = requiredString(fields, 'branch', filePath);
+  if ([...branch].some(isControlCharacter)) {
+    throw new Error(`branch must not contain control characters: ${taskId}`);
   }
 
   const title = requiredString(fields, 'title', filePath);
@@ -354,7 +359,9 @@ function parseTask(contents: string, filePath: string): TaskRecord {
     title,
     status,
     dependsOn: [...dependsOn],
+    branch,
     filePath,
+    contents,
   };
 }
 

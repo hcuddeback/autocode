@@ -24,7 +24,7 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 
 ## Immediate queue
 
-`AC-002` is in review on `feat/AC-002-task-selection`: select one ready task only when all declared dependencies are complete.
+`AC-003` is in review on `feat/AC-003-jit-planning`: implementation and local gates pass; PR, Codex PR review, and human merge authorization remain.
 
 ## JIT task process
 

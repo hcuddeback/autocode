@@ -2,7 +2,7 @@
 
 **Last verified:** 2026-09-02
 
-**Stage:** AC-002 task selection implemented
+**Stage:** AC-003 JIT planning preparation implemented
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -12,7 +12,7 @@
 
 - The clean public repository exists.
 - The product, architecture, workflow, security, release, and task contracts are documented.
-- A strict TypeScript CLI initializes local state and deterministically selects dependency-ready tasks; the orchestration runtime does not.
+- A strict TypeScript CLI initializes local state, deterministically selects dependency-ready tasks, validates selected task contracts, and prepares commit-bound planning artifacts; the orchestration runtime does not.
 
 ## Evidence level
 
@@ -21,6 +21,7 @@
 | Documentation baseline exists | Repository files and internal-link validation   | High                                       |
 | CLI is usable                 | Build, initialization, and selection tests      | High                                       |
 | Task selection is implemented | Ready/blocked/malformed/completed fixture tests | High                                       |
+| JIT planning is implemented   | Commit/task binding and artifact safety tests   | High                                       |
 | Workflow is implemented       | Design contract only                            | High confidence that it is not implemented |
 
 ## Known gaps and blockers
@@ -47,14 +48,26 @@
 - Tests cover initialization plus ready, active-work, blocked, malformed, completed, deterministic-ordering, untrusted-title, and symlink-boundary behavior.
 - Independent and Codex PR-review findings on malformed filenames, filesystem replacement races, single-task WIP enforcement, and terminal-safe titles were corrected and reverified.
 
+## AC-003 evidence
+
+- `autocode prepare` validates the selected task contract and rejects template placeholders or missing required sections.
+- Planning metadata and the task snapshot are bound to the selected task digest, source path, branch, and current commit.
+- Repeated preparation preserves an edited plan; conflicting or symlinked artifacts fail safely.
+- Preparation rejects dirty worktrees and branches that differ from the selected task contract.
+- Preparation requires a linked worktree, validates declared Git branch names, and rechecks Git/task identity immediately before publishing artifacts.
+- Planning-directory identities are revalidated around artifact creation, inspection, cleanup, and publication.
+- Task validation rejects the editable placeholder prompts from `tasks/TASK_TEMPLATE.md`.
+- Plan context contains only the selected task snapshot, leaving Codex execution to AC-004.
+
 ## Next task
 
-Merge AC-002, then select AC-003 for just-in-time task refinement and implementation planning.
+Complete AC-003 gates, then select AC-004 for role-separated Codex CLI sessions.
 
 ## Recently completed
 
 - 2026-09-02 — Established the clean repository and documentation baseline.
 - 2026-09-02 — Implemented the AC-001 CLI foundation on its feature branch.
 - 2026-09-02 — Merged AC-001 through PR #1 and implemented AC-002 task selection on its feature branch.
+- 2026-09-02 — Merged AC-002 through PR #2 and implemented AC-003 JIT planning preparation on its feature branch.
 
 Update this file when a major capability, blocker, milestone, or release fact changes.
