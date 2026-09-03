@@ -64,7 +64,10 @@ test('runs scoped implementation and independent read-only review sessions', asy
     ) as { arguments: string[] };
     assert.deepEqual(implementationRecord.arguments.slice(-1), ['-']);
     assert.ok(reviewRecord.arguments.includes('read-only'));
-    assert.ok(reviewRecord.arguments.includes('--uncommitted'));
+    assert.deepEqual(reviewRecord.arguments.slice(-2), [
+      'review',
+      '--uncommitted',
+    ]);
     assert.ok(!reviewRecord.arguments.includes('--approve-for-me'));
   } finally {
     if (previousPrivateKey === undefined)

@@ -184,7 +184,7 @@ async function runRole(
     role === 'implementation' ? 'workspace-write' : 'read-only',
     '-C',
     root,
-    ...(role === 'implementation' ? ['-'] : ['review', '--uncommitted', '-']),
+    ...(role === 'implementation' ? ['-'] : ['review', '--uncommitted']),
   ];
   const startedAt = new Date().toISOString();
   const result = await runProcess(
