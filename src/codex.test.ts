@@ -14,7 +14,10 @@ const REVIEW_ID = '22222222-2222-4222-8222-222222222222';
 
 test('runs scoped implementation and independent read-only review sessions', async () => {
   const previousPrivateKey = process.env.AUTOCODE_TEST_PRIVATE_KEY;
+  const previousDatabaseUrl = process.env.AUTOCODE_TEST_DATABASE_URL;
   process.env.AUTOCODE_TEST_PRIVATE_KEY = 'line one\n"line two"';
+  process.env.AUTOCODE_TEST_DATABASE_URL =
+    'postgresql://fixture-user:fixture-password@example.invalid/database';
   const fixture = await sessionFixture('success');
   try {
     const result = await runRoleSeparatedCodexSessions(
@@ -44,6 +47,7 @@ test('runs scoped implementation and independent read-only review sessions', asy
     );
     assert.ok(!events.includes('sk_fixture_secret_123456789'));
     assert.ok(!events.includes('line one'));
+    assert.ok(!events.includes('fixture-password'));
     assert.ok(events.includes('<redacted>'));
     const implementationRecord = JSON.parse(
       await readFile(
@@ -70,6 +74,9 @@ test('runs scoped implementation and independent read-only review sessions', asy
     if (previousPrivateKey === undefined)
       delete process.env.AUTOCODE_TEST_PRIVATE_KEY;
     else process.env.AUTOCODE_TEST_PRIVATE_KEY = previousPrivateKey;
+    if (previousDatabaseUrl === undefined)
+      delete process.env.AUTOCODE_TEST_DATABASE_URL;
+    else process.env.AUTOCODE_TEST_DATABASE_URL = previousDatabaseUrl;
     await fixture.cleanup();
   }
 });
@@ -80,6 +87,24 @@ test('refuses review when implementation changes the prepared Git identity', asy
     await assert.rejects(
       () => runRoleSeparatedCodexSessions(fixture.worktree, fixture.options),
       /changed the prepared Git identity/,
+    );
+    await assert.rejects(
+      readFile(
+        path.join(fixture.runDirectory, 'sessions', 'review', 'session.json'),
+      ),
+      /ENOENT/,
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('refuses review when implementation changes a prepared artifact', async () => {
+  const fixture = await sessionFixture('mutate-preparation');
+  try {
+    await assert.rejects(
+      () => runRoleSeparatedCodexSessions(fixture.worktree, fixture.options),
+      /changed prepared run artifacts/,
     );
     await assert.rejects(
       readFile(
@@ -146,6 +171,20 @@ test('terminates the process tree even when the direct child exits first', async
         }),
       /timed out/,
     );
+    await assert.rejects(
+      readFile(path.join(fixture.worktree, 'escaped.txt')),
+      /ENOENT/,
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('terminates leftover helpers after a successful session', async () => {
+  const fixture = await sessionFixture('success-tree');
+  try {
+    await runRoleSeparatedCodexSessions(fixture.worktree, fixture.options);
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
     await assert.rejects(
       readFile(path.join(fixture.worktree, 'escaped.txt')),
       /ENOENT/,
@@ -293,14 +332,17 @@ for await (const chunk of process.stdin) input += chunk;
 const review = input.includes('independent critical-review role');
 if (mode === 'timeout') await new Promise(resolve => setTimeout(resolve, 10_000));
 if (mode === 'timeout-tree') { spawn(process.execPath, ['-e', "process.on('SIGTERM',()=>{}); setTimeout(()=>require('node:fs').writeFileSync('escaped.txt','escaped'),1500); setTimeout(()=>{},10000)"], { stdio: 'ignore' }); await new Promise(resolve => setTimeout(resolve, 10_000)); }
+if (!review && mode === 'success-tree') spawn(process.execPath, ['-e', "setTimeout(()=>require('node:fs').writeFileSync('escaped.txt','escaped'),1500); setTimeout(()=>{},10000)"], { stdio: 'ignore' }).unref();
 if (mode === 'overflow') { process.stdout.write('x'.repeat(4096)); await new Promise(resolve => setTimeout(resolve, 10_000)); }
 if (!review) await writeFile('implementation.txt', 'changed');
+if (!review && mode === 'mutate-preparation') { const { readdir } = await import('node:fs/promises'); const [run] = await readdir('.autocode/runs'); await writeFile('.autocode/runs/' + run + '/plan.md', 'tampered'); }
 if (!review && mode === 'commit') { spawnSync('git', ['add', 'implementation.txt']); spawnSync('git', ['commit', '-m', 'unexpected']); }
 if (mode === 'malformed') { console.log('{bad json'); process.exit(0); }
 const id = review && mode !== 'duplicate' ? '${REVIEW_ID}' : '${IMPLEMENTATION_ID}';
 console.log(JSON.stringify({ type: 'thread.started', thread_id: id }));
 console.log(JSON.stringify({ type: 'diagnostic', text: 'sk_fixture_secret_123456789' }));
 console.log(JSON.stringify({ type: 'diagnostic', text: process.env.AUTOCODE_TEST_PRIVATE_KEY }));
+console.log(JSON.stringify({ type: 'diagnostic', text: process.env.AUTOCODE_TEST_DATABASE_URL }));
 if (mode === 'missing-final') process.exit(0);
 console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'role=' + (review ? 'review' : 'implementation') + ';task=' + input.includes('<task>') + ';plan=' + input.includes('<plan>') } }));
 if (mode === 'nonzero') process.exit(7);

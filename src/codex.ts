@@ -109,8 +109,13 @@ export async function runRoleSeparatedCodexSessions(
   if (path.dirname(runIdentity.canonicalPath) !== runsIdentity.canonicalPath) {
     throw new Error('prepared run directory escapes the runs directory');
   }
-  const metadata = await readJsonFile<PlanningMetadata>(
-    path.join(runDirectory, 'planning.json'),
+  const metadataPath = path.join(runDirectory, 'planning.json');
+  const metadataContents = await readRealFile(
+    metadataPath,
+    'planning metadata',
+  );
+  const metadata = parseJson<PlanningMetadata>(
+    metadataContents,
     'planning metadata',
   );
   const taskSnapshot = await readRealFile(
@@ -146,6 +151,12 @@ export async function runRoleSeparatedCodexSessions(
     options,
     runIdentity,
     true,
+  );
+  await assertPreparedArtifactsUnchanged(
+    runDirectory,
+    metadataContents,
+    taskSnapshot,
+    plan,
   );
   await assertImplementationGitState(root, branch, headCommit);
   const review = await runRole(
@@ -356,8 +367,8 @@ function runProcess(
     child.on('close', (code) => {
       closeCode = code ?? -1;
       if (!terminating) {
-        if (process.platform !== 'win32')
-          signalPosixProcessGroup(child.pid, true);
+        if (process.platform === 'win32') killWindowsDescendants(child.pid);
+        else signalPosixProcessGroup(child.pid, true);
         finish(closeCode);
       } else if (process.platform === 'win32') finish(closeCode);
     });
@@ -376,6 +387,23 @@ function killWindowsProcessTree(pid: number | undefined): void {
   spawnSync('taskkill', ['/pid', String(pid), '/t', '/f'], {
     windowsHide: true,
   });
+}
+
+function killWindowsDescendants(pid: number | undefined): void {
+  if (pid === undefined) return;
+  const script =
+    'param([int]$RootPid) ' +
+    '$pending = [Collections.Generic.Queue[int]]::new(); $pending.Enqueue($RootPid); ' +
+    '$descendants = [Collections.Generic.List[int]]::new(); ' +
+    'while ($pending.Count -gt 0) { $parent = $pending.Dequeue(); ' +
+    'Get-CimInstance Win32_Process -Filter "ParentProcessId = $parent" | ForEach-Object { ' +
+    '$id = [int]$_.ProcessId; $descendants.Add($id); $pending.Enqueue($id) } }; ' +
+    '$descendants | Sort-Object -Descending | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }';
+  spawnSync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-Command', script, String(pid)],
+    { windowsHide: true },
+  );
 }
 
 function signalPosixProcessGroup(
@@ -549,14 +577,8 @@ function redactArguments(arguments_: string[], root: string): string[] {
 
 function redactSecrets(value: string): string {
   let redacted = value;
-  for (const [name, secret] of Object.entries(process.env)) {
-    if (
-      secret !== undefined &&
-      secret.length >= 4 &&
-      /(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIAL)/i.test(
-        name,
-      )
-    ) {
+  for (const secret of Object.values(process.env)) {
+    if (secret !== undefined && secret.length >= 8) {
       redacted = redacted.split(secret).join('<redacted>');
       const encodedSecret = JSON.stringify(secret).slice(1, -1);
       redacted = redacted.split(encodedSecret).join('<redacted>');
@@ -612,14 +634,31 @@ async function assertImplementationGitState(
   }
 }
 
-async function readJsonFile<T>(
-  target: string,
-  description: string,
-): Promise<T> {
+function parseJson<T>(contents: string, description: string): T {
   try {
-    return JSON.parse(await readRealFile(target, description)) as T;
+    return JSON.parse(contents) as T;
   } catch (error: unknown) {
     throw new Error(`${description} is invalid`, { cause: error });
+  }
+}
+
+async function assertPreparedArtifactsUnchanged(
+  runDirectory: string,
+  metadata: string,
+  task: string,
+  plan: string,
+): Promise<void> {
+  const [currentMetadata, currentTask, currentPlan] = await Promise.all([
+    readRealFile(path.join(runDirectory, 'planning.json'), 'planning metadata'),
+    readRealFile(path.join(runDirectory, 'task.md'), 'task snapshot'),
+    readRealFile(path.join(runDirectory, 'plan.md'), 'implementation plan'),
+  ]);
+  if (
+    currentMetadata !== metadata ||
+    currentTask !== task ||
+    currentPlan !== plan
+  ) {
+    throw new Error('implementation changed prepared run artifacts');
   }
 }
 
