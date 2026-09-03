@@ -96,7 +96,7 @@ Repeating `prepare` for the same task and commit preserves the existing editable
 
 ## Current next step
 
-Complete AC-003 gates, then implement role-separated Codex CLI sessions in AC-004.
+Implement role-separated Codex CLI sessions in AC-004.
 
 ## Guardrail
 

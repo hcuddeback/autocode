@@ -61,7 +61,7 @@
 
 ## Next task
 
-Complete AC-003 gates, then select AC-004 for role-separated Codex CLI sessions.
+Implement AC-004 role-separated Codex CLI sessions.
 
 ## Recently completed
 
@@ -69,5 +69,6 @@ Complete AC-003 gates, then select AC-004 for role-separated Codex CLI sessions.
 - 2026-09-02 — Implemented the AC-001 CLI foundation on its feature branch.
 - 2026-09-02 — Merged AC-001 through PR #1 and implemented AC-002 task selection on its feature branch.
 - 2026-09-02 — Merged AC-002 through PR #2 and implemented AC-003 JIT planning preparation on its feature branch.
+- 2026-09-02 — Merged AC-003 through PR #3 and selected AC-004 for role-separated Codex CLI sessions.
 
 Update this file when a major capability, blocker, milestone, or release fact changes.

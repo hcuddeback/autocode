@@ -24,7 +24,7 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 
 ## Immediate queue
 
-`AC-003` is in review on `feat/AC-003-jit-planning`: implementation and local gates pass; PR, Codex PR review, and human merge authorization remain.
+`AC-004` is ready on `feat/AC-004-codex-sessions`: implement role-separated Codex CLI sessions with scoped inputs and distinct identities.
 
 ## JIT task process
 
