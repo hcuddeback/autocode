@@ -7,6 +7,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import os from 'node:os';
@@ -49,6 +50,7 @@ async function createFixture(
     `---\ntask_id: AC-004\ntitle: Sessions\nstatus: done\npriority: high\nrisk: high\ndepends_on: []\nbranch: feat/AC-004\nowner: unassigned\nlast_updated: 2026-09-03\nqa: not_applicable\ndeployment: not_applicable\npull_request: required\n---\n`,
   );
   await writeFile(path.join(parent, '.gitignore'), '.autocode/\n.env\n');
+  await writeFile(path.join(parent, 'implementation.txt'), 'initial');
   await execFileAsync('git', ['add', '.'], { cwd: parent });
   await execFileAsync('git', ['commit', '-m', 'fixture'], { cwd: parent });
   await execFileAsync(
@@ -407,6 +409,52 @@ test('verification does not resolve executables from the worktree', async () => 
   } finally {
     if (originalPath === undefined) delete process.env.PATH;
     else process.env.PATH = originalPath;
+    await cleanup(fixture);
+  }
+});
+
+test(
+  'verification resolves a PATH executable through a symlink',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const fixture = await createFixture([
+      {
+        name: 'symlinked',
+        command: 'autocode-symlinked-node',
+        args: ['-e', ''],
+      },
+    ]);
+    const toolsDirectory = path.join(fixture.parent, 'tools');
+    const originalPath = process.env.PATH;
+    try {
+      await mkdir(toolsDirectory);
+      await symlink(
+        process.execPath,
+        path.join(toolsDirectory, 'autocode-symlinked-node'),
+      );
+      process.env.PATH = `${toolsDirectory}${path.delimiter}${originalPath ?? ''}`;
+      const result = await runDeterministicVerification(fixture.worktree);
+      assert.equal(result.passed, true);
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      await cleanup(fixture);
+    }
+  },
+);
+
+test('verification snapshots Git diffs larger than 64 KiB', async () => {
+  const fixture = await createFixture([
+    { name: 'large_diff', command: 'node', args: ['-e', ''] },
+  ]);
+  try {
+    await writeFile(
+      path.join(fixture.worktree, 'implementation.txt'),
+      'changed'.repeat(32 * 1024),
+    );
+    const result = await runDeterministicVerification(fixture.worktree);
+    assert.equal(result.passed, true);
+  } finally {
     await cleanup(fixture);
   }
 });

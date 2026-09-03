@@ -266,14 +266,29 @@ export async function runDeterministicVerification(
 }
 
 async function snapshotWorktree(root: string): Promise<string> {
-  const [staged, unstaged, untracked] = await Promise.all([
-    gitOutput(root, ['diff', '--binary', '--no-ext-diff', '--cached', 'HEAD']),
-    gitOutput(root, ['diff', '--binary', '--no-ext-diff', 'HEAD']),
-    gitOutput(root, ['ls-files', '--others', '--exclude-standard', '-z']),
-  ]);
   const digest = createHash('sha256');
-  digest.update(staged).update('\0').update(unstaged).update('\0');
-  for (const relative of untracked.split('\0').filter(Boolean).sort()) {
+  await hashGitOutput(digest, root, [
+    'diff',
+    '--binary',
+    '--no-ext-diff',
+    '--cached',
+    'HEAD',
+  ]);
+  digest.update('\0');
+  await hashGitOutput(digest, root, [
+    'diff',
+    '--binary',
+    '--no-ext-diff',
+    'HEAD',
+  ]);
+  digest.update('\0');
+  const untracked = await gitNullOutput(root, [
+    'ls-files',
+    '--others',
+    '--exclude-standard',
+    '-z',
+  ]);
+  for (const relative of untracked.sort()) {
     normalizedRelativePath(root, path.resolve(root, relative));
     digest.update(relative).update('\0');
     digest.update(
@@ -282,6 +297,70 @@ async function snapshotWorktree(root: string): Promise<string> {
     digest.update('\0');
   }
   return digest.digest('hex');
+}
+
+function gitNullOutput(root: string, args: string[]): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', args, {
+      cwd: root,
+      shell: false,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const values: string[] = [];
+    let pending = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      pending += chunk;
+      const parts = pending.split('\0');
+      pending = parts.pop() ?? '';
+      values.push(...parts.filter(Boolean));
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      if (stderr.length < 64 * 1024) stderr += chunk.toString('utf8');
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(
+          new Error(`git ${args[0] ?? 'command'} failed: ${stderr.trim()}`),
+        );
+      } else if (pending !== '') {
+        reject(new Error('Git returned an unterminated path list'));
+      } else {
+        resolve(values);
+      }
+    });
+  });
+}
+
+function hashGitOutput(
+  digest: ReturnType<typeof createHash>,
+  root: string,
+  args: string[],
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', args, {
+      cwd: root,
+      shell: false,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => digest.update(chunk));
+    child.stderr.on('data', (chunk: Buffer) => {
+      if (stderr.length < 64 * 1024) stderr += chunk.toString('utf8');
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve();
+      else
+        reject(
+          new Error(`git ${args[0] ?? 'command'} failed: ${stderr.trim()}`),
+        );
+    });
+  });
 }
 
 async function resolveExecutable(
@@ -313,13 +392,21 @@ async function resolveExecutable(
     for (const extension of extensions) {
       const candidate = path.join(canonicalEntry, `${command}${extension}`);
       try {
-        const details = await lstat(candidate);
-        if (details.isSymbolicLink() || !details.isFile()) continue;
+        const resolvedCandidate = await realpath(candidate);
+        const details = await stat(resolvedCandidate);
+        if (!details.isFile()) continue;
+        const relativeTarget = path.relative(canonicalRoot, resolvedCandidate);
+        if (
+          relativeTarget === '' ||
+          (!relativeTarget.startsWith('..') && !path.isAbsolute(relativeTarget))
+        ) {
+          continue;
+        }
         await access(
-          candidate,
+          resolvedCandidate,
           process.platform === 'win32' ? constants.F_OK : constants.X_OK,
         );
-        return candidate;
+        return resolvedCandidate;
       } catch {
         // Continue searching the configured process PATH.
       }
