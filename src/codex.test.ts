@@ -48,6 +48,8 @@ test('runs scoped implementation and independent read-only review sessions', asy
     assert.ok(!events.includes('sk_fixture_secret_123456789'));
     assert.ok(!events.includes('line one'));
     assert.ok(!events.includes('fixture-password'));
+    assert.ok(!events.includes('AKIAABCDEFGHIJKLMNOP'));
+    assert.ok(!events.includes('not-in-env-secret'));
     assert.ok(events.includes('<redacted>'));
     const implementationRecord = JSON.parse(
       await readFile(
@@ -104,7 +106,25 @@ test('refuses review when implementation changes a prepared artifact', async () 
   try {
     await assert.rejects(
       () => runRoleSeparatedCodexSessions(fixture.worktree, fixture.options),
-      /changed prepared run artifacts/,
+      /changed protected AutoCode state/,
+    );
+    await assert.rejects(
+      readFile(
+        path.join(fixture.runDirectory, 'sessions', 'review', 'session.json'),
+      ),
+      /ENOENT/,
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('refuses review when implementation adds unexpected run-directory state', async () => {
+  const fixture = await sessionFixture('mutate-other-state');
+  try {
+    await assert.rejects(
+      () => runRoleSeparatedCodexSessions(fixture.worktree, fixture.options),
+      /changed protected AutoCode state/,
     );
     await assert.rejects(
       readFile(
@@ -194,6 +214,53 @@ test('terminates leftover helpers after a successful session', async () => {
   }
 });
 
+test(
+  'terminates helpers that leave the original process group on timeout',
+  {
+    skip: process.platform === 'win32',
+  },
+  async () => {
+    const fixture = await sessionFixture('timeout-detached-tree');
+    try {
+      await assert.rejects(
+        () =>
+          runRoleSeparatedCodexSessions(fixture.worktree, {
+            ...fixture.options,
+            timeoutMs: 100,
+          }),
+        /timed out/,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      await assert.rejects(
+        readFile(path.join(fixture.worktree, 'escaped.txt')),
+        /ENOENT/,
+      );
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+test(
+  'terminates helpers that leave the original process group after success',
+  {
+    skip: process.platform === 'win32',
+  },
+  async () => {
+    const fixture = await sessionFixture('success-detached-tree');
+    try {
+      await runRoleSeparatedCodexSessions(fixture.worktree, fixture.options);
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      await assert.rejects(
+        readFile(path.join(fixture.worktree, 'escaped.txt')),
+        /ENOENT/,
+      );
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
 test('terminates a Codex session whose output exceeds the configured bound', async () => {
   const fixture = await sessionFixture('overflow');
   try {
@@ -251,6 +318,24 @@ test('rejects stale preparation and existing session artifacts', async () => {
   }
 });
 
+test('reserves the run before launching Codex, rejecting a concurrent duplicate run', async () => {
+  const fixture = await sessionFixture('success-slow');
+  try {
+    const first = runRoleSeparatedCodexSessions(
+      fixture.worktree,
+      fixture.options,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await assert.rejects(
+      () => runRoleSeparatedCodexSessions(fixture.worktree, fixture.options),
+      /already exist/,
+    );
+    await first;
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 async function sessionFixture(mode: string) {
   const base = await mkdtemp(path.join(os.tmpdir(), 'autocode-codex-'));
   const repository = path.join(base, 'repository');
@@ -260,7 +345,7 @@ async function sessionFixture(mode: string) {
   await git(repository, ['config', 'user.email', 'fixture@example.com']);
   await git(repository, ['config', 'user.name', 'Fixture']);
   await writeFile(path.join(repository, 'README.md'), 'fixture\n');
-  await writeFile(path.join(repository, '.gitignore'), '.autocode/\n');
+  await writeFile(path.join(repository, '.gitignore'), '.autocode/\n.env\n');
   await git(repository, ['add', 'README.md', '.gitignore']);
   await git(repository, ['commit', '-m', 'initial']);
   await git(repository, [
@@ -270,6 +355,10 @@ async function sessionFixture(mode: string) {
     'feat/AC-004-codex-sessions',
     worktree,
   ]);
+  await writeFile(
+    path.join(worktree, '.env'),
+    'DB_PASSWORD=not-in-env-secret\n',
+  );
   await mkdir(path.join(worktree, 'tasks', 'completed'), { recursive: true });
   await writeFile(
     path.join(worktree, 'tasks', 'completed', 'AC-003.md'),
@@ -331,11 +420,15 @@ let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const review = input.includes('independent critical-review role');
 if (mode === 'timeout') await new Promise(resolve => setTimeout(resolve, 10_000));
+if (mode === 'success-slow' && !review) await new Promise(resolve => setTimeout(resolve, 400));
 if (mode === 'timeout-tree') { spawn(process.execPath, ['-e', "process.on('SIGTERM',()=>{}); setTimeout(()=>require('node:fs').writeFileSync('escaped.txt','escaped'),1500); setTimeout(()=>{},10000)"], { stdio: 'ignore' }); await new Promise(resolve => setTimeout(resolve, 10_000)); }
+if (mode === 'timeout-detached-tree') { spawn(process.execPath, ['-e', "process.on('SIGTERM',()=>{}); setTimeout(()=>require('node:fs').writeFileSync('escaped.txt','escaped'),1500); setTimeout(()=>{},10000)"], { stdio: 'ignore', detached: true }).unref(); await new Promise(resolve => setTimeout(resolve, 10_000)); }
 if (!review && mode === 'success-tree') spawn(process.execPath, ['-e', "setTimeout(()=>require('node:fs').writeFileSync('escaped.txt','escaped'),1500); setTimeout(()=>{},10000)"], { stdio: 'ignore' }).unref();
+if (!review && mode === 'success-detached-tree') spawn(process.execPath, ['-e', "setTimeout(()=>require('node:fs').writeFileSync('escaped.txt','escaped'),1500); setTimeout(()=>{},10000)"], { stdio: 'ignore', detached: true }).unref();
 if (mode === 'overflow') { process.stdout.write('x'.repeat(4096)); await new Promise(resolve => setTimeout(resolve, 10_000)); }
 if (!review) await writeFile('implementation.txt', 'changed');
 if (!review && mode === 'mutate-preparation') { const { readdir } = await import('node:fs/promises'); const [run] = await readdir('.autocode/runs'); await writeFile('.autocode/runs/' + run + '/plan.md', 'tampered'); }
+if (!review && mode === 'mutate-other-state') await writeFile('.autocode/config.yaml', 'changed: true');
 if (!review && mode === 'commit') { spawnSync('git', ['add', 'implementation.txt']); spawnSync('git', ['commit', '-m', 'unexpected']); }
 if (mode === 'malformed') { console.log('{bad json'); process.exit(0); }
 const id = review && mode !== 'duplicate' ? '${REVIEW_ID}' : '${IMPLEMENTATION_ID}';
@@ -343,6 +436,8 @@ console.log(JSON.stringify({ type: 'thread.started', thread_id: id }));
 console.log(JSON.stringify({ type: 'diagnostic', text: 'sk_fixture_secret_123456789' }));
 console.log(JSON.stringify({ type: 'diagnostic', text: process.env.AUTOCODE_TEST_PRIVATE_KEY }));
 console.log(JSON.stringify({ type: 'diagnostic', text: process.env.AUTOCODE_TEST_DATABASE_URL }));
+console.log(JSON.stringify({ type: 'diagnostic', text: 'AKIAABCDEFGHIJKLMNOP' }));
+console.log(JSON.stringify({ type: 'diagnostic', text: 'not-in-env-secret' }));
 if (mode === 'missing-final') process.exit(0);
 console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'role=' + (review ? 'review' : 'implementation') + ';task=' + input.includes('<task>') + ';plan=' + input.includes('<plan>') } }));
 if (mode === 'nonzero') process.exit(7);

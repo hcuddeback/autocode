@@ -4,6 +4,8 @@ import {
   lstat,
   mkdir,
   open,
+  readdir,
+  readFile,
   realpath,
   rename,
   rm,
@@ -137,36 +139,56 @@ export async function runRoleSeparatedCodexSessions(
   );
 
   const sessionsDirectory = path.join(runDirectory, 'sessions');
-  if (await pathExists(sessionsDirectory)) {
-    throw new Error(
-      'session artifacts already exist; refusing to overwrite them',
-    );
+  const stateDirectory = path.join(root, '.autocode');
+  const ignoredStateEntries = new Set([
+    normalizedRelativePath(stateDirectory, sessionsDirectory),
+  ]);
+  const stateSnapshot = await snapshotDirectory(
+    stateDirectory,
+    ignoredStateEntries,
+  );
+  try {
+    await mkdir(sessionsDirectory);
+  } catch (error: unknown) {
+    if (hasCode(error, 'EEXIST')) {
+      throw new Error(
+        'session artifacts already exist; refusing to overwrite them',
+        { cause: error },
+      );
+    }
+    throw error;
   }
+  const sessionsIdentity = await directoryIdentity(
+    sessionsDirectory,
+    'sessions directory',
+  );
+  const workspaceSecrets = await discoverWorkspaceSecrets(root);
 
   const implementation = await runRole(
     root,
     sessionsDirectory,
+    sessionsIdentity,
     'implementation',
     implementationPrompt(taskSnapshot, plan),
     options,
     runIdentity,
-    true,
+    workspaceSecrets,
   );
-  await assertPreparedArtifactsUnchanged(
-    runDirectory,
-    metadataContents,
-    taskSnapshot,
-    plan,
+  await assertDirectoryUnchanged(
+    stateDirectory,
+    stateSnapshot,
+    ignoredStateEntries,
   );
   await assertImplementationGitState(root, branch, headCommit);
   const review = await runRole(
     root,
     sessionsDirectory,
+    sessionsIdentity,
     'review',
     reviewPrompt(taskSnapshot),
     options,
     runIdentity,
-    false,
+    workspaceSecrets,
   );
   if (implementation.sessionId === review.sessionId) {
     throw new Error(
@@ -179,11 +201,12 @@ export async function runRoleSeparatedCodexSessions(
 async function runRole(
   root: string,
   sessionsDirectory: string,
+  sessionsIdentity: DirectoryIdentity,
   role: 'implementation' | 'review',
   prompt: string,
   options: CodexSessionOptions,
   runIdentity: DirectoryIdentity,
-  reserveSessions: boolean,
+  workspaceSecrets: readonly string[],
 ): Promise<CodexSessionRecord> {
   const command = options.command ?? 'codex';
   const arguments_ = [
@@ -224,23 +247,7 @@ async function runRole(
           arguments: redactArguments(arguments_, root),
         };
   await assertDirectoryIdentity(runIdentity, 'prepared run directory');
-  if (reserveSessions) {
-    try {
-      await mkdir(sessionsDirectory);
-    } catch (error: unknown) {
-      if (hasCode(error, 'EEXIST')) {
-        throw new Error(
-          'session artifacts already exist; refusing to overwrite them',
-          { cause: error },
-        );
-      }
-      throw error;
-    }
-  }
-  const sessionsIdentity = await directoryIdentity(
-    sessionsDirectory,
-    'sessions directory',
-  );
+  await assertDirectoryIdentity(sessionsIdentity, 'sessions directory');
   await persistRoleResult(
     sessionsDirectory,
     sessionsIdentity,
@@ -248,6 +255,7 @@ async function runRole(
     result,
     finalMessage ?? '',
     record,
+    workspaceSecrets,
   );
   if (result.timedOut) throw new Error(`${role} Codex session timed out`);
   if (result.overflowed)
@@ -297,11 +305,23 @@ function runProcess(
     let closeCode = -1;
     let fatalError: Error | undefined;
     let terminationTimer: NodeJS.Timeout | undefined;
+    const knownPosixDescendants = new Set<number>();
+    const descendantTimer =
+      process.platform === 'win32'
+        ? undefined
+        : setInterval(
+            () => capturePosixDescendants(child.pid, knownPosixDescendants),
+            100,
+          );
+    descendantTimer?.unref();
     const finish = (exitCode: number): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       if (terminationTimer !== undefined) clearTimeout(terminationTimer);
+      if (descendantTimer !== undefined) clearInterval(descendantTimer);
+      if (process.platform !== 'win32')
+        killTrackedPosixDescendants(knownPosixDescendants);
       child.stdout.destroy();
       child.stderr.destroy();
       if (fatalError !== undefined) {
@@ -329,9 +349,12 @@ function runProcess(
         terminationTimer.unref();
         return;
       }
+      capturePosixDescendants(child.pid, knownPosixDescendants);
       signalPosixProcessGroup(child.pid, false);
       terminationTimer = setTimeout(() => {
         signalPosixProcessGroup(child.pid, true);
+        capturePosixDescendants(child.pid, knownPosixDescendants);
+        killTrackedPosixDescendants(knownPosixDescendants);
         // Do not let inherited pipe handles or a termination-resistant child
         // defeat the adapter's execution bound.
         setTimeout(() => finish(closeCode), TERMINATION_GRACE_MS).unref();
@@ -355,6 +378,8 @@ function runProcess(
       return Buffer.concat([current, chunk]);
     };
     child.stdout.on('data', (chunk: Buffer) => {
+      if (process.platform !== 'win32')
+        capturePosixDescendants(child.pid, knownPosixDescendants);
       stdout = collect(stdout, chunk);
     });
     child.stderr.on('data', (chunk: Buffer) => {
@@ -367,8 +392,13 @@ function runProcess(
     child.on('close', (code) => {
       closeCode = code ?? -1;
       if (!terminating) {
-        if (process.platform === 'win32') killWindowsDescendants(child.pid);
-        else signalPosixProcessGroup(child.pid, true);
+        if (process.platform === 'win32') {
+          killWindowsDescendants(child.pid);
+        } else {
+          signalPosixProcessGroup(child.pid, true);
+          capturePosixDescendants(child.pid, knownPosixDescendants);
+          killTrackedPosixDescendants(knownPosixDescendants);
+        }
         finish(closeCode);
       } else if (process.platform === 'win32') finish(closeCode);
     });
@@ -418,6 +448,50 @@ function signalPosixProcessGroup(
   }
 }
 
+function capturePosixDescendants(
+  pid: number | undefined,
+  tracked: Set<number>,
+): void {
+  if (pid === undefined) return;
+  const result = spawnSync('ps', ['-A', '-o', 'pid=,ppid='], {
+    encoding: 'utf8',
+  });
+  if (result.status !== 0 || typeof result.stdout !== 'string') return;
+  const childrenByParent = new Map<number, number[]>();
+  for (const line of result.stdout.split('\n')) {
+    const [childText, parentText] = line.trim().split(/\s+/);
+    const childPid = Number(childText);
+    const parentPid = Number(parentText);
+    if (!Number.isInteger(childPid) || !Number.isInteger(parentPid)) continue;
+    const siblings = childrenByParent.get(parentPid);
+    if (siblings === undefined) childrenByParent.set(parentPid, [childPid]);
+    else siblings.push(childPid);
+  }
+  const pending = [pid];
+  const descendants: number[] = [];
+  while (pending.length > 0) {
+    const parent = pending.pop();
+    if (parent === undefined) continue;
+    for (const child of childrenByParent.get(parent) ?? []) {
+      descendants.push(child);
+      tracked.add(child);
+      pending.push(child);
+    }
+  }
+}
+
+function killTrackedPosixDescendants(tracked: ReadonlySet<number>): void {
+  // Recorded descendants remain addressable after reparenting or changing
+  // process groups, which closes the gap left by process-group signals alone.
+  for (const descendantPid of tracked) {
+    try {
+      process.kill(descendantPid, 'SIGKILL');
+    } catch {
+      // The descendant may have exited before this enumeration completed.
+    }
+  }
+}
+
 async function persistRoleResult(
   sessionsDirectory: string,
   sessionsIdentity: DirectoryIdentity,
@@ -425,6 +499,7 @@ async function persistRoleResult(
   result: ProcessResult,
   finalMessage: string,
   record: CodexSessionRecord | undefined,
+  workspaceSecrets: readonly string[],
 ): Promise<void> {
   const temporary = path.join(
     sessionsDirectory,
@@ -443,21 +518,21 @@ async function persistRoleResult(
   try {
     await writeFile(
       path.join(temporary, 'events.jsonl'),
-      redactSecrets(result.stdout),
+      redactSecrets(result.stdout, workspaceSecrets),
       {
         flag: 'wx',
       },
     );
     await writeFile(
       path.join(temporary, 'stderr.txt'),
-      redactSecrets(result.stderr),
+      redactSecrets(result.stderr, workspaceSecrets),
       {
         flag: 'wx',
       },
     );
     await writeFile(
       path.join(temporary, 'final.txt'),
-      redactSecrets(finalMessage),
+      redactSecrets(finalMessage, workspaceSecrets),
       {
         flag: 'wx',
       },
@@ -575,9 +650,12 @@ function redactArguments(arguments_: string[], root: string): string[] {
   );
 }
 
-function redactSecrets(value: string): string {
+function redactSecrets(
+  value: string,
+  additionalSecrets: readonly string[] = [],
+): string {
   let redacted = value;
-  for (const secret of Object.values(process.env)) {
+  for (const secret of [...Object.values(process.env), ...additionalSecrets]) {
     if (secret !== undefined && secret.length >= 8) {
       redacted = redacted.split(secret).join('<redacted>');
       const encodedSecret = JSON.stringify(secret).slice(1, -1);
@@ -585,8 +663,54 @@ function redactSecrets(value: string): string {
     }
   }
   return redacted
+    .replace(
+      /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+      '<redacted>',
+    )
     .replace(/\b(?:sk|gh[opusr])_[A-Za-z0-9_-]{16,}\b/g, '<redacted>')
-    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, '$1<redacted>');
+    .replace(/\bAKIA[0-9A-Z]{16}\b/g, '<redacted>')
+    .replace(
+      /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
+      '<redacted>',
+    )
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, '$1<redacted>')
+    .replace(
+      /\b((?:password|passwd|secret|token|api[_-]?key|private[_-]?key)\s*[:=]\s*["']?)[^\s"',}]+/gi,
+      '$1<redacted>',
+    )
+    .replace(/(:\/\/[^\s/:@]+:)[^\s@]+(@)/g, '$1<redacted>$2');
+}
+
+async function discoverWorkspaceSecrets(root: string): Promise<string[]> {
+  const ignored = await gitOutput(root, [
+    'ls-files',
+    '--others',
+    '--ignored',
+    '--exclude-standard',
+    '-z',
+  ]);
+  const secrets = new Set<string>();
+  for (const relative of ignored.split('\0').filter(Boolean)) {
+    const name = path.basename(relative);
+    if (!/^\.env(?:\.|$)/i.test(name) && !/(?:secret|credential)/i.test(name))
+      continue;
+    const target = path.resolve(root, relative);
+    normalizedRelativePath(root, target);
+    const contents = await readRealFile(target, 'ignored credential file');
+    for (const line of contents.split(/\r?\n/)) {
+      const match = /^\s*[^#=]+=(.*)$/.exec(line);
+      if (match?.[1] === undefined) continue;
+      let candidate = match[1].trim();
+      if (
+        candidate.length >= 2 &&
+        ((candidate.startsWith('"') && candidate.endsWith('"')) ||
+          (candidate.startsWith("'") && candidate.endsWith("'")))
+      )
+        candidate = candidate.slice(1, -1);
+      if (candidate.length >= 4) secrets.add(candidate);
+    }
+  }
+  return [...secrets];
 }
 
 async function readRealFile(
@@ -642,23 +766,56 @@ function parseJson<T>(contents: string, description: string): T {
   }
 }
 
-async function assertPreparedArtifactsUnchanged(
-  runDirectory: string,
-  metadata: string,
-  task: string,
-  plan: string,
+async function snapshotDirectory(
+  root: string,
+  ignoredEntries: ReadonlySet<string>,
+): Promise<Map<string, string>> {
+  const snapshot = new Map<string, string>();
+  await walkDirectory(root, '', ignoredEntries, snapshot);
+  return snapshot;
+}
+
+async function walkDirectory(
+  directory: string,
+  relative: string,
+  ignoredEntries: ReadonlySet<string>,
+  snapshot: Map<string, string>,
 ): Promise<void> {
-  const [currentMetadata, currentTask, currentPlan] = await Promise.all([
-    readRealFile(path.join(runDirectory, 'planning.json'), 'planning metadata'),
-    readRealFile(path.join(runDirectory, 'task.md'), 'task snapshot'),
-    readRealFile(path.join(runDirectory, 'plan.md'), 'implementation plan'),
-  ]);
-  if (
-    currentMetadata !== metadata ||
-    currentTask !== task ||
-    currentPlan !== plan
-  ) {
-    throw new Error('implementation changed prepared run artifacts');
+  const entries = await readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryRelative =
+      relative === '' ? entry.name : `${relative}/${entry.name}`;
+    if (ignoredEntries.has(entryRelative)) continue;
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isSymbolicLink()) {
+      throw new Error('prepared run directory must not contain symbolic links');
+    } else if (entry.isDirectory()) {
+      await walkDirectory(entryPath, entryRelative, ignoredEntries, snapshot);
+    } else if (entry.isFile()) {
+      const contents = await readFile(entryPath);
+      snapshot.set(
+        entryRelative,
+        createHash('sha256').update(contents).digest('hex'),
+      );
+    } else {
+      throw new Error('prepared run directory must contain only regular files');
+    }
+  }
+}
+
+async function assertDirectoryUnchanged(
+  directory: string,
+  before: Map<string, string>,
+  ignoredEntries: ReadonlySet<string>,
+): Promise<void> {
+  const after = await snapshotDirectory(directory, ignoredEntries);
+  if (after.size !== before.size) {
+    throw new Error('implementation changed protected AutoCode state');
+  }
+  for (const [entry, hash] of before) {
+    if (after.get(entry) !== hash) {
+      throw new Error('implementation changed protected AutoCode state');
+    }
   }
 }
 
