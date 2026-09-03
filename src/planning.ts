@@ -33,8 +33,41 @@ const REQUIRED_SECTIONS = [
   'Files/areas expected',
   'Manual owner steps or blockers',
 ] as const;
-const PLACEHOLDER_PATTERN =
-  /PENDING_REAL_COMMAND|Replace with|YYYY-MM-DD|Specific behavior or deliverable|Observable positive result/;
+const TEMPLATE_PLACEHOLDERS = [
+  'Replace with one observable outcome',
+  'YYYY-MM-DD',
+  'Describe one observable user or system result.',
+  'Link this task to the MVP milestone, evidence, defect, security need, or release gate.',
+  'relevant sections only.',
+  'affected phases/gates only.',
+  'relevant sections or not applicable.',
+  'Remove unneeded documents.',
+  'Specific behavior or deliverable.',
+  'Important integration boundaries.',
+  'Adjacent work excluded.',
+  'Later outcome not to implement early.',
+  'Observable positive result.',
+  'Important failure, empty, interruption, or recovery result.',
+  'Applicable data, authorization, process, or provider boundary.',
+  'PENDING_REAL_COMMAND',
+  'Replace pending commands before marking ready',
+  'Assumptions, edge cases, safety boundaries, and regression surfaces to challenge.',
+  'Runtime/user-journey scenarios and required evidence if applicable.',
+  'PR applicability: required | not applicable',
+  'Codex PR review: required | not applicable | auto',
+  'Merge authorization: human | policy | not applicable',
+  'Production verification: required | not applicable | auto',
+  'Task-specific CI, freshness, deployment, smoke, or rollback evidence.',
+  'Likely paths/components',
+  '`None`, or account/provider/credential/approval work',
+  '- Branch/PR:',
+  '- Final commit:',
+  '- Validation evidence:',
+  '- Review disposition:',
+  '- QA evidence or not-applicable reason:',
+  '- Production evidence or not-applicable reason:',
+  '- Remaining limitation:',
+] as const;
 const MAX_ARTIFACT_BYTES = 1024 * 1024;
 const MAX_CONFIG_BYTES = 64 * 1024;
 
@@ -70,6 +103,12 @@ export async function prepareImplementationPlan(
       'planning requires a non-main Git branch in an isolated worktree',
     );
   }
+  if (branch !== selection.task.branch) {
+    throw new Error(
+      `planning requires the selected task branch ${selection.task.branch}; current branch is ${branch}`,
+    );
+  }
+  await assertCleanWorktree(root);
   const headCommit = await gitOutput(root, ['rev-parse', '--verify', 'HEAD']);
   if (!/^[0-9a-f]{40,64}$/.test(headCommit)) {
     throw new Error('Git returned an invalid HEAD commit identity');
@@ -151,8 +190,23 @@ function validateTaskContract(task: TaskRecord): void {
       throw new Error(`task contract is missing required section: ${section}`);
     }
   }
-  if (PLACEHOLDER_PATTERN.test(task.contents)) {
+  if (
+    TEMPLATE_PLACEHOLDERS.some((placeholder) =>
+      task.contents.includes(placeholder),
+    )
+  ) {
     throw new Error('task contract contains template placeholder content');
+  }
+}
+
+async function assertCleanWorktree(root: string): Promise<void> {
+  const status = await gitOutput(root, [
+    'status',
+    '--porcelain=v1',
+    '--untracked-files=all',
+  ]);
+  if (status !== '') {
+    throw new Error('planning requires a clean Git worktree');
   }
 }
 

@@ -53,6 +53,8 @@
 - `autocode prepare` validates the selected task contract and rejects template placeholders or missing required sections.
 - Planning metadata and the task snapshot are bound to the selected task digest, source path, branch, and current commit.
 - Repeated preparation preserves an edited plan; conflicting or symlinked artifacts fail safely.
+- Preparation rejects dirty worktrees and branches that differ from the selected task contract.
+- Task validation rejects the editable placeholder prompts from `tasks/TASK_TEMPLATE.md`.
 - Plan context contains only the selected task snapshot, leaving Codex execution to AC-004.
 
 ## Next task

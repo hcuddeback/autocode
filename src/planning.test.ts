@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   symlink,
   writeFile,
@@ -17,7 +18,7 @@ import { prepareImplementationPlan } from './planning.js';
 
 const execFileAsync = promisify(execFile);
 
-async function fixtureProject(branch = 'feat/test'): Promise<string> {
+async function fixtureProject(branch = 'feat/AC-003'): Promise<string> {
   const project = await mkdtemp(path.join(os.tmpdir(), 'autocode-planning-'));
   await mkdir(path.join(project, 'tasks', 'completed'), { recursive: true });
   await writeTask(project, 'AC-001', 'done', [], true);
@@ -34,9 +35,9 @@ async function fixtureProject(branch = 'feat/test'): Promise<string> {
   await git(project, ['init', '-b', branch]);
   await git(project, ['config', 'user.email', 'fixture@example.invalid']);
   await git(project, ['config', 'user.name', 'Fixture']);
+  await initializeProject(project);
   await git(project, ['add', '--', '.']);
   await git(project, ['commit', '-m', 'fixture']);
-  await initializeProject(project);
   return project;
 }
 
@@ -195,6 +196,62 @@ test('rejects task contracts with template placeholders', async () => {
     await assert.rejects(
       () => prepareImplementationPlan(project),
       /template placeholder/,
+    );
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test('rejects remaining editable placeholders copied from the task template', async () => {
+  const placeholders = [
+    'Describe one observable user or system result.',
+    'Important integration boundaries.',
+    'Likely paths/components',
+  ];
+  for (const placeholder of placeholders) {
+    const project = await fixtureProject();
+    try {
+      const taskPath = path.join(project, 'tasks', 'AC-003.md');
+      await writeFile(
+        taskPath,
+        (await readFile(taskPath, 'utf8')).replace(
+          'Deliver AC-003.',
+          placeholder,
+        ),
+      );
+      await assert.rejects(
+        () => prepareImplementationPlan(project),
+        /template placeholder/,
+      );
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  }
+});
+
+test('rejects a dirty worktree without creating planning artifacts', async () => {
+  const project = await fixtureProject();
+  try {
+    await writeFile(path.join(project, 'untracked.txt'), 'uncommitted\n');
+    await assert.rejects(
+      () => prepareImplementationPlan(project),
+      /requires a clean Git worktree/,
+    );
+    assert.deepEqual(
+      await readdir(path.join(project, '.autocode', 'runs')),
+      [],
+    );
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test("rejects a branch that does not match the selected task's declaration", async () => {
+  const project = await fixtureProject('feat/unrelated');
+  try {
+    await assert.rejects(
+      () => prepareImplementationPlan(project),
+      /requires the selected task branch feat\/AC-003; current branch is feat\/unrelated/,
     );
   } finally {
     await rm(project, { recursive: true, force: true });
