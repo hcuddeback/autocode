@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import {
   lstat,
@@ -60,14 +60,9 @@ const TEMPLATE_PLACEHOLDERS = [
   'Task-specific CI, freshness, deployment, smoke, or rollback evidence.',
   'Likely paths/components',
   '`None`, or account/provider/credential/approval work',
-  '- Branch/PR:',
-  '- Final commit:',
-  '- Validation evidence:',
-  '- Review disposition:',
-  '- QA evidence or not-applicable reason:',
-  '- Production evidence or not-applicable reason:',
-  '- Remaining limitation:',
 ] as const;
+const EMPTY_COMPLETION_FIELD_PATTERN =
+  /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+(?:Branch\/PR|Final commit|Validation evidence|Review disposition|QA evidence or not-applicable reason|Production evidence or not-applicable reason|Remaining limitation):[ \t]*$/m;
 const MAX_ARTIFACT_BYTES = 1024 * 1024;
 const MAX_CONFIG_BYTES = 64 * 1024;
 
@@ -86,8 +81,19 @@ export interface PlanningResult {
   metadata: PlanningMetadata;
 }
 
+export type PlanningCheckpoint =
+  | 'after-runs-identity'
+  | 'after-temporary-identity'
+  | 'after-existing-run-identity'
+  | 'after-publication';
+
+export interface PlanningOptions {
+  onCheckpoint?: (checkpoint: PlanningCheckpoint) => Promise<void>;
+}
+
 export async function prepareImplementationPlan(
   projectDirectory: string,
+  options: PlanningOptions = {},
 ): Promise<PlanningResult> {
   const root = await verifiedProjectRoot(projectDirectory);
   await validateInitializedState(root);
@@ -103,9 +109,11 @@ export async function prepareImplementationPlan(
       'planning requires a non-main Git branch in an isolated worktree',
     );
   }
+  await assertLinkedWorktree(root);
+  await validateDeclaredBranch(root, selection.task.branch);
   if (branch !== selection.task.branch) {
     throw new Error(
-      `planning requires the selected task branch ${selection.task.branch}; current branch is ${branch}`,
+      'current Git branch does not match the selected task branch',
     );
   }
   await assertCleanWorktree(root);
@@ -131,17 +139,18 @@ export async function prepareImplementationPlan(
   const runDirectory = path.join(runsDirectory, runName);
   const expectedMetadata = `${JSON.stringify(metadata, null, 2)}\n`;
 
-  const currentSelection = await selectProjectTask(root);
-  if (
-    currentSelection.kind !== 'selected' ||
-    currentSelection.task.taskId !== selection.task.taskId ||
-    currentSelection.task.contents !== selection.task.contents
-  ) {
-    throw new Error('selected task changed while planning was prepared');
-  }
-
+  const runsIdentity = await directoryIdentity(runsDirectory, 'runs directory');
+  await options.onCheckpoint?.('after-runs-identity');
+  await assertDirectoryIdentity(runsIdentity, 'runs directory');
   if (await pathExists(runDirectory)) {
-    await validateExistingRun(runDirectory, expectedMetadata, selection.task);
+    await assertPlanningIdentity(root, selection.task, branch, headCommit);
+    await validateExistingRun(
+      runDirectory,
+      expectedMetadata,
+      selection.task,
+      runsIdentity,
+      options,
+    );
     return { kind: 'existing', runDirectory, metadata };
   }
 
@@ -149,9 +158,15 @@ export async function prepareImplementationPlan(
     runsDirectory,
     `.${runName}.tmp-${process.pid}-${Date.now()}`,
   );
-  await assertRealDirectory(runsDirectory, 'runs directory');
   await mkdir(temporaryDirectory, { recursive: false });
+  let temporaryIdentity: DirectoryIdentity | undefined;
+  let publishedIdentity: DirectoryIdentity | undefined;
   try {
+    temporaryIdentity = await directoryIdentity(
+      temporaryDirectory,
+      'temporary planning directory',
+    );
+    await options.onCheckpoint?.('after-temporary-identity');
     await writeFile(
       path.join(temporaryDirectory, 'planning.json'),
       expectedMetadata,
@@ -167,11 +182,46 @@ export async function prepareImplementationPlan(
       planTemplate(metadata),
       { encoding: 'utf8', flag: 'wx' },
     );
+    await assertDirectoryIdentity(runsIdentity, 'runs directory');
+    await assertDirectoryIdentity(
+      temporaryIdentity,
+      'temporary planning directory',
+    );
+    await assertPlanningIdentity(root, selection.task, branch, headCommit);
     await rename(temporaryDirectory, runDirectory);
+    publishedIdentity = await directoryIdentity(
+      runDirectory,
+      'planning run directory',
+    );
+    await options.onCheckpoint?.('after-publication');
+    await assertDirectoryIdentity(runsIdentity, 'runs directory');
+    await assertDirectoryIdentity(publishedIdentity, 'planning run directory');
+    await assertPlanningIdentity(root, selection.task, branch, headCommit);
   } catch (error: unknown) {
-    await rm(temporaryDirectory, { recursive: true, force: true });
+    if (publishedIdentity !== undefined) {
+      await removeOwnedDirectory(
+        publishedIdentity,
+        runsIdentity,
+        'planning run directory',
+      );
+      throw error;
+    }
+    if (temporaryIdentity !== undefined) {
+      await removeOwnedDirectory(
+        temporaryIdentity,
+        runsIdentity,
+        'temporary planning directory',
+      );
+    }
+    await assertDirectoryIdentity(runsIdentity, 'runs directory');
     if (await pathExists(runDirectory)) {
-      await validateExistingRun(runDirectory, expectedMetadata, selection.task);
+      await validateExistingRun(
+        runDirectory,
+        expectedMetadata,
+        selection.task,
+        runsIdentity,
+        options,
+      );
       return { kind: 'existing', runDirectory, metadata };
     }
     throw error;
@@ -182,20 +232,112 @@ export async function prepareImplementationPlan(
 function validateTaskContract(task: TaskRecord): void {
   for (const section of REQUIRED_SECTIONS) {
     const heading = section === 'Outcome' ? '#' : '##';
-    if (
-      !new RegExp(`^${heading} ${escapeRegExp(section)}\\s*$`, 'm').test(
-        task.contents,
-      )
-    ) {
+    const match = new RegExp(
+      `^${heading} ${escapeRegExp(section)}\\s*$([\\s\\S]*?)(?=^#{1,${heading.length}} |(?![\\s\\S]))`,
+      'm',
+    ).exec(task.contents);
+    if (match === null) {
       throw new Error(`task contract is missing required section: ${section}`);
     }
+    if (!hasSubstantiveContent(match[1] ?? '')) {
+      throw new Error(
+        `task contract has an empty required section: ${section}`,
+      );
+    }
   }
+  validateScopeSubsection(task.contents, 'In');
+  validateScopeSubsection(task.contents, 'Out');
   if (
     TEMPLATE_PLACEHOLDERS.some((placeholder) =>
       task.contents.includes(placeholder),
-    )
+    ) ||
+    EMPTY_COMPLETION_FIELD_PATTERN.test(task.contents)
   ) {
     throw new Error('task contract contains template placeholder content');
+  }
+}
+
+function validateScopeSubsection(contents: string, subsection: 'In' | 'Out') {
+  const match = new RegExp(
+    `^### ${subsection}\\s*$([\\s\\S]*?)(?=^#{1,3} |(?![\\s\\S]))`,
+    'm',
+  ).exec(contents);
+  if (match === null || !hasSubstantiveContent(match[1] ?? '')) {
+    throw new Error(
+      `task contract has an empty Scope ${subsection} subsection`,
+    );
+  }
+}
+
+function hasSubstantiveContent(contents: string): boolean {
+  const normalized = contents
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/^#{1,6} .*$/gm, '')
+    .replace(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\[[ xX]\][ \t]*/gm, '')
+    .replace(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]*/gm, '')
+    .trim();
+  return /[\p{L}\p{N}]/u.test(normalized);
+}
+
+async function validateDeclaredBranch(root: string, branch: string) {
+  try {
+    await gitOutput(root, ['check-ref-format', '--branch', branch]);
+  } catch (error: unknown) {
+    throw new Error('selected task declares an invalid Git branch', {
+      cause: error,
+    });
+  }
+}
+
+async function assertLinkedWorktree(root: string): Promise<void> {
+  const gitDirectory = await canonicalGitPath(
+    root,
+    await gitOutput(root, ['rev-parse', '--git-dir']),
+  );
+  const commonDirectory = await canonicalGitPath(
+    root,
+    await gitOutput(root, ['rev-parse', '--git-common-dir']),
+  );
+  if (gitDirectory === commonDirectory) {
+    throw new Error('planning requires an isolated linked Git worktree');
+  }
+}
+
+async function canonicalGitPath(root: string, target: string): Promise<string> {
+  return realpath(path.resolve(root, target));
+}
+
+async function assertPlanningIdentity(
+  root: string,
+  task: TaskRecord,
+  branch: string,
+  headCommit: string,
+): Promise<void> {
+  const [currentBranch, currentHead, currentSelection] = await Promise.all([
+    gitOutput(root, ['branch', '--show-current']),
+    gitOutput(root, ['rev-parse', '--verify', 'HEAD']),
+    selectProjectTask(root),
+  ]);
+  await assertCleanWorktree(root);
+  const [confirmedBranch, confirmedHead] = await Promise.all([
+    gitOutput(root, ['branch', '--show-current']),
+    gitOutput(root, ['rev-parse', '--verify', 'HEAD']),
+  ]);
+  const confirmedSelection = await selectProjectTask(root);
+  await assertCleanWorktree(root);
+  if (
+    currentBranch !== branch ||
+    currentHead !== headCommit ||
+    confirmedBranch !== branch ||
+    confirmedHead !== headCommit ||
+    currentSelection.kind !== 'selected' ||
+    currentSelection.task.taskId !== task.taskId ||
+    currentSelection.task.contents !== task.contents ||
+    confirmedSelection.kind !== 'selected' ||
+    confirmedSelection.task.taskId !== task.taskId ||
+    confirmedSelection.task.contents !== task.contents
+  ) {
+    throw new Error('task or Git identity changed while planning was prepared');
   }
 }
 
@@ -236,26 +378,91 @@ async function verifiedProjectRoot(projectDirectory: string): Promise<string> {
   return canonicalRoot;
 }
 
-async function assertRealDirectory(target: string, description: string) {
+interface DirectoryIdentity {
+  target: string;
+  canonicalPath: string;
+  dev: number;
+  ino: number;
+}
+
+async function directoryIdentity(
+  target: string,
+  description: string,
+): Promise<DirectoryIdentity> {
   const targetStats = await lstat(target);
   if (targetStats.isSymbolicLink() || !targetStats.isDirectory()) {
     throw new Error(`${description} must be a real directory`);
   }
-  const resolvedStats = await stat(await realpath(target));
+  const canonicalPath = await realpath(target);
+  const resolvedStats = await stat(canonicalPath);
   if (
     targetStats.dev !== resolvedStats.dev ||
     targetStats.ino !== resolvedStats.ino
   ) {
     throw new Error(`${description} changed while being inspected`);
   }
+  return {
+    target,
+    canonicalPath,
+    dev: targetStats.dev,
+    ino: targetStats.ino,
+  };
+}
+
+async function assertRealDirectory(target: string, description: string) {
+  await directoryIdentity(target, description);
+}
+
+async function assertDirectoryIdentity(
+  expected: DirectoryIdentity,
+  description: string,
+): Promise<void> {
+  const current = await directoryIdentity(expected.target, description);
+  if (
+    current.canonicalPath !== expected.canonicalPath ||
+    current.dev !== expected.dev ||
+    current.ino !== expected.ino
+  ) {
+    throw new Error(`${description} changed while planning was prepared`);
+  }
+}
+
+async function removeOwnedDirectory(
+  owned: DirectoryIdentity,
+  parent: DirectoryIdentity,
+  description: string,
+): Promise<void> {
+  await assertDirectoryIdentity(parent, 'runs directory');
+  await assertDirectoryIdentity(owned, description);
+  const quarantine = `${owned.target}.cleanup-${process.pid}-${randomUUID()}`;
+  await rename(owned.target, quarantine);
+  const movedStats = await lstat(quarantine);
+  if (
+    movedStats.isSymbolicLink() ||
+    !movedStats.isDirectory() ||
+    movedStats.dev !== owned.dev ||
+    movedStats.ino !== owned.ino
+  ) {
+    throw new Error(`${description} changed while cleanup was prepared`);
+  }
+  await assertDirectoryIdentity(parent, 'runs directory');
+  await rm(quarantine, { recursive: true, force: false });
 }
 
 async function validateExistingRun(
   runDirectory: string,
   expectedMetadata: string,
   task: TaskRecord,
+  runsIdentity: DirectoryIdentity,
+  options: PlanningOptions,
 ): Promise<void> {
-  await assertRealDirectory(runDirectory, 'planning run directory');
+  await assertDirectoryIdentity(runsIdentity, 'runs directory');
+  const runIdentity = await directoryIdentity(
+    runDirectory,
+    'planning run directory',
+  );
+  await options.onCheckpoint?.('after-existing-run-identity');
+  await assertDirectoryIdentity(runIdentity, 'planning run directory');
   const metadata = await readRealFile(
     path.join(runDirectory, 'planning.json'),
     'planning metadata',
@@ -265,6 +472,8 @@ async function validateExistingRun(
     'task snapshot',
   );
   await readRealFile(path.join(runDirectory, 'plan.md'), 'implementation plan');
+  await assertDirectoryIdentity(runIdentity, 'planning run directory');
+  await assertDirectoryIdentity(runsIdentity, 'runs directory');
   if (metadata !== expectedMetadata || snapshot !== task.contents) {
     throw new Error(
       'existing planning artifacts conflict with the selected task and commit',

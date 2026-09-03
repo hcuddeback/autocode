@@ -345,6 +345,9 @@ function parseTask(contents: string, filePath: string): TaskRecord {
     requiredString(fields, field, filePath);
   }
   const branch = requiredString(fields, 'branch', filePath);
+  if ([...branch].some(isControlCharacter)) {
+    throw new Error(`branch must not contain control characters: ${taskId}`);
+  }
 
   const title = requiredString(fields, 'title', filePath);
   if ([...title].some(isControlCharacter)) {

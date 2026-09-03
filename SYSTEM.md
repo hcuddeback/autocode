@@ -54,6 +54,8 @@
 - Planning metadata and the task snapshot are bound to the selected task digest, source path, branch, and current commit.
 - Repeated preparation preserves an edited plan; conflicting or symlinked artifacts fail safely.
 - Preparation rejects dirty worktrees and branches that differ from the selected task contract.
+- Preparation requires a linked worktree, validates declared Git branch names, and rechecks Git/task identity immediately before publishing artifacts.
+- Planning-directory identities are revalidated around artifact creation, inspection, cleanup, and publication.
 - Task validation rejects the editable placeholder prompts from `tasks/TASK_TEMPLATE.md`.
 - Plan context contains only the selected task snapshot, leaving Codex execution to AC-004.
 

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import {
+  cp,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -18,27 +20,40 @@ import { prepareImplementationPlan } from './planning.js';
 
 const execFileAsync = promisify(execFile);
 
-async function fixtureProject(branch = 'feat/AC-003'): Promise<string> {
-  const project = await mkdtemp(path.join(os.tmpdir(), 'autocode-planning-'));
-  await mkdir(path.join(project, 'tasks', 'completed'), { recursive: true });
-  await writeTask(project, 'AC-001', 'done', [], true);
-  await writeTask(project, 'AC-002', 'done', ['AC-001'], true);
-  await writeTask(project, 'AC-003', 'ready', ['AC-002']);
+async function fixtureProject(
+  branch = 'feat/AC-003',
+  linkedWorktree = true,
+): Promise<string> {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), 'autocode-planning-'));
+  const repository = path.join(fixture, 'repository');
+  const project = linkedWorktree ? path.join(fixture, 'worktree') : repository;
+  await mkdir(path.join(repository, 'tasks', 'completed'), { recursive: true });
+  await writeTask(repository, 'AC-001', 'done', [], true);
+  await writeTask(repository, 'AC-002', 'done', ['AC-001'], true);
+  await writeTask(repository, 'AC-003', 'ready', ['AC-002']);
   await writeTask(
-    project,
+    repository,
     'AC-004',
     'later',
     ['AC-003'],
     false,
     'LATER_SECRET_SCOPE',
   );
-  await git(project, ['init', '-b', branch]);
-  await git(project, ['config', 'user.email', 'fixture@example.invalid']);
-  await git(project, ['config', 'user.name', 'Fixture']);
-  await initializeProject(project);
-  await git(project, ['add', '--', '.']);
-  await git(project, ['commit', '-m', 'fixture']);
+  await git(repository, ['init', '-b', linkedWorktree ? 'main' : branch]);
+  await git(repository, ['config', 'user.email', 'fixture@example.invalid']);
+  await git(repository, ['config', 'user.name', 'Fixture']);
+  await initializeProject(repository);
+  await git(repository, ['add', '--', '.']);
+  await git(repository, ['commit', '-m', 'fixture']);
+  if (linkedWorktree) {
+    await git(repository, ['worktree', 'add', '-b', branch, project]);
+    await initializeProject(project);
+  }
   return project;
+}
+
+async function removeFixture(project: string): Promise<void> {
+  await rm(path.dirname(project), { recursive: true, force: true });
 }
 
 async function writeTask(
@@ -148,7 +163,7 @@ test('creates commit-bound artifacts for only the selected task', async () => {
     assert.doesNotMatch(plan, /AC-004|LATER_SECRET_SCOPE/);
     assert.match(plan, new RegExp(result.metadata.headCommit));
   } finally {
-    await rm(project, { recursive: true, force: true });
+    await removeFixture(project);
   }
 });
 
@@ -164,7 +179,7 @@ test('reuses matching artifacts without overwriting an edited plan', async () =>
     assert.equal(second.runDirectory, first.runDirectory);
     assert.equal(await readFile(planPath, 'utf8'), '# Operator plan\n');
   } finally {
-    await rm(project, { recursive: true, force: true });
+    await removeFixture(project);
   }
 });
 
@@ -178,7 +193,7 @@ test('rejects conflicting existing artifacts', async () => {
       /artifacts conflict/,
     );
   } finally {
-    await rm(project, { recursive: true, force: true });
+    await removeFixture(project);
   }
 });
 
@@ -198,7 +213,7 @@ test('rejects task contracts with template placeholders', async () => {
       /template placeholder/,
     );
   } finally {
-    await rm(project, { recursive: true, force: true });
+    await removeFixture(project);
   }
 });
 
@@ -224,7 +239,65 @@ test('rejects remaining editable placeholders copied from the task template', as
         /template placeholder/,
       );
     } finally {
-      await rm(project, { recursive: true, force: true });
+      await removeFixture(project);
+    }
+  }
+});
+
+test('accepts populated completion-record fields', async () => {
+  const project = await fixtureProject();
+  try {
+    const taskPath = path.join(project, 'tasks', 'AC-003.md');
+    await writeFile(
+      taskPath,
+      `${await readFile(taskPath, 'utf8')}\n## Completion record\n\n- Branch/PR: feat/AC-003; PR #3\n- Final commit: pending final verification\n- Validation evidence: fixture checks\n- Review disposition: no open findings\n- QA evidence or not-applicable reason: not applicable\n- Production evidence or not-applicable reason: not applicable\n- Remaining limitation: later workflow phases\n`,
+    );
+    await git(project, ['add', '--', 'tasks/AC-003.md']);
+    await git(project, ['commit', '-m', 'populate completion record']);
+    assert.equal((await prepareImplementationPlan(project)).kind, 'created');
+  } finally {
+    await removeFixture(project);
+  }
+});
+
+test('rejects an empty completion-record field', async () => {
+  const project = await fixtureProject();
+  try {
+    const taskPath = path.join(project, 'tasks', 'AC-003.md');
+    await writeFile(
+      taskPath,
+      `${await readFile(taskPath, 'utf8')}\n## Completion record\n\n- Branch/PR:\n`,
+    );
+    await assert.rejects(
+      () => prepareImplementationPlan(project),
+      /template placeholder/,
+    );
+  } finally {
+    await removeFixture(project);
+  }
+});
+
+test('rejects empty required sections and Scope subsections', async () => {
+  for (const [content, replacement] of [
+    ['Required for the fixture milestone.', ''],
+    ['Required for the fixture milestone.', '<!-- TODO -->'],
+    ['Required for the fixture milestone.', '- [ ]'],
+    ['Required for the fixture milestone.', '1)'],
+    ['- This task only.', ''],
+  ]) {
+    const project = await fixtureProject();
+    try {
+      const taskPath = path.join(project, 'tasks', 'AC-003.md');
+      await writeFile(
+        taskPath,
+        (await readFile(taskPath, 'utf8')).replace(content!, replacement!),
+      );
+      await assert.rejects(
+        () => prepareImplementationPlan(project),
+        /empty required section|empty Scope In subsection/,
+      );
+    } finally {
+      await removeFixture(project);
     }
   }
 });
@@ -242,7 +315,7 @@ test('rejects a dirty worktree without creating planning artifacts', async () =>
       [],
     );
   } finally {
-    await rm(project, { recursive: true, force: true });
+    await removeFixture(project);
   }
 });
 
@@ -251,22 +324,150 @@ test("rejects a branch that does not match the selected task's declaration", asy
   try {
     await assert.rejects(
       () => prepareImplementationPlan(project),
-      /requires the selected task branch feat\/AC-003; current branch is feat\/unrelated/,
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message ===
+          'current Git branch does not match the selected task branch',
     );
   } finally {
-    await rm(project, { recursive: true, force: true });
+    await removeFixture(project);
+  }
+});
+
+test('detects replacement of the runs directory before artifact creation', async () => {
+  const project = await fixtureProject();
+  const external = await mkdtemp(path.join(os.tmpdir(), 'autocode-runs-race-'));
+  try {
+    const runs = path.join(project, '.autocode', 'runs');
+    await assert.rejects(
+      () =>
+        prepareImplementationPlan(project, {
+          onCheckpoint: async (checkpoint) => {
+            if (checkpoint !== 'after-runs-identity') return;
+            await rename(runs, `${runs}-original`);
+            await symlink(external, runs, 'junction');
+          },
+        }),
+      /runs directory must be a real directory|runs directory changed/,
+    );
+    assert.deepEqual(await readdir(external), []);
+  } finally {
+    await removeFixture(project);
+    await rm(external, { recursive: true, force: true });
+  }
+});
+
+test('detects replacement of an existing planning run during validation', async () => {
+  const project = await fixtureProject();
+  try {
+    const first = await prepareImplementationPlan(project);
+    const replacement = `${first.runDirectory}-replacement`;
+    await assert.rejects(
+      () =>
+        prepareImplementationPlan(project, {
+          onCheckpoint: async (checkpoint) => {
+            if (checkpoint !== 'after-existing-run-identity') return;
+            await rename(first.runDirectory, replacement);
+            await cp(replacement, first.runDirectory, { recursive: true });
+          },
+        }),
+      /planning run directory changed/,
+    );
+  } finally {
+    await removeFixture(project);
+  }
+});
+
+test('removes its temporary directory after a preparation failure', async () => {
+  const project = await fixtureProject();
+  try {
+    await assert.rejects(
+      () =>
+        prepareImplementationPlan(project, {
+          onCheckpoint: async (checkpoint) => {
+            if (checkpoint === 'after-temporary-identity') {
+              throw new Error('injected failure');
+            }
+          },
+        }),
+      /injected failure/,
+    );
+    assert.deepEqual(
+      await readdir(path.join(project, '.autocode', 'runs')),
+      [],
+    );
+  } finally {
+    await removeFixture(project);
+  }
+});
+
+test('fails safely when Git identity changes after publication', async () => {
+  const project = await fixtureProject();
+  try {
+    await assert.rejects(
+      () =>
+        prepareImplementationPlan(project, {
+          onCheckpoint: async (checkpoint) => {
+            if (checkpoint !== 'after-publication') return;
+            await writeFile(path.join(project, 'concurrent.txt'), 'change\n');
+            await git(project, ['add', '--', 'concurrent.txt']);
+            await git(project, ['commit', '-m', 'concurrent change']);
+          },
+        }),
+      /task or Git identity changed/,
+    );
+    assert.deepEqual(
+      await readdir(path.join(project, '.autocode', 'runs')),
+      [],
+    );
+  } finally {
+    await removeFixture(project);
+  }
+});
+
+test('rejects a primary checkout even on the declared feature branch', async () => {
+  const project = await fixtureProject('feat/AC-003', false);
+  try {
+    await assert.rejects(
+      () => prepareImplementationPlan(project),
+      /requires an isolated linked Git worktree/,
+    );
+  } finally {
+    await removeFixture(project);
+  }
+});
+
+test('rejects invalid and control-bearing declared branches', async () => {
+  for (const branch of ['feat/bad..branch', '"feat/AC-003\\u001b[31m"']) {
+    const project = await fixtureProject();
+    try {
+      const taskPath = path.join(project, 'tasks', 'AC-003.md');
+      await writeFile(
+        taskPath,
+        (await readFile(taskPath, 'utf8')).replace(
+          'branch: feat/AC-003',
+          `branch: ${branch}`,
+        ),
+      );
+      await assert.rejects(
+        () => prepareImplementationPlan(project),
+        /invalid Git branch|must not contain control characters/,
+      );
+    } finally {
+      await removeFixture(project);
+    }
   }
 });
 
 test('rejects planning on main', async () => {
-  const project = await fixtureProject('main');
+  const project = await fixtureProject('main', false);
   try {
     await assert.rejects(
       () => prepareImplementationPlan(project),
       /requires a non-main Git branch/,
     );
   } finally {
-    await rm(project, { recursive: true, force: true });
+    await removeFixture(project);
   }
 });
 
@@ -287,7 +488,7 @@ test('rejects a symbolic-link planning run directory', async () => {
       /planning run directory must be a real directory/,
     );
   } finally {
-    await rm(project, { recursive: true, force: true });
+    await removeFixture(project);
     await rm(external, { recursive: true, force: true });
   }
 });
