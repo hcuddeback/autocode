@@ -50,6 +50,7 @@ test('runs scoped implementation and independent read-only review sessions', asy
     assert.ok(!events.includes('fixture-password'));
     assert.ok(!events.includes('AKIAABCDEFGHIJKLMNOP'));
     assert.ok(!events.includes('not-in-env-secret'));
+    assert.ok(!events.includes('json-file-secret'));
     assert.ok(events.includes('<redacted>'));
     const implementationRecord = JSON.parse(
       await readFile(
@@ -125,6 +126,24 @@ test('refuses review when implementation adds unexpected run-directory state', a
     await assert.rejects(
       () => runRoleSeparatedCodexSessions(fixture.worktree, fixture.options),
       /changed protected AutoCode state/,
+    );
+    await assert.rejects(
+      readFile(
+        path.join(fixture.runDirectory, 'sessions', 'review', 'session.json'),
+      ),
+      /ENOENT/,
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('refuses review when implementation changes ignored credential state', async () => {
+  const fixture = await sessionFixture('mutate-credential-state');
+  try {
+    await assert.rejects(
+      () => runRoleSeparatedCodexSessions(fixture.worktree, fixture.options),
+      /changed protected credential state/,
     );
     await assert.rejects(
       readFile(
@@ -345,7 +364,10 @@ async function sessionFixture(mode: string) {
   await git(repository, ['config', 'user.email', 'fixture@example.com']);
   await git(repository, ['config', 'user.name', 'Fixture']);
   await writeFile(path.join(repository, 'README.md'), 'fixture\n');
-  await writeFile(path.join(repository, '.gitignore'), '.autocode/\n.env\n');
+  await writeFile(
+    path.join(repository, '.gitignore'),
+    '.autocode/\n.env\n.credentials.json\n',
+  );
   await git(repository, ['add', 'README.md', '.gitignore']);
   await git(repository, ['commit', '-m', 'initial']);
   await git(repository, [
@@ -358,6 +380,10 @@ async function sessionFixture(mode: string) {
   await writeFile(
     path.join(worktree, '.env'),
     'DB_PASSWORD=not-in-env-secret\n',
+  );
+  await writeFile(
+    path.join(worktree, '.credentials.json'),
+    '{"client_secret":"json-file-secret"}\n',
   );
   await mkdir(path.join(worktree, 'tasks', 'completed'), { recursive: true });
   await writeFile(
@@ -429,6 +455,7 @@ if (mode === 'overflow') { process.stdout.write('x'.repeat(4096)); await new Pro
 if (!review) await writeFile('implementation.txt', 'changed');
 if (!review && mode === 'mutate-preparation') { const { readdir } = await import('node:fs/promises'); const [run] = await readdir('.autocode/runs'); await writeFile('.autocode/runs/' + run + '/plan.md', 'tampered'); }
 if (!review && mode === 'mutate-other-state') await writeFile('.autocode/config.yaml', 'changed: true');
+if (!review && mode === 'mutate-credential-state') await writeFile('.env', 'DB_PASSWORD=destroyed\\n');
 if (!review && mode === 'commit') { spawnSync('git', ['add', 'implementation.txt']); spawnSync('git', ['commit', '-m', 'unexpected']); }
 if (mode === 'malformed') { console.log('{bad json'); process.exit(0); }
 const id = review && mode !== 'duplicate' ? '${REVIEW_ID}' : '${IMPLEMENTATION_ID}';
@@ -438,6 +465,7 @@ console.log(JSON.stringify({ type: 'diagnostic', text: process.env.AUTOCODE_TEST
 console.log(JSON.stringify({ type: 'diagnostic', text: process.env.AUTOCODE_TEST_DATABASE_URL }));
 console.log(JSON.stringify({ type: 'diagnostic', text: 'AKIAABCDEFGHIJKLMNOP' }));
 console.log(JSON.stringify({ type: 'diagnostic', text: 'not-in-env-secret' }));
+console.log(JSON.stringify({ type: 'diagnostic', text: 'json-file-secret' }));
 if (mode === 'missing-final') process.exit(0);
 console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'role=' + (review ? 'review' : 'implementation') + ';task=' + input.includes('<task>') + ';plan=' + input.includes('<plan>') } }));
 if (mode === 'nonzero') process.exit(7);

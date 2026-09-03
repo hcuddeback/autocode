@@ -13,6 +13,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
+import { parse as parseYaml } from 'yaml';
 import { selectProjectTask } from './tasks.js';
 
 const MAX_INPUT_BYTES = 1024 * 1024;
@@ -62,6 +63,11 @@ interface ProcessResult {
   exitCode: number;
   timedOut: boolean;
   overflowed: boolean;
+}
+
+interface WorkspaceCredentials {
+  secrets: string[];
+  files: Map<string, string>;
 }
 
 export async function runRoleSeparatedCodexSessions(
@@ -140,6 +146,7 @@ export async function runRoleSeparatedCodexSessions(
 
   const sessionsDirectory = path.join(runDirectory, 'sessions');
   const stateDirectory = path.join(root, '.autocode');
+  const workspaceCredentials = await discoverWorkspaceCredentials(root);
   const ignoredStateEntries = new Set([
     normalizedRelativePath(stateDirectory, sessionsDirectory),
   ]);
@@ -162,8 +169,6 @@ export async function runRoleSeparatedCodexSessions(
     sessionsDirectory,
     'sessions directory',
   );
-  const workspaceSecrets = await discoverWorkspaceSecrets(root);
-
   const implementation = await runRole(
     root,
     sessionsDirectory,
@@ -172,13 +177,14 @@ export async function runRoleSeparatedCodexSessions(
     implementationPrompt(taskSnapshot, plan),
     options,
     runIdentity,
-    workspaceSecrets,
+    workspaceCredentials.secrets,
   );
   await assertDirectoryUnchanged(
     stateDirectory,
     stateSnapshot,
     ignoredStateEntries,
   );
+  await assertCredentialFilesUnchanged(root, workspaceCredentials.files);
   await assertImplementationGitState(root, branch, headCommit);
   const review = await runRole(
     root,
@@ -188,7 +194,7 @@ export async function runRoleSeparatedCodexSessions(
     reviewPrompt(taskSnapshot),
     options,
     runIdentity,
-    workspaceSecrets,
+    workspaceCredentials.secrets,
   );
   if (implementation.sessionId === review.sessionId) {
     throw new Error(
@@ -222,13 +228,15 @@ async function runRole(
     '-',
   ];
   const startedAt = new Date().toISOString();
+  const containment = secureCommand(command, arguments_, options.command);
   const result = await runProcess(
-    command,
-    arguments_,
+    containment.command,
+    containment.arguments,
     prompt,
     root,
     options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
+    containment.systemdUnit,
   );
   const completedAt = new Date().toISOString();
   const sessionId = parseSessionId(result.stdout);
@@ -283,6 +291,7 @@ function runProcess(
   cwd: string,
   timeoutMs: number,
   maxOutputBytes: number,
+  systemdUnit?: string,
 ): Promise<ProcessResult> {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
     throw new Error('timeout must be a positive integer');
@@ -305,23 +314,11 @@ function runProcess(
     let closeCode = -1;
     let fatalError: Error | undefined;
     let terminationTimer: NodeJS.Timeout | undefined;
-    const knownPosixDescendants = new Set<number>();
-    const descendantTimer =
-      process.platform === 'win32'
-        ? undefined
-        : setInterval(
-            () => capturePosixDescendants(child.pid, knownPosixDescendants),
-            100,
-          );
-    descendantTimer?.unref();
     const finish = (exitCode: number): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       if (terminationTimer !== undefined) clearTimeout(terminationTimer);
-      if (descendantTimer !== undefined) clearInterval(descendantTimer);
-      if (process.platform !== 'win32')
-        killTrackedPosixDescendants(knownPosixDescendants);
       child.stdout.destroy();
       child.stderr.destroy();
       if (fatalError !== undefined) {
@@ -349,12 +346,9 @@ function runProcess(
         terminationTimer.unref();
         return;
       }
-      capturePosixDescendants(child.pid, knownPosixDescendants);
-      signalPosixProcessGroup(child.pid, false);
+      terminatePosixContainment(child.pid, systemdUnit, false);
       terminationTimer = setTimeout(() => {
-        signalPosixProcessGroup(child.pid, true);
-        capturePosixDescendants(child.pid, knownPosixDescendants);
-        killTrackedPosixDescendants(knownPosixDescendants);
+        terminatePosixContainment(child.pid, systemdUnit, true);
         // Do not let inherited pipe handles or a termination-resistant child
         // defeat the adapter's execution bound.
         setTimeout(() => finish(closeCode), TERMINATION_GRACE_MS).unref();
@@ -378,8 +372,6 @@ function runProcess(
       return Buffer.concat([current, chunk]);
     };
     child.stdout.on('data', (chunk: Buffer) => {
-      if (process.platform !== 'win32')
-        capturePosixDescendants(child.pid, knownPosixDescendants);
       stdout = collect(stdout, chunk);
     });
     child.stderr.on('data', (chunk: Buffer) => {
@@ -395,9 +387,7 @@ function runProcess(
         if (process.platform === 'win32') {
           killWindowsDescendants(child.pid);
         } else {
-          signalPosixProcessGroup(child.pid, true);
-          capturePosixDescendants(child.pid, knownPosixDescendants);
-          killTrackedPosixDescendants(knownPosixDescendants);
+          terminatePosixContainment(child.pid, systemdUnit, true);
         }
         finish(closeCode);
       } else if (process.platform === 'win32') finish(closeCode);
@@ -410,6 +400,44 @@ function runProcess(
     });
     child.stdin.end(input, 'utf8');
   });
+}
+
+interface SecuredCommand {
+  command: string;
+  arguments: string[];
+  systemdUnit?: string;
+}
+
+function secureCommand(
+  command: string,
+  arguments_: string[],
+  overriddenCommand: string | undefined,
+): SecuredCommand {
+  // Custom executables are an injected deterministic-test boundary. Normal CLI
+  // operation always uses the contained default Codex executable.
+  if (overriddenCommand !== undefined || process.platform === 'win32')
+    return { command, arguments: arguments_ };
+  if (process.platform !== 'linux') {
+    throw new Error(
+      'secure Codex process containment is currently unavailable on this platform',
+    );
+  }
+  const systemdUnit = `autocode-codex-${process.pid}-${randomUUID()}`;
+  return {
+    command: 'systemd-run',
+    arguments: [
+      '--user',
+      '--quiet',
+      '--wait',
+      '--collect',
+      '--pipe',
+      `--unit=${systemdUnit}`,
+      '--',
+      command,
+      ...arguments_,
+    ],
+    systemdUnit,
+  };
 }
 
 function killWindowsProcessTree(pid: number | undefined): void {
@@ -436,59 +464,29 @@ function killWindowsDescendants(pid: number | undefined): void {
   );
 }
 
-function signalPosixProcessGroup(
+function terminatePosixContainment(
   pid: number | undefined,
+  systemdUnit: string | undefined,
   force: boolean,
 ): void {
+  if (systemdUnit !== undefined) {
+    spawnSync(
+      'systemctl',
+      [
+        '--user',
+        'kill',
+        `--kill-whom=all`,
+        `--signal=${force ? 'SIGKILL' : 'SIGTERM'}`,
+        systemdUnit,
+      ],
+      { windowsHide: true },
+    );
+  }
   if (pid === undefined) return;
   try {
     process.kill(-pid, force ? 'SIGKILL' : 'SIGTERM');
   } catch {
     // The process may have exited between the close check and escalation.
-  }
-}
-
-function capturePosixDescendants(
-  pid: number | undefined,
-  tracked: Set<number>,
-): void {
-  if (pid === undefined) return;
-  const result = spawnSync('ps', ['-A', '-o', 'pid=,ppid='], {
-    encoding: 'utf8',
-  });
-  if (result.status !== 0 || typeof result.stdout !== 'string') return;
-  const childrenByParent = new Map<number, number[]>();
-  for (const line of result.stdout.split('\n')) {
-    const [childText, parentText] = line.trim().split(/\s+/);
-    const childPid = Number(childText);
-    const parentPid = Number(parentText);
-    if (!Number.isInteger(childPid) || !Number.isInteger(parentPid)) continue;
-    const siblings = childrenByParent.get(parentPid);
-    if (siblings === undefined) childrenByParent.set(parentPid, [childPid]);
-    else siblings.push(childPid);
-  }
-  const pending = [pid];
-  const descendants: number[] = [];
-  while (pending.length > 0) {
-    const parent = pending.pop();
-    if (parent === undefined) continue;
-    for (const child of childrenByParent.get(parent) ?? []) {
-      descendants.push(child);
-      tracked.add(child);
-      pending.push(child);
-    }
-  }
-}
-
-function killTrackedPosixDescendants(tracked: ReadonlySet<number>): void {
-  // Recorded descendants remain addressable after reparenting or changing
-  // process groups, which closes the gap left by process-group signals alone.
-  for (const descendantPid of tracked) {
-    try {
-      process.kill(descendantPid, 'SIGKILL');
-    } catch {
-      // The descendant may have exited before this enumeration completed.
-    }
   }
 }
 
@@ -681,7 +679,9 @@ function redactSecrets(
     .replace(/(:\/\/[^\s/:@]+:)[^\s@]+(@)/g, '$1<redacted>$2');
 }
 
-async function discoverWorkspaceSecrets(root: string): Promise<string[]> {
+async function discoverWorkspaceCredentials(
+  root: string,
+): Promise<WorkspaceCredentials> {
   const ignored = await gitOutput(root, [
     'ls-files',
     '--others',
@@ -690,6 +690,7 @@ async function discoverWorkspaceSecrets(root: string): Promise<string[]> {
     '-z',
   ]);
   const secrets = new Set<string>();
+  const files = new Map<string, string>();
   for (const relative of ignored.split('\0').filter(Boolean)) {
     const name = path.basename(relative);
     if (!/^\.env(?:\.|$)/i.test(name) && !/(?:secret|credential)/i.test(name))
@@ -697,20 +698,75 @@ async function discoverWorkspaceSecrets(root: string): Promise<string[]> {
     const target = path.resolve(root, relative);
     normalizedRelativePath(root, target);
     const contents = await readRealFile(target, 'ignored credential file');
+    files.set(relative, createHash('sha256').update(contents).digest('hex'));
+    collectCredentialScalars(contents, name, secrets);
+  }
+  return { secrets: [...secrets], files };
+}
+
+function collectCredentialScalars(
+  contents: string,
+  name: string,
+  secrets: Set<string>,
+): void {
+  if (/^\.env(?:\.|$)/i.test(name)) {
     for (const line of contents.split(/\r?\n/)) {
-      const match = /^\s*[^#=]+=(.*)$/.exec(line);
-      if (match?.[1] === undefined) continue;
-      let candidate = match[1].trim();
-      if (
-        candidate.length >= 2 &&
-        ((candidate.startsWith('"') && candidate.endsWith('"')) ||
-          (candidate.startsWith("'") && candidate.endsWith("'")))
-      )
-        candidate = candidate.slice(1, -1);
-      if (candidate.length >= 4) secrets.add(candidate);
+      const match = /^\s*(?:export\s+)?[^#=]+=(.*)$/.exec(line);
+      if (match?.[1] !== undefined) addSecretScalar(match[1], secrets);
+    }
+    return;
+  }
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(contents);
+  } catch (error: unknown) {
+    throw new Error('ignored credential file is not valid JSON or YAML', {
+      cause: error,
+    });
+  }
+  collectParsedScalars(parsed, secrets);
+}
+
+function collectParsedScalars(value: unknown, secrets: Set<string>): void {
+  if (typeof value === 'string') {
+    if (value.length >= 4) secrets.add(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectParsedScalars(item, secrets);
+    return;
+  }
+  if (typeof value === 'object' && value !== null) {
+    for (const item of Object.values(value))
+      collectParsedScalars(item, secrets);
+  }
+}
+
+function addSecretScalar(raw: string, secrets: Set<string>): void {
+  let candidate = raw.trim();
+  if (
+    candidate.length >= 2 &&
+    ((candidate.startsWith('"') && candidate.endsWith('"')) ||
+      (candidate.startsWith("'") && candidate.endsWith("'")))
+  )
+    candidate = candidate.slice(1, -1);
+  else candidate = candidate.replace(/\s+#.*$/, '').trim();
+  if (candidate.length >= 4) secrets.add(candidate);
+}
+
+async function assertCredentialFilesUnchanged(
+  root: string,
+  before: ReadonlyMap<string, string>,
+): Promise<void> {
+  for (const [relative, expectedHash] of before) {
+    const contents = await readRealFile(
+      path.join(root, relative),
+      'ignored credential file',
+    );
+    if (createHash('sha256').update(contents).digest('hex') !== expectedHash) {
+      throw new Error('implementation changed protected credential state');
     }
   }
-  return [...secrets];
 }
 
 async function readRealFile(

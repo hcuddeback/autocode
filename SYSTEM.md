@@ -66,11 +66,11 @@
 - The sessions directory is reserved atomically before Codex starts, so concurrent invocations cannot share or overwrite a run.
 - Implementation uses the cross-version Codex workspace-write interface; review uses a read-only sandbox against uncommitted changes.
 - Valid distinct thread identities and bounded JSONL, stderr, final message, and metadata are retained per role.
-- Review starts only while the prepared branch and commit remain unchanged, implementation changes remain uncommitted, and protected `.autocode` state remains identical; captured output and arguments are redacted using environment values, ignored credential files, and known secret formats before persistence.
-- Timeout and output-limit termination escalate to forceful process-tree shutdown and return within a fixed grace period; POSIX descendants are tracked so helpers cannot escape cleanup by creating another process group.
+- Review starts only while the prepared branch and commit remain unchanged, implementation changes remain uncommitted, and protected `.autocode` plus ignored credential state remains identical; captured output and arguments are redacted using environment values, dotenv/JSON/YAML credential values, and known secret formats before persistence.
+- Timeout and output-limit termination escalate to forceful process-tree shutdown and return within a fixed grace period. Default Linux Codex sessions run in a transient systemd user unit, providing kernel-enforced cgroup containment for daemonized descendants; unsupported non-Windows platforms fail closed.
 - Non-`EPIPE` prompt-delivery failures terminate the subprocess before reporting failure, and successful sessions require a non-empty final
   agent message.
-- Deterministic fake-Codex tests cover scoped prompts plus malformed events, missing final messages, duplicate identity, Git-state and protected-state drift, timeout, output overflow, concurrent reservation, artifact redaction, detached POSIX helpers, stale preparation, existing artifacts, and failed exits.
+- Deterministic fake-Codex tests cover scoped prompts plus malformed events, missing final messages, duplicate identity, Git-state, protected-state and credential-state drift, timeout, output overflow, concurrent reservation, multi-format credential redaction, stale preparation, existing artifacts, and failed exits.
 
 ## Next task
 
