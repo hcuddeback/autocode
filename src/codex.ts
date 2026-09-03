@@ -1,9 +1,9 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   lstat,
   mkdir,
-  readFile,
+  open,
   realpath,
   rename,
   rm,
@@ -16,6 +16,7 @@ import { selectProjectTask } from './tasks.js';
 const MAX_INPUT_BYTES = 1024 * 1024;
 const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
+const TERMINATION_GRACE_MS = 1_000;
 const SESSION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -145,6 +146,7 @@ export async function runRoleSeparatedCodexSessions(
     runIdentity,
     true,
   );
+  await assertImplementationGitState(root, branch, headCommit);
   const review = await runRole(
     root,
     sessionsDirectory,
@@ -268,6 +270,7 @@ function runProcess(
   return new Promise((resolve, reject) => {
     const child = spawn(command, arguments_, {
       cwd,
+      detached: process.platform !== 'win32',
       shell: false,
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -276,9 +279,37 @@ function runProcess(
     let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     let timedOut = false;
     let overflowed = false;
+    let settled = false;
+    let terminationTimer: NodeJS.Timeout | undefined;
+    const finish = (exitCode: number): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (terminationTimer !== undefined) clearTimeout(terminationTimer);
+      child.stdout.destroy();
+      child.stderr.destroy();
+      resolve({
+        stdout: stdout.toString('utf8'),
+        stderr: stderr.toString('utf8'),
+        exitCode,
+        timedOut,
+        overflowed,
+      });
+    };
+    const terminate = (): void => {
+      if (terminationTimer !== undefined) return;
+      child.kill();
+      terminationTimer = setTimeout(() => {
+        forceKillProcessTree(child.pid);
+        // Do not let inherited pipe handles or a termination-resistant child
+        // defeat the adapter's execution bound.
+        setTimeout(() => finish(-1), TERMINATION_GRACE_MS).unref();
+      }, TERMINATION_GRACE_MS);
+      terminationTimer.unref();
+    };
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      terminate();
     }, timeoutMs);
     const collect = (
       current: Buffer<ArrayBufferLike>,
@@ -286,7 +317,7 @@ function runProcess(
     ): Buffer<ArrayBufferLike> => {
       if (current.length + chunk.length > maxOutputBytes) {
         overflowed = true;
-        child.kill();
+        terminate();
         return Buffer.concat([
           current,
           chunk.subarray(0, Math.max(0, maxOutputBytes - current.length)),
@@ -302,23 +333,32 @@ function runProcess(
     });
     child.on('error', (error) => {
       clearTimeout(timer);
+      if (terminationTimer !== undefined) clearTimeout(terminationTimer);
       reject(error);
     });
     child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({
-        stdout: stdout.toString('utf8'),
-        stderr: stderr.toString('utf8'),
-        exitCode: code ?? -1,
-        timedOut,
-        overflowed,
-      });
+      finish(code ?? -1);
     });
     child.stdin.on('error', (error: NodeJS.ErrnoException) => {
       if (error.code !== 'EPIPE') reject(error);
     });
     child.stdin.end(input, 'utf8');
   });
+}
+
+function forceKillProcessTree(pid: number | undefined): void {
+  if (pid === undefined) return;
+  if (process.platform === 'win32') {
+    execFile('taskkill', ['/pid', String(pid), '/t', '/f'], {
+      windowsHide: true,
+    }).on('error', () => undefined);
+    return;
+  }
+  try {
+    process.kill(-pid, 'SIGKILL');
+  } catch {
+    // The process may have exited between the close check and escalation.
+  }
 }
 
 async function persistRoleResult(
@@ -344,15 +384,27 @@ async function persistRoleResult(
     `temporary ${role} directory`,
   );
   try {
-    await writeFile(path.join(temporary, 'events.jsonl'), result.stdout, {
-      flag: 'wx',
-    });
-    await writeFile(path.join(temporary, 'stderr.txt'), result.stderr, {
-      flag: 'wx',
-    });
-    await writeFile(path.join(temporary, 'final.txt'), finalMessage, {
-      flag: 'wx',
-    });
+    await writeFile(
+      path.join(temporary, 'events.jsonl'),
+      redactSecrets(result.stdout),
+      {
+        flag: 'wx',
+      },
+    );
+    await writeFile(
+      path.join(temporary, 'stderr.txt'),
+      redactSecrets(result.stderr),
+      {
+        flag: 'wx',
+      },
+    );
+    await writeFile(
+      path.join(temporary, 'final.txt'),
+      redactSecrets(finalMessage),
+      {
+        flag: 'wx',
+      },
+    );
     await writeFile(
       path.join(temporary, 'session.json'),
       `${JSON.stringify(record ?? { version: 1, role, status: 'invalid-output', exitCode: result.exitCode }, null, 2)}\n`,
@@ -462,20 +514,71 @@ function reviewPrompt(task: string): string {
 
 function redactArguments(arguments_: string[], root: string): string[] {
   return arguments_.map((argument) =>
-    argument === root ? '<worktree>' : argument,
+    argument === root ? '<worktree>' : redactSecrets(argument),
   );
+}
+
+function redactSecrets(value: string): string {
+  let redacted = value;
+  for (const [name, secret] of Object.entries(process.env)) {
+    if (
+      secret !== undefined &&
+      secret.length >= 4 &&
+      /(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIAL)/i.test(
+        name,
+      )
+    ) {
+      redacted = redacted.split(secret).join('<redacted>');
+    }
+  }
+  return redacted
+    .replace(/\b(?:sk|gh[opusr])_[A-Za-z0-9_-]{16,}\b/g, '<redacted>')
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, '$1<redacted>');
 }
 
 async function readRealFile(
   target: string,
   description: string,
 ): Promise<string> {
-  const stats = await lstat(target);
-  if (stats.isSymbolicLink() || !stats.isFile())
-    throw new Error(`${description} must be a real file`);
-  if (stats.size > MAX_INPUT_BYTES)
-    throw new Error(`${description} exceeds ${MAX_INPUT_BYTES} bytes`);
-  return readFile(target, 'utf8');
+  let handle;
+  try {
+    handle = await open(target, 'r');
+    const [stats, linkStats] = await Promise.all([
+      handle.stat(),
+      lstat(target),
+    ]);
+    if (
+      linkStats.isSymbolicLink() ||
+      !stats.isFile() ||
+      stats.dev !== linkStats.dev ||
+      stats.ino !== linkStats.ino
+    ) {
+      throw new Error(`${description} must be a stable real file`);
+    }
+    if (stats.size > MAX_INPUT_BYTES)
+      throw new Error(`${description} exceeds ${MAX_INPUT_BYTES} bytes`);
+    return await handle.readFile('utf8');
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function assertImplementationGitState(
+  root: string,
+  expectedBranch: string,
+  expectedHead: string,
+): Promise<void> {
+  const [branch, head, status] = await Promise.all([
+    gitOutput(root, ['branch', '--show-current']),
+    gitOutput(root, ['rev-parse', '--verify', 'HEAD']),
+    gitOutput(root, ['status', '--porcelain=v1', '--untracked-files=all']),
+  ]);
+  if (branch !== expectedBranch || head !== expectedHead) {
+    throw new Error('implementation changed the prepared Git identity');
+  }
+  if (status === '') {
+    throw new Error('implementation produced no uncommitted changes to review');
+  }
 }
 
 async function readJsonFile<T>(

@@ -31,6 +31,17 @@ test('runs scoped implementation and independent read-only review sessions', asy
     );
     assert.equal(implementation, 'role=implementation;task=true;plan=true');
     assert.equal(review, 'role=review;task=true;plan=false');
+    const events = await readFile(
+      path.join(
+        result.runDirectory,
+        'sessions',
+        'implementation',
+        'events.jsonl',
+      ),
+      'utf8',
+    );
+    assert.ok(!events.includes('sk_fixture_secret_123456789'));
+    assert.ok(events.includes('<redacted>'));
     const implementationRecord = JSON.parse(
       await readFile(
         path.join(
@@ -55,6 +66,24 @@ test('runs scoped implementation and independent read-only review sessions', asy
     assert.ok(reviewRecord.arguments.includes('read-only'));
     assert.ok(reviewRecord.arguments.includes('--uncommitted'));
     assert.ok(!reviewRecord.arguments.includes('--approve-for-me'));
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('refuses review when implementation changes the prepared Git identity', async () => {
+  const fixture = await sessionFixture('commit');
+  try {
+    await assert.rejects(
+      () => runRoleSeparatedCodexSessions(fixture.worktree, fixture.options),
+      /changed the prepared Git identity/,
+    );
+    await assert.rejects(
+      readFile(
+        path.join(fixture.runDirectory, 'sessions', 'review', 'session.json'),
+      ),
+      /ENOENT/,
+    );
   } finally {
     await fixture.cleanup();
   }
@@ -234,14 +263,19 @@ function selectedTask(): string {
 
 function fakeCodex(): string {
   return `const mode = process.argv[2];
+import { writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const review = process.argv.includes('review');
 if (mode === 'timeout') await new Promise(resolve => setTimeout(resolve, 10_000));
 if (mode === 'overflow') { process.stdout.write('x'.repeat(4096)); await new Promise(resolve => setTimeout(resolve, 10_000)); }
+if (!review) await writeFile('implementation.txt', 'changed');
+if (!review && mode === 'commit') { spawnSync('git', ['add', 'implementation.txt']); spawnSync('git', ['commit', '-m', 'unexpected']); }
 if (mode === 'malformed') { console.log('{bad json'); process.exit(0); }
 const id = review && mode !== 'duplicate' ? '${REVIEW_ID}' : '${IMPLEMENTATION_ID}';
 console.log(JSON.stringify({ type: 'thread.started', thread_id: id }));
+console.log(JSON.stringify({ type: 'diagnostic', text: 'sk_fixture_secret_123456789' }));
 console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'role=' + (review ? 'review' : 'implementation') + ';task=' + input.includes('<task>') + ';plan=' + input.includes('<plan>') } }));
 if (mode === 'nonzero') process.exit(7);
 `;
