@@ -111,7 +111,7 @@ Then run them from the prepared task worktree:
 node dist/cli.js verify path/to/project
 ```
 
-`verify` runs each command directly without a shell and stops on the first nonzero exit, timeout, output overflow, Git-identity change, or worktree change. It atomically reserves `.autocode/runs/<run>/evidence/` and retains redacted stdout, stderr, command arguments, exit status, timing, and the exact branch and commit for every attempted check. Existing evidence and stale preparation fail closed. Automatic fix loops and resumable phase orchestration remain later tasks.
+`verify` runs each command directly without a shell and stops on the first nonzero exit, timeout, output overflow, Git-identity change, or worktree change. It atomically reserves `.autocode/runs/<run>/evidence/` and retains redacted stdout, stderr, command arguments, exit status, timing, and the exact branch and commit for every attempted check. Default Linux checks run in transient systemd user units so daemonized descendants remain contained; unsupported non-Windows containment fails closed. Existing evidence and stale preparation fail closed. Automatic fix loops and resumable phase orchestration remain later tasks.
 
 ## Documentation
 

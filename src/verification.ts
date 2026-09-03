@@ -67,6 +67,12 @@ interface ProcessResult {
   overflowed: boolean;
 }
 
+interface SecuredVerificationCommand {
+  command: string;
+  arguments: string[];
+  systemdUnit?: string;
+}
+
 export async function runDeterministicVerification(
   projectDirectory: string,
 ): Promise<VerificationResult> {
@@ -178,12 +184,14 @@ export async function runDeterministicVerification(
     let processResult: ProcessResult;
     try {
       const executable = await resolveExecutable(configured.command, root);
+      const secured = secureVerificationCommand(executable, configured.args);
       processResult = await runProcess(
-        executable,
-        configured.args,
+        secured.command,
+        secured.arguments,
         root,
         config.verification.timeoutMs,
         config.verification.maxOutputBytes,
+        secured.systemdUnit,
       );
     } catch (error: unknown) {
       processResult = {
@@ -198,10 +206,18 @@ export async function runDeterministicVerification(
     const completed = Date.now();
     const [currentBranch, currentHead, currentStatus, currentWorktreeSnapshot] =
       await Promise.all([
-        gitOutput(root, ['branch', '--show-current']),
-        gitOutput(root, ['rev-parse', '--verify', 'HEAD']),
-        gitOutput(root, ['status', '--porcelain=v1', '--untracked-files=all']),
-        snapshotWorktree(root),
+        safeInspection(() => gitOutput(root, ['branch', '--show-current'])),
+        safeInspection(() =>
+          gitOutput(root, ['rev-parse', '--verify', 'HEAD']),
+        ),
+        safeInspection(() =>
+          gitOutput(root, [
+            'status',
+            '--porcelain=v1',
+            '--untracked-files=all',
+          ]),
+        ),
+        safeInspection(() => snapshotWorktree(root)),
       ]);
     const gitIdentityUnchanged =
       currentBranch === branch && currentHead === headCommit;
@@ -263,6 +279,44 @@ export async function runDeterministicVerification(
       'deterministic verification failed; retained evidence identifies the failing check',
     );
   return result;
+}
+
+async function safeInspection<T>(
+  operation: () => Promise<T>,
+): Promise<T | undefined> {
+  try {
+    return await operation();
+  } catch {
+    return undefined;
+  }
+}
+
+function secureVerificationCommand(
+  command: string,
+  arguments_: string[],
+): SecuredVerificationCommand {
+  if (process.platform === 'win32') return { command, arguments: arguments_ };
+  if (process.platform !== 'linux') {
+    throw new Error(
+      'secure verification process containment is currently unavailable on this platform',
+    );
+  }
+  const systemdUnit = `autocode-verification-${process.pid}-${randomUUID()}`;
+  return {
+    command: 'systemd-run',
+    arguments: [
+      '--user',
+      '--quiet',
+      '--wait',
+      '--collect',
+      '--pipe',
+      `--unit=${systemdUnit}`,
+      '--',
+      command,
+      ...arguments_,
+    ],
+    systemdUnit,
+  };
 }
 
 async function snapshotWorktree(root: string): Promise<string> {
@@ -467,6 +521,7 @@ function runProcess(
   cwd: string,
   timeoutMs: number,
   maxOutputBytes: number,
+  systemdUnit?: string,
 ): Promise<ProcessResult> {
   return new Promise((resolve) => {
     const child = spawn(command, arguments_, {
@@ -498,9 +553,9 @@ function runProcess(
     };
     const terminate = () => {
       if (terminationTimer !== undefined) return;
-      terminateTree(child.pid, false);
+      terminateTree(child.pid, false, systemdUnit);
       terminationTimer = setTimeout(() => {
-        terminateTree(child.pid, true);
+        terminateTree(child.pid, true, systemdUnit);
         finish(-1);
       }, TERMINATION_GRACE_MS);
       terminationTimer.unref();
@@ -526,13 +581,17 @@ function runProcess(
       finish(-1);
     });
     child.on('close', (code) => {
-      if (!timedOut && !overflowed) terminateTree(child.pid, true);
+      if (!timedOut && !overflowed) terminateTree(child.pid, true, systemdUnit);
       finish(code ?? -1);
     });
   });
 }
 
-function terminateTree(pid: number | undefined, force: boolean): void {
+function terminateTree(
+  pid: number | undefined,
+  force: boolean,
+  systemdUnit?: string,
+): void {
   if (pid === undefined) return;
   if (process.platform === 'win32') {
     spawnSync('taskkill', ['/pid', String(pid), '/t', '/f'], {
@@ -545,6 +604,19 @@ function terminateTree(pid: number | undefined, force: boolean): void {
       // taskkill may already have terminated the direct process.
     }
     return;
+  }
+  if (systemdUnit !== undefined) {
+    spawnSync(
+      'systemctl',
+      [
+        '--user',
+        'kill',
+        '--kill-whom=all',
+        `--signal=${force ? 'SIGKILL' : 'SIGTERM'}`,
+        systemdUnit,
+      ],
+      { windowsHide: true },
+    );
   }
   try {
     process.kill(-pid, force ? 'SIGKILL' : 'SIGTERM');

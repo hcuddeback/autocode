@@ -381,6 +381,42 @@ test('verification detects a branch change that preserves HEAD', async () => {
   }
 });
 
+test('verification retains evidence when post-check Git inspection fails', async () => {
+  const fixture = await createFixture([
+    {
+      name: 'unborn_head',
+      command: 'git',
+      args: ['switch', '--orphan', 'unborn-head'],
+    },
+  ]);
+  try {
+    await assert.rejects(
+      () => runDeterministicVerification(fixture.worktree),
+      /verification failed/,
+    );
+    const record = JSON.parse(
+      await readFile(
+        path.join(
+          fixture.runDirectory,
+          'evidence',
+          'unborn_head',
+          'check.json',
+        ),
+        'utf8',
+      ),
+    ) as {
+      gitIdentityUnchanged: boolean;
+      worktreeUnchanged: boolean;
+      passed: boolean;
+    };
+    assert.equal(record.gitIdentityUnchanged, false);
+    assert.equal(record.worktreeUnchanged, false);
+    assert.equal(record.passed, false);
+  } finally {
+    await cleanup(fixture);
+  }
+});
+
 test('verification does not resolve executables from the worktree', async () => {
   const command = 'autocode-shadow-check';
   const fixture = await createFixture([{ name: 'shadow', command, args: [] }]);
@@ -458,6 +494,37 @@ test('verification snapshots Git diffs larger than 64 KiB', async () => {
     await cleanup(fixture);
   }
 });
+
+test(
+  'verification contains helpers that detach from the command process group',
+  { skip: process.platform !== 'linux' },
+  async () => {
+    const helper =
+      "setTimeout(() => require('fs').writeFileSync('detached-marker.txt', 'escaped'), 1000)";
+    const fixture = await createFixture([
+      {
+        name: 'detached_helper',
+        command: 'node',
+        args: [
+          '-e',
+          `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(
+            helper,
+          )}], { detached: true, stdio: 'ignore' }).unref()`,
+        ],
+      },
+    ]);
+    try {
+      await runDeterministicVerification(fixture.worktree);
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await assert.rejects(
+        () => readFile(path.join(fixture.worktree, 'detached-marker.txt')),
+        /ENOENT/,
+      );
+    } finally {
+      await cleanup(fixture);
+    }
+  },
+);
 
 test('verification retains spawn errors and detects protected-input drift', async () => {
   const missing = await createFixture([

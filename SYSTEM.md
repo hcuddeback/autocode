@@ -78,6 +78,7 @@
 - `autocode verify` validates configured executable-and-argument arrays and runs them sequentially without a shell from the prepared worktree.
 - The evidence directory is reserved before execution; each attempted check retains bounded redacted output, command identity, timing, exit status, and the prepared Git branch and commit.
 - Verification stops on the first nonzero exit, timeout, output overflow, Git-identity change, or worktree change, retaining partial evidence and refusing to overwrite an existing run.
+- Default Linux verification runs in a transient systemd user unit so detached descendants remain contained; unsupported non-Windows containment fails closed.
 - Fixture tests cover successful sequences, partial failure, timeout, overflow, stale preparation, artifact collision, and unsafe configuration.
 
 ## Next task
