@@ -10,7 +10,7 @@ AutoCode will be a local-first TypeScript CLI that runs durable software-enginee
 
 **Last updated:** 2026-09-02
 
-> Current reality: the `autocode init` CLI foundation is implemented. Workflow orchestration is not implemented yet.
+> Current reality: `autocode init` and deterministic ready-task selection are implemented. Workflow orchestration is not implemented yet.
 
 ## Who it is for
 
@@ -68,6 +68,12 @@ pnpm build
 node dist/cli.js init path/to/project
 ```
 
+Select the first ready task whose dependencies are complete, provided no task is already in progress or review:
+
+```shell
+node dist/cli.js select path/to/project
+```
+
 ## Documentation
 
 - [Product and MVP requirements](docs/PRODUCT.md)
@@ -82,7 +88,7 @@ node dist/cli.js init path/to/project
 
 ## Current next step
 
-Finish the AC-001 review and merge gates, then select the next bounded workflow-runtime task.
+Merge AC-002, then implement just-in-time task refinement and planning for the selected task.
 
 ## Guardrail
 
