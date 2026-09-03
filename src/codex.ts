@@ -65,7 +65,7 @@ interface ProcessResult {
   overflowed: boolean;
 }
 
-interface WorkspaceCredentials {
+export interface WorkspaceCredentials {
   secrets: string[];
   files: Map<string, string>;
 }
@@ -648,7 +648,7 @@ function redactArguments(arguments_: string[], root: string): string[] {
   );
 }
 
-function redactSecrets(
+export function redactSecrets(
   value: string,
   additionalSecrets: readonly string[] = [],
 ): string {
@@ -679,7 +679,7 @@ function redactSecrets(
     .replace(/(:\/\/[^\s/:@]+:)[^\s@]+(@)/g, '$1<redacted>$2');
 }
 
-async function discoverWorkspaceCredentials(
+export async function discoverWorkspaceCredentials(
   root: string,
 ): Promise<WorkspaceCredentials> {
   const ignored = await gitOutput(root, [
