@@ -4,6 +4,7 @@ import path from 'node:path';
 import { initializeProject } from './config.js';
 import { selectProjectTask } from './tasks.js';
 import { prepareImplementationPlan } from './planning.js';
+import { runRoleSeparatedCodexSessions } from './codex.js';
 
 async function main(args: string[]): Promise<void> {
   const [command, ...options] = args;
@@ -62,13 +63,20 @@ async function main(args: string[]): Promise<void> {
     );
     return;
   }
+  if (command === 'sessions') {
+    const result = await runRoleSeparatedCodexSessions(projectDirectory);
+    console.log(
+      `Completed implementation session ${result.implementation.sessionId} and review session ${result.review.sessionId}`,
+    );
+    return;
+  }
   throw new Error(`unknown command: ${command}`);
 }
 
 function printHelp(): void {
   console.log('Usage: autocode <command> [project-directory]');
   console.log(
-    '\nCommands:\n  init      Initialize project-local configuration and state\n  select    Select the first ready task with completed dependencies\n  prepare   Validate the selected task and create commit-bound planning artifacts',
+    '\nCommands:\n  init      Initialize project-local configuration and state\n  select    Select the first ready task with completed dependencies\n  prepare   Validate the selected task and create commit-bound planning artifacts\n  sessions  Run separate Codex implementation and critical-review sessions',
   );
 }
 
