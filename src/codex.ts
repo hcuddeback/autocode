@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   lstat,
@@ -281,6 +281,8 @@ function runProcess(
     let timedOut = false;
     let overflowed = false;
     let settled = false;
+    let terminating = false;
+    let closeCode = -1;
     let fatalError: Error | undefined;
     let terminationTimer: NodeJS.Timeout | undefined;
     const finish = (exitCode: number): void => {
@@ -304,12 +306,23 @@ function runProcess(
     };
     const terminate = (): void => {
       if (terminationTimer !== undefined) return;
-      child.kill();
+      terminating = true;
+      if (process.platform === 'win32') {
+        killWindowsProcessTree(child.pid);
+        child.kill();
+        terminationTimer = setTimeout(
+          () => finish(closeCode),
+          TERMINATION_GRACE_MS,
+        );
+        terminationTimer.unref();
+        return;
+      }
+      signalPosixProcessGroup(child.pid, false);
       terminationTimer = setTimeout(() => {
-        forceKillProcessTree(child.pid);
+        signalPosixProcessGroup(child.pid, true);
         // Do not let inherited pipe handles or a termination-resistant child
         // defeat the adapter's execution bound.
-        setTimeout(() => finish(-1), TERMINATION_GRACE_MS).unref();
+        setTimeout(() => finish(closeCode), TERMINATION_GRACE_MS).unref();
       }, TERMINATION_GRACE_MS);
       terminationTimer.unref();
     };
@@ -342,7 +355,8 @@ function runProcess(
       finish(-1);
     });
     child.on('close', (code) => {
-      finish(code ?? -1);
+      closeCode = code ?? -1;
+      if (!terminating || process.platform === 'win32') finish(closeCode);
     });
     child.stdin.on('error', (error: NodeJS.ErrnoException) => {
       if (error.code !== 'EPIPE' && fatalError === undefined) {
@@ -354,16 +368,20 @@ function runProcess(
   });
 }
 
-function forceKillProcessTree(pid: number | undefined): void {
+function killWindowsProcessTree(pid: number | undefined): void {
   if (pid === undefined) return;
-  if (process.platform === 'win32') {
-    execFile('taskkill', ['/pid', String(pid), '/t', '/f'], {
-      windowsHide: true,
-    }).on('error', () => undefined);
-    return;
-  }
+  spawnSync('taskkill', ['/pid', String(pid), '/t', '/f'], {
+    windowsHide: true,
+  });
+}
+
+function signalPosixProcessGroup(
+  pid: number | undefined,
+  force: boolean,
+): void {
+  if (pid === undefined) return;
   try {
-    process.kill(-pid, 'SIGKILL');
+    process.kill(-pid, force ? 'SIGKILL' : 'SIGTERM');
   } catch {
     // The process may have exited between the close check and escalation.
   }

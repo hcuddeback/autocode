@@ -138,6 +138,26 @@ test('terminates a timed-out Codex session and preserves failure artifacts', asy
   }
 });
 
+test('terminates the process tree even when the direct child exits first', async () => {
+  const fixture = await sessionFixture('timeout-tree');
+  try {
+    await assert.rejects(
+      () =>
+        runRoleSeparatedCodexSessions(fixture.worktree, {
+          ...fixture.options,
+          timeoutMs: 100,
+        }),
+      /timed out/,
+    );
+    await assert.rejects(
+      readFile(path.join(fixture.worktree, 'escaped.txt')),
+      /ENOENT/,
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('terminates a Codex session whose output exceeds the configured bound', async () => {
   const fixture = await sessionFixture('overflow');
   try {
@@ -271,11 +291,12 @@ function selectedTask(): string {
 function fakeCodex(): string {
   return `const mode = process.argv[2];
 import { writeFile } from 'node:fs/promises';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const review = process.argv.includes('review');
 if (mode === 'timeout') await new Promise(resolve => setTimeout(resolve, 10_000));
+if (mode === 'timeout-tree') { spawn(process.execPath, ['-e', "process.on('SIGTERM',()=>{}); setTimeout(()=>require('node:fs').writeFileSync('escaped.txt','escaped'),1500); setTimeout(()=>{},10000)"], { stdio: 'ignore' }); await new Promise(resolve => setTimeout(resolve, 10_000)); }
 if (mode === 'overflow') { process.stdout.write('x'.repeat(4096)); await new Promise(resolve => setTimeout(resolve, 10_000)); }
 if (!review) await writeFile('implementation.txt', 'changed');
 if (!review && mode === 'commit') { spawnSync('git', ['add', 'implementation.txt']); spawnSync('git', ['commit', '-m', 'unexpected']); }
