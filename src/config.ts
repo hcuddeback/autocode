@@ -31,9 +31,11 @@ const CONFIG_KEYS = new Set([
   'stateDirectory',
   'telemetry',
   'verification',
+  'fixLoop',
 ]);
 const VERIFICATION_KEYS = new Set(['commands', 'timeoutMs', 'maxOutputBytes']);
 const COMMAND_KEYS = new Set(['name', 'command', 'args']);
+const FIX_LOOP_KEYS = new Set(['maxAttempts']);
 const SHELL_EXECUTABLES = new Set([
   'bash',
   'cmd',
@@ -64,6 +66,11 @@ export interface AutoCodeConfig {
   stateDirectory: '.autocode';
   telemetry: false;
   verification: VerificationConfig;
+  fixLoop: FixLoopConfig;
+}
+
+export interface FixLoopConfig {
+  maxAttempts: number;
 }
 
 const defaultConfig: AutoCodeConfig = {
@@ -74,6 +81,9 @@ const defaultConfig: AutoCodeConfig = {
     commands: [],
     timeoutMs: 10 * 60 * 1000,
     maxOutputBytes: 1024 * 1024,
+  },
+  fixLoop: {
+    maxAttempts: 3,
   },
 };
 
@@ -100,7 +110,24 @@ export function validateConfig(value: unknown): AutoCodeConfig {
   }
 
   const verification = validateVerificationConfig(config.verification);
-  return { ...defaultConfig, verification };
+  const fixLoop = validateFixLoopConfig(config.fixLoop);
+  return { ...defaultConfig, verification, fixLoop };
+}
+
+function validateFixLoopConfig(value: unknown): FixLoopConfig {
+  if (value === undefined) return structuredClone(defaultConfig.fixLoop);
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('fixLoop configuration must be a mapping');
+  }
+  const record = value as Record<string, unknown>;
+  rejectUnknownKeys(record, FIX_LOOP_KEYS, 'fixLoop');
+  return {
+    maxAttempts: boundedPositiveInteger(
+      record.maxAttempts,
+      'fixLoop.maxAttempts',
+      20,
+    ),
+  };
 }
 
 function validateVerificationConfig(value: unknown): VerificationConfig {

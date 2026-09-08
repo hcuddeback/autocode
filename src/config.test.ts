@@ -102,6 +102,42 @@ test('validation rejects unknown configuration keys', () => {
   );
 });
 
+test('validation accepts a bounded fix-loop policy', () => {
+  const config = validateConfig({
+    version: 1,
+    stateDirectory: '.autocode',
+    telemetry: false,
+    fixLoop: { maxAttempts: 5 },
+  });
+  assert.equal(config.fixLoop.maxAttempts, 5);
+  assert.equal(config.verification.commands.length, 0);
+});
+
+test('validation rejects unsafe fix-loop policies', () => {
+  for (const maxAttempts of [0, -1, 1.5, 21, '3']) {
+    assert.throws(
+      () =>
+        validateConfig({
+          version: 1,
+          stateDirectory: '.autocode',
+          telemetry: false,
+          fixLoop: { maxAttempts },
+        }),
+      /fixLoop.maxAttempts/,
+    );
+  }
+  assert.throws(
+    () =>
+      validateConfig({
+        version: 1,
+        stateDirectory: '.autocode',
+        telemetry: false,
+        fixLoop: { maxAttempts: 3, retryForever: true },
+      }),
+    /unknown fixLoop key/,
+  );
+});
+
 test('initialization rejects a missing project directory', async () => {
   const parent = await temporaryProject();
   const missing = path.join(parent, 'missing');

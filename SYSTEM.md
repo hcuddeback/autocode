@@ -2,7 +2,7 @@
 
 **Last verified:** 2026-09-03
 
-**Stage:** AC-005 deterministic verification implemented on its feature branch
+**Stage:** AC-006 bounded fix-loop policy implemented on its feature branch
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -12,7 +12,7 @@
 
 - The clean public repository exists.
 - The product, architecture, workflow, security, release, and task contracts are documented.
-- A strict TypeScript CLI initializes local state, selects dependency-ready tasks, prepares commit-bound planning artifacts, invokes scoped role-separated Codex sessions, and runs configured deterministic checks with retained evidence; durable phase orchestration does not exist yet.
+- A strict TypeScript foundation initializes local state, selects dependency-ready tasks, prepares commit-bound planning artifacts, invokes scoped role-separated Codex sessions, runs configured deterministic checks with retained evidence, and applies bounded fix-loop transition policy; durable phase orchestration does not exist yet.
 
 ## Evidence level
 
@@ -24,11 +24,12 @@
 | JIT planning is implemented   | Commit/task binding and artifact safety tests   | High                                       |
 | Codex session roles exist     | Fake-Codex subprocess and failure-path tests    | High                                       |
 | Verification evidence exists  | Deterministic subprocess and artifact fixtures  | High                                       |
+| Bounded fix policy exists     | Deterministic transition and ceiling tests      | High                                       |
 | Workflow is implemented       | Design contract only                            | High confidence that it is not implemented |
 
 ## Known gaps and blockers
 
-- CI, workflow phases, bounded fix loops, durable run state, and session resume are absent.
+- CI, integrated workflow phases, durable run state, and session resume are absent.
 - License has not been selected and added.
 
 ## Current milestone
@@ -81,9 +82,17 @@
 - Default Linux verification runs in a transient systemd user unit so detached descendants remain contained; unsupported non-Windows containment fails closed.
 - Fixture tests cover successful sequences, partial failure, timeout, overflow, stale preparation, artifact collision, and unsafe configuration.
 
+## AC-006 evidence
+
+- Configuration validates a finite `fixLoop.maxAttempts` ceiling from 1 through 20 and defaults to three fix attempts.
+- `runBoundedFixLoop` performs an initial check without consuming an attempt, then alternates fixes and checks without exceeding the ceiling.
+- Passing checks succeed, blocking checks or fixes stop immediately as blocked, and exhaustion, callback failures, or malformed results fail closed.
+- Ordered immutable transitions record each check/fix action, attempt number, outcome, and human-readable reason; callback exception details are not copied into evidence.
+- Transition tests cover initial and eventual success, check/fix blockers, exact ceiling exhaustion, invalid results, callback failures, invalid policy, and immutable returned evidence.
+
 ## Next task
 
-Complete AC-005 review and PR gates, then select AC-006 for bounded fix loops.
+Complete AC-006 review and PR gates, then select AC-007 for QA applicability and evidence.
 
 ## Recently completed
 
@@ -94,5 +103,6 @@ Complete AC-005 review and PR gates, then select AC-006 for bounded fix loops.
 - 2026-09-02 — Merged AC-003 through PR #3 and selected AC-004 for role-separated Codex CLI sessions.
 - 2026-09-02 — Implemented the AC-004 Codex session boundary on its isolated feature worktree.
 - 2026-09-03 — Merged AC-004 through PR #4 and implemented AC-005 deterministic verification on its isolated feature worktree.
+- 2026-09-03 — Merged AC-005 through PR #5 and implemented the AC-006 bounded fix-loop policy on its isolated feature worktree.
 
 Update this file when a major capability, blocker, milestone, or release fact changes.
