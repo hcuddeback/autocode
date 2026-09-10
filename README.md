@@ -117,7 +117,7 @@ node dist/cli.js verify path/to/project
 
 Workflow adapters can use `runBoundedFixLoop` from `fix-loop.js` with the validated `fixLoop.maxAttempts` policy. The initial check does not consume an attempt; each applied or attempted fix does. The runner stops on success, blocks immediately on a non-retryable result, and fails closed on ceiling exhaustion, callback errors, or malformed results while returning ordered immutable transitions. Wiring this policy into durable resumable workflow state remains a later task.
 
-Workflow adapters can use `runQaPhase` from `qa.js` with an explicit `required` or `not-applicable` decision. A not-applicable decision requires a substantive reason and does not accept an adapter. Required QA validates one to 32 uniquely named scenarios, runs them in order, and returns immutable structured evidence with timing, outcomes, reasons, and bounded artifact references. Failed, blocked, malformed, or throwing scenarios stop later work and fail closed without retaining exception details. Provider-specific browser tooling and durable QA artifact persistence remain later integration work.
+Workflow adapters can use `runQaPhase` from `qa.js` with an explicit `required` or `not-applicable` decision. A not-applicable decision requires a substantive reason of at least 16 UTF-8 bytes and does not accept an adapter. Required QA validates one to 32 uniquely named scenarios, runs them in order, and returns immutable structured evidence with timing, outcomes, reasons, and bounded artifact references. Failed, blocked, malformed, or throwing scenarios stop later work and fail closed without retaining exception details. Provider-specific browser tooling and durable QA artifact persistence remain later integration work.
 
 ## Documentation
 

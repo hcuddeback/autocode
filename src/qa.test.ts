@@ -97,6 +97,23 @@ test('callback failures fail closed without leaking exception details', async ()
   assert.doesNotMatch(JSON.stringify(result), /secret provider response/);
 });
 
+test('callback lookup failures fail closed without leaking exception details', async () => {
+  const callbacks = Object.defineProperty({}, 'run', {
+    get() {
+      throw new Error('secret callback accessor detail');
+    },
+  });
+  const result = await runQaPhase(requiredDecision, callbacks as never);
+
+  assert.equal(result.outcome, 'failed');
+  assert.equal(result.scenarios[0]!.outcome, 'callback-error');
+  assert.equal(result.reason, 'scenario adapter callback failed');
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /secret callback accessor detail/,
+  );
+});
+
 test('malformed callback results fail closed and stop later scenarios', async () => {
   let calls = 0;
   const result = await runQaPhase(requiredDecision, {
@@ -159,6 +176,7 @@ test('rejects ambiguous or malformed applicability decisions', async () => {
     null,
     { kind: 'auto', reason: 'infer it' },
     { kind: 'not-applicable', reason: '' },
+    { kind: 'not-applicable', reason: 'too short' },
     { kind: 'not-applicable', reason: 'no', scenarios: [] },
     { kind: 'required', reason: 'yes', scenarios: [] },
     { kind: 'required', reason: 'yes', scenarios: 'one' },
@@ -171,6 +189,59 @@ test('rejects ambiguous or malformed applicability decisions', async () => {
   for (const decision of invalid) {
     await assert.rejects(() => runQaPhase(decision));
   }
+});
+
+test('rejects inherited or accessor-backed applicability decisions', async () => {
+  const inherited = Object.create({
+    kind: 'not-applicable',
+    reason: 'Inherited skip rationale.',
+  });
+  let reasonReads = 0;
+  const accessorBacked = Object.defineProperty(
+    { kind: 'not-applicable' },
+    'reason',
+    {
+      enumerable: true,
+      get() {
+        reasonReads += 1;
+        return 'Accessor skip rationale.';
+      },
+    },
+  );
+
+  await assert.rejects(() => runQaPhase(inherited), /kind/);
+  await assert.rejects(() => runQaPhase(accessorBacked), /plain data/);
+  assert.equal(reasonReads, 0);
+});
+
+test('rejects inherited or accessor-backed scenario definitions', async () => {
+  const inheritedScenario = Object.create({
+    name: 'inherited',
+    description: 'Inherited scenario definition.',
+  });
+  let descriptionReads = 0;
+  const accessorScenario = Object.defineProperty(
+    { name: 'accessor' },
+    'description',
+    {
+      enumerable: true,
+      get() {
+        descriptionReads += 1;
+        return 'Accessor scenario definition.';
+      },
+    },
+  );
+
+  for (const scenario of [inheritedScenario, accessorScenario]) {
+    await assert.rejects(() =>
+      runQaPhase({
+        kind: 'required',
+        reason: 'Runtime behavior requires QA.',
+        scenarios: [scenario],
+      }),
+    );
+  }
+  assert.equal(descriptionReads, 0);
 });
 
 test('rejects duplicate or excessive scenario names', async () => {

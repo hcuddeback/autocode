@@ -1,6 +1,7 @@
 const MAX_SCENARIOS = 32;
 const MAX_TEXT_BYTES = 4096;
 const MAX_ARTIFACT_REFERENCES = 16;
+const MIN_NOT_APPLICABLE_REASON_BYTES = 16;
 
 export interface QaScenario {
   readonly name: string;
@@ -73,10 +74,14 @@ export async function runQaPhase(
       scenarios: [],
     });
   }
-  if (callbacks === undefined || typeof callbacks.run !== 'function') {
+  if (
+    callbacks === undefined ||
+    typeof callbacks !== 'object' ||
+    callbacks === null
+  ) {
     throw new Error('required QA needs a scenario callback');
   }
-  const runScenario = callbacks.run;
+  let runScenario: QaCallbacks['run'] | undefined;
 
   const evidence: QaScenarioEvidence[] = [];
   for (const scenario of validated.scenarios) {
@@ -84,6 +89,12 @@ export async function runQaPhase(
     const started = Date.now();
     let candidate: unknown;
     try {
+      if (runScenario === undefined) {
+        runScenario = callbacks.run;
+        if (typeof runScenario !== 'function') {
+          throw new TypeError('scenario callback is not callable');
+        }
+      }
       candidate = await runScenario.call(
         callbacks,
         scenario,
@@ -141,9 +152,15 @@ function validateDecision(value: unknown): QaDecision {
   const record = mapping(value, 'QA decision');
   if (record.kind === 'not-applicable') {
     rejectUnknownKeys(record, new Set(['kind', 'reason']), 'QA decision');
+    const reason = boundedText(record.reason, 'QA decision reason');
+    if (Buffer.byteLength(reason, 'utf8') < MIN_NOT_APPLICABLE_REASON_BYTES) {
+      throw new Error(
+        `not-applicable QA reason must be at least ${MIN_NOT_APPLICABLE_REASON_BYTES} bytes`,
+      );
+    }
     return Object.freeze({
       kind: 'not-applicable',
-      reason: boundedText(record.reason, 'QA decision reason'),
+      reason,
     });
   }
   if (record.kind !== 'required') {
@@ -154,18 +171,19 @@ function validateDecision(value: unknown): QaDecision {
     new Set(['kind', 'reason', 'scenarios']),
     'QA decision',
   );
-  if (
-    !Array.isArray(record.scenarios) ||
-    record.scenarios.length === 0 ||
-    record.scenarios.length > MAX_SCENARIOS
-  ) {
+  const scenarioValues = arrayDataValues(
+    record.scenarios,
+    'required QA scenarios',
+  );
+  if (scenarioValues.length === 0 || scenarioValues.length > MAX_SCENARIOS) {
     throw new Error(
       `required QA must define between 1 and ${MAX_SCENARIOS} scenarios`,
     );
   }
-  const scenarios = record.scenarios.map((scenario, index) =>
-    validateScenario(scenario, index),
-  );
+  const scenarios: Readonly<QaScenario>[] = [];
+  for (let index = 0; index < scenarioValues.length; index += 1) {
+    scenarios.push(validateScenario(scenarioValues[index], index));
+  }
   if (
     new Set(scenarios.map((scenario) => scenario.name)).size !==
     scenarios.length
@@ -298,10 +316,87 @@ function freezeEvidence(value: QaEvidence): Readonly<QaEvidence> {
 }
 
 function mapping(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (typeof value !== 'object' || value === null) {
     throw new Error(`${field} must be a mapping`);
   }
-  return value as Record<string, unknown>;
+  try {
+    if (Array.isArray(value)) throw new Error(`${field} must be a mapping`);
+  } catch {
+    throw new Error(`${field} must be a mapping`);
+  }
+  let keys: readonly PropertyKey[];
+  try {
+    keys = Reflect.ownKeys(value);
+  } catch {
+    throw new Error(`${field} must expose plain data properties`);
+  }
+  const record: Record<string, unknown> = Object.create(null) as Record<
+    string,
+    unknown
+  >;
+  for (const key of keys) {
+    if (typeof key !== 'string') {
+      throw new Error(`${field} keys must be strings`);
+    }
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw new Error(`${field} must expose plain data properties`);
+    }
+    if (descriptor === undefined || !('value' in descriptor)) {
+      throw new Error(`${field} must expose plain data properties`);
+    }
+    record[key] = descriptor.value;
+  }
+  return record;
+}
+
+function arrayDataValues(value: unknown, field: string): unknown[] {
+  let length: number;
+  try {
+    if (!Array.isArray(value)) throw new Error();
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
+    if (
+      lengthDescriptor === undefined ||
+      !('value' in lengthDescriptor) ||
+      !Number.isSafeInteger(lengthDescriptor.value) ||
+      lengthDescriptor.value < 0
+    ) {
+      throw new Error();
+    }
+    length = lengthDescriptor.value as number;
+  } catch {
+    throw new Error(`${field} must be an array of plain data values`);
+  }
+  if (length > MAX_SCENARIOS) {
+    throw new Error(
+      `required QA must define between 1 and ${MAX_SCENARIOS} scenarios`,
+    );
+  }
+  try {
+    const allowedKeys = new Set([
+      'length',
+      ...Array.from({ length }, (_, index) => String(index)),
+    ]);
+    if (
+      Reflect.ownKeys(value).some(
+        (key) => typeof key !== 'string' || !allowedKeys.has(key),
+      )
+    ) {
+      throw new Error();
+    }
+    const values: unknown[] = [];
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (descriptor === undefined || !('value' in descriptor))
+        throw new Error();
+      values.push(descriptor.value);
+    }
+    return values;
+  } catch {
+    throw new Error(`${field} must be an array of plain data values`);
+  }
 }
 
 function rejectUnknownKeys(

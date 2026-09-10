@@ -93,7 +93,7 @@
 
 ## AC-007 evidence
 
-- `runQaPhase` requires an explicit required or not-applicable decision and a substantive human-readable reason.
+- `runQaPhase` requires an explicit required or not-applicable decision; not-applicable reasons must contain at least 16 UTF-8 bytes.
 - Not-applicable QA returns structured immutable evidence without running an adapter; required QA validates one through 32 uniquely named scenarios and runs them in order.
 - Scenario evidence records sequence, identity, description, timing, outcome, reason, and bounded artifact references.
 - Failed and blocked scenarios stop later work; callback failures and malformed or accessor-backed untrusted results fail closed without retaining exception details.
