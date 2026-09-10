@@ -24,7 +24,7 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 
 ## Immediate queue
 
-`AC-006` is in review on `feat/AC-006-bounded-fix-loops`: implementation and local gates pass; independent Codex review and PR gates remain.
+`AC-007` is in review on `feat/AC-007-qa-evidence`: implementation and local gates pass; independent Codex review and PR gates remain.
 
 ## JIT task process
 

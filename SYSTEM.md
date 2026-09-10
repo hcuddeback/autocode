@@ -1,8 +1,8 @@
 # AutoCode system state
 
-**Last verified:** 2026-09-03
+**Last verified:** 2026-09-09
 
-**Stage:** AC-006 bounded fix-loop policy implemented on its feature branch
+**Stage:** AC-007 QA applicability and evidence implemented on its feature branch
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -12,20 +12,21 @@
 
 - The clean public repository exists.
 - The product, architecture, workflow, security, release, and task contracts are documented.
-- A strict TypeScript foundation initializes local state, selects dependency-ready tasks, prepares commit-bound planning artifacts, invokes scoped role-separated Codex sessions, runs configured deterministic checks with retained evidence, and applies bounded fix-loop transition policy; durable phase orchestration does not exist yet.
+- A strict TypeScript foundation initializes local state, selects dependency-ready tasks, prepares commit-bound planning artifacts, invokes scoped role-separated Codex sessions, runs configured deterministic checks with retained evidence, applies bounded fix-loop transition policy, and evaluates explicit QA applicability with structured scenario evidence; durable phase orchestration does not exist yet.
 
 ## Evidence level
 
-| Claim                         | Evidence                                        | Confidence                                 |
-| ----------------------------- | ----------------------------------------------- | ------------------------------------------ |
-| Documentation baseline exists | Repository files and internal-link validation   | High                                       |
-| CLI is usable                 | Build, initialization, and selection tests      | High                                       |
-| Task selection is implemented | Ready/blocked/malformed/completed fixture tests | High                                       |
-| JIT planning is implemented   | Commit/task binding and artifact safety tests   | High                                       |
-| Codex session roles exist     | Fake-Codex subprocess and failure-path tests    | High                                       |
-| Verification evidence exists  | Deterministic subprocess and artifact fixtures  | High                                       |
-| Bounded fix policy exists     | Deterministic transition and ceiling tests      | High                                       |
-| Workflow is implemented       | Design contract only                            | High confidence that it is not implemented |
+| Claim                          | Evidence                                        | Confidence                                 |
+| ------------------------------ | ----------------------------------------------- | ------------------------------------------ |
+| Documentation baseline exists  | Repository files and internal-link validation   | High                                       |
+| CLI is usable                  | Build, initialization, and selection tests      | High                                       |
+| Task selection is implemented  | Ready/blocked/malformed/completed fixture tests | High                                       |
+| JIT planning is implemented    | Commit/task binding and artifact safety tests   | High                                       |
+| Codex session roles exist      | Fake-Codex subprocess and failure-path tests    | High                                       |
+| Verification evidence exists   | Deterministic subprocess and artifact fixtures  | High                                       |
+| Bounded fix policy exists      | Deterministic transition and ceiling tests      | High                                       |
+| QA applicability policy exists | Deterministic decision and scenario tests       | High                                       |
+| Workflow is implemented        | Design contract only                            | High confidence that it is not implemented |
 
 ## Known gaps and blockers
 
@@ -90,9 +91,17 @@
 - Ordered immutable transitions record each check/fix action, attempt number, outcome, and human-readable reason; callback exception details are not copied into evidence.
 - Transition tests cover initial and eventual success, check/fix blockers, exact ceiling exhaustion, invalid results, callback failures, invalid policy, and immutable returned evidence.
 
+## AC-007 evidence
+
+- `runQaPhase` requires an explicit required or not-applicable decision; not-applicable reasons must contain at least 16 UTF-8 bytes.
+- Not-applicable QA returns structured immutable evidence without running an adapter; required QA validates one through 32 uniquely named scenarios and runs them in order.
+- Scenario evidence records sequence, identity, description, timing, outcome, reason, and bounded artifact references.
+- Failed and blocked scenarios stop later work; callback failures and malformed or accessor-backed untrusted results fail closed without retaining exception details.
+- Deterministic tests cover applicability decisions, ordered success, failed and blocked stopping, bounds and duplicates, invalid results, callback failures, stateful adapters, and deep immutability.
+
 ## Next task
 
-Complete AC-006 review and PR gates, then select AC-007 for QA applicability and evidence.
+Complete AC-007 review and PR gates, then select AC-008 for Codex PR-review findings.
 
 ## Recently completed
 
@@ -104,5 +113,6 @@ Complete AC-006 review and PR gates, then select AC-007 for QA applicability and
 - 2026-09-02 — Implemented the AC-004 Codex session boundary on its isolated feature worktree.
 - 2026-09-03 — Merged AC-004 through PR #4 and implemented AC-005 deterministic verification on its isolated feature worktree.
 - 2026-09-03 — Merged AC-005 through PR #5 and implemented the AC-006 bounded fix-loop policy on its isolated feature worktree.
+- 2026-09-09 — Merged AC-006 through PR #6 and selected AC-007 for QA applicability and evidence.
 
 Update this file when a major capability, blocker, milestone, or release fact changes.
