@@ -153,6 +153,32 @@ test('does not invoke accessors on untrusted callback results', async () => {
   assert.equal(reasonReads, 0);
 });
 
+test('rejects accessor-backed artifact references without invoking them', async () => {
+  let referenceReads = 0;
+  const result = await runQaPhase(requiredDecision, {
+    async run() {
+      return Object.defineProperties(
+        {},
+        {
+          kind: { enumerable: true, value: 'passed' },
+          reason: { enumerable: true, value: 'passed' },
+          artifactReferences: {
+            enumerable: true,
+            get: () => {
+              referenceReads += 1;
+              return ['unsafe-reference'];
+            },
+          },
+        },
+      );
+    },
+  });
+
+  assert.equal(result.outcome, 'failed');
+  assert.equal(result.scenarios[0]!.outcome, 'invalid-result');
+  assert.equal(referenceReads, 0);
+});
+
 test('classifies throwing result proxies as invalid results', async () => {
   const result = await runQaPhase(requiredDecision, {
     async run() {

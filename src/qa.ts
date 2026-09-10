@@ -229,6 +229,7 @@ function normalizeScenarioResult(value: unknown): QaScenarioResult | undefined {
   }
   const kind = ownDataValue(record, 'kind');
   const reason = ownDataValue(record, 'reason');
+  const hasReferences = keys.includes('artifactReferences');
   const references = ownDataValue(record, 'artifactReferences');
   if (
     typeof kind !== 'string' ||
@@ -238,14 +239,14 @@ function normalizeScenarioResult(value: unknown): QaScenarioResult | undefined {
     return undefined;
   }
   const normalizedReferences = normalizeReferences(references);
-  if (references !== undefined && normalizedReferences === undefined) {
+  if (hasReferences && normalizedReferences === undefined) {
     return undefined;
   }
   const result: QaScenarioResult = {
     kind: kind as QaScenarioResult['kind'],
     reason,
   };
-  return references === undefined
+  return !hasReferences
     ? result
     : { ...result, artifactReferences: normalizedReferences! };
 }
