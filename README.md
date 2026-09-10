@@ -133,7 +133,7 @@ Workflow adapters can use `runQaPhase` from `qa.js` with an explicit `required` 
 
 ## Current next step
 
-Complete AC-007 review and PR gates, then select AC-008 for Codex PR-review findings.
+Select and refine AC-008 for Codex PR-review findings.
 
 ## Guardrail
 

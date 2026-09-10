@@ -68,6 +68,37 @@ test('runs required scenarios in order and records structured evidence', async (
   assert.doesNotThrow(() => new Date(result.scenarios[0]!.startedAt));
 });
 
+test('keeps scenario timing consistent when the wall clock moves backward', async () => {
+  const originalNow = Date.now;
+  const wallClockValues = [2_000, 1_000];
+  Date.now = () => wallClockValues.shift() ?? 1_000;
+
+  try {
+    const result = await runQaPhase(
+      {
+        kind: 'required',
+        reason: 'Runtime behavior requires QA.',
+        scenarios: [{ name: 'clock', description: 'Observe clock handling.' }],
+      },
+      {
+        async run() {
+          return { kind: 'passed', reason: 'passed' };
+        },
+      },
+    );
+    const scenario = result.scenarios[0]!;
+
+    assert.equal(scenario.durationMs >= 0, true);
+    assert.equal(
+      new Date(scenario.completedAt).getTime() >=
+        new Date(scenario.startedAt).getTime() + scenario.durationMs,
+      true,
+    );
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
 test('stops after a failed or blocked scenario', async () => {
   for (const terminal of ['failed', 'blocked'] as const) {
     let calls = 0;

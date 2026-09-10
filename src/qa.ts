@@ -57,6 +57,11 @@ export interface QaEvidence {
   readonly scenarios: readonly Readonly<QaScenarioEvidence>[];
 }
 
+interface ScenarioStartTime {
+  readonly wallClockMs: number;
+  readonly monotonicNs: bigint;
+}
+
 export async function runQaPhase(
   decision: unknown,
   callbacks?: QaCallbacks,
@@ -86,7 +91,7 @@ export async function runQaPhase(
   const evidence: QaScenarioEvidence[] = [];
   for (const scenario of validated.scenarios) {
     const sequence = evidence.length + 1;
-    const started = Date.now();
+    const started = startScenarioTiming();
     let candidate: unknown;
     try {
       if (runScenario === undefined) {
@@ -270,11 +275,16 @@ function appendEvidence(
   evidence: QaScenarioEvidence[],
   scenario: Readonly<QaScenario>,
   sequence: number,
-  started: number,
+  started: ScenarioStartTime,
   result: QaScenarioResult,
   outcome: QaScenarioEvidence['outcome'],
 ): void {
-  const completed = Date.now();
+  const elapsedNs = process.hrtime.bigint() - started.monotonicNs;
+  const durationMs = Math.max(0, Number(elapsedNs) / 1_000_000);
+  const completed = Math.max(
+    Date.now(),
+    started.wallClockMs + Math.ceil(durationMs),
+  );
   evidence.push({
     sequence,
     name: scenario.name,
@@ -282,10 +292,17 @@ function appendEvidence(
     outcome,
     reason: result.reason,
     artifactReferences: [...(result.artifactReferences ?? [])],
-    startedAt: new Date(started).toISOString(),
+    startedAt: new Date(started.wallClockMs).toISOString(),
     completedAt: new Date(completed).toISOString(),
-    durationMs: Math.max(0, completed - started),
+    durationMs,
   });
+}
+
+function startScenarioTiming(): ScenarioStartTime {
+  return {
+    wallClockMs: Date.now(),
+    monotonicNs: process.hrtime.bigint(),
+  };
 }
 
 function finish(
