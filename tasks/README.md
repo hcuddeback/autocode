@@ -24,7 +24,7 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 
 ## Immediate queue
 
-`AC-007` is ready on `feat/AC-007-qa-evidence`: implement explicit QA applicability and structured scenario evidence.
+`AC-007` is in review on `feat/AC-007-qa-evidence`: implementation and local gates pass; independent Codex review and PR gates remain.
 
 ## JIT task process
 

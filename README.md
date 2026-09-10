@@ -8,9 +8,9 @@ AutoCode will be a local-first TypeScript CLI that runs durable software-enginee
 
 **Production:** Not deployed; planned as a locally installed CLI
 
-**Last updated:** 2026-09-03
+**Last updated:** 2026-09-09
 
-> Current reality: initialization, task selection, commit-bound planning, role-separated Codex sessions, deterministic verification, and a reusable bounded fix-loop policy are implemented. Durable workflow orchestration is not implemented yet.
+> Current reality: initialization, task selection, commit-bound planning, role-separated Codex sessions, deterministic verification, reusable bounded fix-loop policy, and explicit QA applicability/evidence policy are implemented. Durable workflow orchestration is not implemented yet.
 
 ## Who it is for
 
@@ -117,6 +117,8 @@ node dist/cli.js verify path/to/project
 
 Workflow adapters can use `runBoundedFixLoop` from `fix-loop.js` with the validated `fixLoop.maxAttempts` policy. The initial check does not consume an attempt; each applied or attempted fix does. The runner stops on success, blocks immediately on a non-retryable result, and fails closed on ceiling exhaustion, callback errors, or malformed results while returning ordered immutable transitions. Wiring this policy into durable resumable workflow state remains a later task.
 
+Workflow adapters can use `runQaPhase` from `qa.js` with an explicit `required` or `not-applicable` decision. A not-applicable decision requires a substantive reason and does not accept an adapter. Required QA validates one to 32 uniquely named scenarios, runs them in order, and returns immutable structured evidence with timing, outcomes, reasons, and bounded artifact references. Failed, blocked, malformed, or throwing scenarios stop later work and fail closed without retaining exception details. Provider-specific browser tooling and durable QA artifact persistence remain later integration work.
+
 ## Documentation
 
 - [Product and MVP requirements](docs/PRODUCT.md)
@@ -131,7 +133,7 @@ Workflow adapters can use `runBoundedFixLoop` from `fix-loop.js` with the valida
 
 ## Current next step
 
-Complete AC-006 review and PR gates, then select AC-007 for QA applicability and evidence.
+Complete AC-007 review and PR gates, then select AC-008 for Codex PR-review findings.
 
 ## Guardrail
 

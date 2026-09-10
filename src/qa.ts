@@ -1,0 +1,346 @@
+const MAX_SCENARIOS = 32;
+const MAX_TEXT_BYTES = 4096;
+const MAX_ARTIFACT_REFERENCES = 16;
+
+export interface QaScenario {
+  readonly name: string;
+  readonly description: string;
+}
+
+export type QaDecision =
+  | {
+      readonly kind: 'not-applicable';
+      readonly reason: string;
+    }
+  | {
+      readonly kind: 'required';
+      readonly reason: string;
+      readonly scenarios: readonly QaScenario[];
+    };
+
+export type QaScenarioResult = {
+  readonly kind: 'passed' | 'failed' | 'blocked';
+  readonly reason: string;
+  readonly artifactReferences?: readonly string[];
+};
+
+export interface QaScenarioContext {
+  readonly sequence: number;
+}
+
+export interface QaCallbacks {
+  run(
+    scenario: Readonly<QaScenario>,
+    context: Readonly<QaScenarioContext>,
+  ): Promise<unknown>;
+}
+
+export interface QaScenarioEvidence {
+  readonly sequence: number;
+  readonly name: string;
+  readonly description: string;
+  readonly outcome:
+    QaScenarioResult['kind'] | 'callback-error' | 'invalid-result';
+  readonly reason: string;
+  readonly artifactReferences: readonly string[];
+  readonly startedAt: string;
+  readonly completedAt: string;
+  readonly durationMs: number;
+}
+
+export interface QaEvidence {
+  readonly version: 1;
+  readonly applicability: QaDecision['kind'];
+  readonly outcome: 'not-applicable' | 'passed' | 'failed' | 'blocked';
+  readonly reason: string;
+  readonly scenarios: readonly Readonly<QaScenarioEvidence>[];
+}
+
+export async function runQaPhase(
+  decision: unknown,
+  callbacks?: QaCallbacks,
+): Promise<Readonly<QaEvidence>> {
+  const validated = validateDecision(decision);
+  if (validated.kind === 'not-applicable') {
+    if (callbacks !== undefined) {
+      throw new Error('QA callbacks are not allowed when QA is not applicable');
+    }
+    return freezeEvidence({
+      version: 1,
+      applicability: 'not-applicable',
+      outcome: 'not-applicable',
+      reason: validated.reason,
+      scenarios: [],
+    });
+  }
+  if (callbacks === undefined || typeof callbacks.run !== 'function') {
+    throw new Error('required QA needs a scenario callback');
+  }
+  const runScenario = callbacks.run;
+
+  const evidence: QaScenarioEvidence[] = [];
+  for (const scenario of validated.scenarios) {
+    const sequence = evidence.length + 1;
+    const started = Date.now();
+    let candidate: unknown;
+    try {
+      candidate = await runScenario.call(
+        callbacks,
+        scenario,
+        Object.freeze({ sequence }),
+      );
+    } catch {
+      const reason = 'scenario adapter callback failed';
+      appendEvidence(
+        evidence,
+        scenario,
+        sequence,
+        started,
+        { kind: 'failed', reason },
+        'callback-error',
+      );
+      return finish('failed', reason, evidence);
+    }
+
+    let normalized: QaScenarioResult | undefined;
+    try {
+      normalized = normalizeScenarioResult(candidate);
+    } catch {
+      // Scenario results are untrusted and may be proxies with throwing traps.
+    }
+    if (normalized === undefined) {
+      const reason = 'scenario adapter returned an invalid result';
+      appendEvidence(
+        evidence,
+        scenario,
+        sequence,
+        started,
+        { kind: 'failed', reason },
+        'invalid-result',
+      );
+      return finish('failed', reason, evidence);
+    }
+
+    appendEvidence(
+      evidence,
+      scenario,
+      sequence,
+      started,
+      normalized,
+      normalized.kind,
+    );
+    if (normalized.kind !== 'passed') {
+      return finish(normalized.kind, normalized.reason, evidence);
+    }
+  }
+
+  return finish('passed', validated.reason, evidence);
+}
+
+function validateDecision(value: unknown): QaDecision {
+  const record = mapping(value, 'QA decision');
+  if (record.kind === 'not-applicable') {
+    rejectUnknownKeys(record, new Set(['kind', 'reason']), 'QA decision');
+    return Object.freeze({
+      kind: 'not-applicable',
+      reason: boundedText(record.reason, 'QA decision reason'),
+    });
+  }
+  if (record.kind !== 'required') {
+    throw new Error('QA decision kind must be required or not-applicable');
+  }
+  rejectUnknownKeys(
+    record,
+    new Set(['kind', 'reason', 'scenarios']),
+    'QA decision',
+  );
+  if (
+    !Array.isArray(record.scenarios) ||
+    record.scenarios.length === 0 ||
+    record.scenarios.length > MAX_SCENARIOS
+  ) {
+    throw new Error(
+      `required QA must define between 1 and ${MAX_SCENARIOS} scenarios`,
+    );
+  }
+  const scenarios = record.scenarios.map((scenario, index) =>
+    validateScenario(scenario, index),
+  );
+  if (
+    new Set(scenarios.map((scenario) => scenario.name)).size !==
+    scenarios.length
+  ) {
+    throw new Error('QA scenario names must be unique');
+  }
+  return Object.freeze({
+    kind: 'required',
+    reason: boundedText(record.reason, 'QA decision reason'),
+    scenarios: Object.freeze(scenarios),
+  });
+}
+
+function validateScenario(value: unknown, index: number): Readonly<QaScenario> {
+  const field = `QA scenarios[${index}]`;
+  const record = mapping(value, field);
+  rejectUnknownKeys(record, new Set(['name', 'description']), field);
+  if (
+    typeof record.name !== 'string' ||
+    !/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(record.name)
+  ) {
+    throw new Error(`${field}.name is invalid`);
+  }
+  return Object.freeze({
+    name: record.name,
+    description: boundedText(record.description, `${field}.description`),
+  });
+}
+
+function normalizeScenarioResult(value: unknown): QaScenarioResult | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Reflect.ownKeys(record);
+  for (const key of keys) {
+    if (
+      typeof key !== 'string' ||
+      !['kind', 'reason', 'artifactReferences'].includes(key)
+    ) {
+      return undefined;
+    }
+  }
+  const kind = ownDataValue(record, 'kind');
+  const reason = ownDataValue(record, 'reason');
+  const references = ownDataValue(record, 'artifactReferences');
+  if (
+    typeof kind !== 'string' ||
+    !['passed', 'failed', 'blocked'].includes(kind) ||
+    !isBoundedText(reason)
+  ) {
+    return undefined;
+  }
+  const normalizedReferences = normalizeReferences(references);
+  if (references !== undefined && normalizedReferences === undefined) {
+    return undefined;
+  }
+  const result: QaScenarioResult = {
+    kind: kind as QaScenarioResult['kind'],
+    reason,
+  };
+  return references === undefined
+    ? result
+    : { ...result, artifactReferences: normalizedReferences! };
+}
+
+function normalizeReferences(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || value.length > MAX_ARTIFACT_REFERENCES) {
+    return undefined;
+  }
+  const references: string[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const reference = ownDataValue(value, String(index));
+    if (!isBoundedText(reference)) return undefined;
+    references.push(reference);
+  }
+  return references;
+}
+
+function ownDataValue(record: object, property: string): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(record, property);
+  return descriptor !== undefined && 'value' in descriptor
+    ? descriptor.value
+    : undefined;
+}
+
+function appendEvidence(
+  evidence: QaScenarioEvidence[],
+  scenario: Readonly<QaScenario>,
+  sequence: number,
+  started: number,
+  result: QaScenarioResult,
+  outcome: QaScenarioEvidence['outcome'],
+): void {
+  const completed = Date.now();
+  evidence.push({
+    sequence,
+    name: scenario.name,
+    description: scenario.description,
+    outcome,
+    reason: result.reason,
+    artifactReferences: [...(result.artifactReferences ?? [])],
+    startedAt: new Date(started).toISOString(),
+    completedAt: new Date(completed).toISOString(),
+    durationMs: Math.max(0, completed - started),
+  });
+}
+
+function finish(
+  outcome: 'passed' | 'failed' | 'blocked',
+  reason: string,
+  scenarios: QaScenarioEvidence[],
+): Readonly<QaEvidence> {
+  return freezeEvidence({
+    version: 1,
+    applicability: 'required',
+    outcome,
+    reason,
+    scenarios,
+  });
+}
+
+function freezeEvidence(value: QaEvidence): Readonly<QaEvidence> {
+  for (const scenario of value.scenarios) {
+    Object.freeze(scenario.artifactReferences);
+    Object.freeze(scenario);
+  }
+  Object.freeze(value.scenarios);
+  return Object.freeze(value);
+}
+
+function mapping(value: unknown, field: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`${field} must be a mapping`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function rejectUnknownKeys(
+  record: Record<string, unknown>,
+  allowed: ReadonlySet<string>,
+  field: string,
+): void {
+  const unexpected = Object.keys(record).find((key) => !allowed.has(key));
+  if (unexpected !== undefined) {
+    throw new Error(`unknown ${field} key: ${unexpected}`);
+  }
+}
+
+function boundedText(value: unknown, field: string): string {
+  if (!isBoundedText(value)) {
+    throw new Error(`${field} must be a non-empty bounded string`);
+  }
+  return value;
+}
+
+function isBoundedText(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.trim() === value &&
+    value.length > 0 &&
+    !hasControlCharacter(value) &&
+    Buffer.byteLength(value, 'utf8') <= MAX_TEXT_BYTES
+  );
+}
+
+function hasControlCharacter(value: string): boolean {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (
+      codePoint !== undefined &&
+      (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
