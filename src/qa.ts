@@ -171,11 +171,8 @@ function validateDecision(value: unknown): QaDecision {
     new Set(['kind', 'reason', 'scenarios']),
     'QA decision',
   );
-  const scenarioValues = arrayDataValues(
-    record.scenarios,
-    'required QA scenarios',
-  );
-  if (scenarioValues.length === 0 || scenarioValues.length > MAX_SCENARIOS) {
+  const scenarioValues = arrayDataValues(record.scenarios, MAX_SCENARIOS);
+  if (scenarioValues === undefined || scenarioValues.length === 0) {
     throw new Error(
       `required QA must define between 1 and ${MAX_SCENARIOS} scenarios`,
     );
@@ -252,12 +249,10 @@ function normalizeScenarioResult(value: unknown): QaScenarioResult | undefined {
 }
 
 function normalizeReferences(value: unknown): string[] | undefined {
-  if (!Array.isArray(value) || value.length > MAX_ARTIFACT_REFERENCES) {
-    return undefined;
-  }
+  const values = arrayDataValues(value, MAX_ARTIFACT_REFERENCES);
+  if (values === undefined) return undefined;
   const references: string[] = [];
-  for (let index = 0; index < value.length; index += 1) {
-    const reference = ownDataValue(value, String(index));
+  for (const reference of values) {
     if (!isBoundedText(reference)) return undefined;
     references.push(reference);
   }
@@ -353,29 +348,23 @@ function mapping(value: unknown, field: string): Record<string, unknown> {
   return record;
 }
 
-function arrayDataValues(value: unknown, field: string): unknown[] {
-  let length: number;
+function arrayDataValues(
+  value: unknown,
+  maximumLength: number,
+): unknown[] | undefined {
   try {
-    if (!Array.isArray(value)) throw new Error();
+    if (!Array.isArray(value)) return undefined;
     const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
     if (
       lengthDescriptor === undefined ||
       !('value' in lengthDescriptor) ||
       !Number.isSafeInteger(lengthDescriptor.value) ||
-      lengthDescriptor.value < 0
+      lengthDescriptor.value < 0 ||
+      lengthDescriptor.value > maximumLength
     ) {
-      throw new Error();
+      return undefined;
     }
-    length = lengthDescriptor.value as number;
-  } catch {
-    throw new Error(`${field} must be an array of plain data values`);
-  }
-  if (length > MAX_SCENARIOS) {
-    throw new Error(
-      `required QA must define between 1 and ${MAX_SCENARIOS} scenarios`,
-    );
-  }
-  try {
+    const length = lengthDescriptor.value as number;
     const allowedKeys = new Set([
       'length',
       ...Array.from({ length }, (_, index) => String(index)),
@@ -385,18 +374,18 @@ function arrayDataValues(value: unknown, field: string): unknown[] {
         (key) => typeof key !== 'string' || !allowedKeys.has(key),
       )
     ) {
-      throw new Error();
+      return undefined;
     }
     const values: unknown[] = [];
     for (let index = 0; index < length; index += 1) {
       const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
       if (descriptor === undefined || !('value' in descriptor))
-        throw new Error();
+        return undefined;
       values.push(descriptor.value);
     }
     return values;
   } catch {
-    throw new Error(`${field} must be an array of plain data values`);
+    return undefined;
   }
 }
 

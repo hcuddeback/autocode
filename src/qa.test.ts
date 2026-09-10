@@ -331,6 +331,32 @@ test('bounds result reasons and artifact references', async () => {
   }
 });
 
+test('validates artifact references against a stable own-data array length', async () => {
+  let lengthReads = 0;
+  const references = new Proxy(Array(17).fill('proof.txt'), {
+    get(target, property, receiver) {
+      if (property === 'length') {
+        lengthReads += 1;
+        return lengthReads === 1 ? 1 : 17;
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const result = await runQaPhase(requiredDecision, {
+    async run() {
+      return {
+        kind: 'passed',
+        reason: 'passed',
+        artifactReferences: references,
+      };
+    },
+  });
+
+  assert.equal(result.outcome, 'failed');
+  assert.equal(result.scenarios[0]!.outcome, 'invalid-result');
+  assert.equal(lengthReads, 0);
+});
+
 test('returns deeply immutable decisions, scenarios, and evidence', async () => {
   let receivedScenario:
     Readonly<{ name: string; description: string }> | undefined;
