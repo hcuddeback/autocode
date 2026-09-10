@@ -596,6 +596,7 @@ function terminateTree(
   if (process.platform === 'win32') {
     spawnSync('taskkill', ['/pid', String(pid), '/t', '/f'], {
       windowsHide: true,
+      timeout: TERMINATION_GRACE_MS,
     });
     killWindowsDescendants(pid);
     try {
@@ -615,7 +616,7 @@ function terminateTree(
         `--signal=${force ? 'SIGKILL' : 'SIGTERM'}`,
         systemdUnit,
       ],
-      { windowsHide: true },
+      { windowsHide: true, timeout: TERMINATION_GRACE_MS },
     );
   }
   try {
@@ -637,7 +638,7 @@ function killWindowsDescendants(pid: number): void {
   spawnSync(
     'powershell.exe',
     ['-NoProfile', '-NonInteractive', '-Command', script, String(pid)],
-    { windowsHide: true },
+    { windowsHide: true, timeout: TERMINATION_GRACE_MS },
   );
 }
 

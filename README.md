@@ -8,9 +8,9 @@ AutoCode will be a local-first TypeScript CLI that runs durable software-enginee
 
 **Production:** Not deployed; planned as a locally installed CLI
 
-**Last updated:** 2026-09-02
+**Last updated:** 2026-09-03
 
-> Current reality: `autocode init`, deterministic ready-task selection, commit-bound JIT planning preparation, and role-separated Codex sessions are implemented. Durable workflow orchestration is not implemented yet.
+> Current reality: initialization, task selection, commit-bound planning, role-separated Codex sessions, deterministic verification, and a reusable bounded fix-loop policy are implemented. Durable workflow orchestration is not implemented yet.
 
 ## Who it is for
 
@@ -103,6 +103,8 @@ verification:
       args: [test]
   timeoutMs: 600000
   maxOutputBytes: 1048576
+fixLoop:
+  maxAttempts: 3
 ```
 
 Then run them from the prepared task worktree:
@@ -111,7 +113,9 @@ Then run them from the prepared task worktree:
 node dist/cli.js verify path/to/project
 ```
 
-`verify` runs each command directly without a shell and stops on the first nonzero exit, timeout, output overflow, Git-identity change, or worktree change. It atomically reserves `.autocode/runs/<run>/evidence/` and retains redacted stdout, stderr, command arguments, exit status, timing, and the exact branch and commit for every attempted check. Default Linux checks run in transient systemd user units so daemonized descendants remain contained; unsupported non-Windows containment fails closed. Existing evidence and stale preparation fail closed. Automatic fix loops and resumable phase orchestration remain later tasks.
+`verify` runs each command directly without a shell and stops on the first nonzero exit, timeout, output overflow, Git-identity change, or worktree change. It atomically reserves `.autocode/runs/<run>/evidence/` and retains redacted stdout, stderr, command arguments, exit status, timing, and the exact branch and commit for every attempted check. Default Linux checks run in transient systemd user units so daemonized descendants remain contained; unsupported non-Windows containment fails closed. Existing evidence and stale preparation fail closed.
+
+Workflow adapters can use `runBoundedFixLoop` from `fix-loop.js` with the validated `fixLoop.maxAttempts` policy. The initial check does not consume an attempt; each applied or attempted fix does. The runner stops on success, blocks immediately on a non-retryable result, and fails closed on ceiling exhaustion, callback errors, or malformed results while returning ordered immutable transitions. Wiring this policy into durable resumable workflow state remains a later task.
 
 ## Documentation
 
@@ -127,7 +131,7 @@ node dist/cli.js verify path/to/project
 
 ## Current next step
 
-Complete AC-005 review and PR gates, then select AC-006 for bounded fix loops.
+Complete AC-006 review and PR gates, then select AC-007 for QA applicability and evidence.
 
 ## Guardrail
 

@@ -444,6 +444,7 @@ function killWindowsProcessTree(pid: number | undefined): void {
   if (pid === undefined) return;
   spawnSync('taskkill', ['/pid', String(pid), '/t', '/f'], {
     windowsHide: true,
+    timeout: TERMINATION_GRACE_MS,
   });
 }
 
@@ -460,7 +461,7 @@ function killWindowsDescendants(pid: number | undefined): void {
   spawnSync(
     'powershell.exe',
     ['-NoProfile', '-NonInteractive', '-Command', script, String(pid)],
-    { windowsHide: true },
+    { windowsHide: true, timeout: TERMINATION_GRACE_MS },
   );
 }
 
@@ -479,7 +480,7 @@ function terminatePosixContainment(
         `--signal=${force ? 'SIGKILL' : 'SIGTERM'}`,
         systemdUnit,
       ],
-      { windowsHide: true },
+      { windowsHide: true, timeout: TERMINATION_GRACE_MS },
     );
   }
   if (pid === undefined) return;
