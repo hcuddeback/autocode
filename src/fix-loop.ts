@@ -166,11 +166,18 @@ function readValidResult(
 function validReason(value: unknown): value is string {
   return (
     typeof value === 'string' &&
-    value.trim() === value &&
     value.length > 0 &&
-    ![...value].some(isControlCharacter) &&
-    Buffer.byteLength(value) <= MAX_REASON_BYTES
+    Buffer.byteLength(value) <= MAX_REASON_BYTES &&
+    value.trim() === value &&
+    !hasControlCharacter(value)
   );
+}
+
+function hasControlCharacter(value: string): boolean {
+  for (const character of value) {
+    if (isControlCharacter(character)) return true;
+  }
+  return false;
 }
 
 function isControlCharacter(character: string): boolean {

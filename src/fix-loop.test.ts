@@ -194,6 +194,16 @@ test('callback errors and malformed results fail closed', async () => {
   );
   assert.equal(controlBearingReason.outcome, 'failed');
   assert.equal(controlBearingReason.transitions[0]?.outcome, 'invalid-result');
+
+  const oversizedReason = await runBoundedFixLoop(
+    { maxAttempts: 1 },
+    {
+      check: async () => ({ kind: 'passed', reason: 'a'.repeat(1024 * 1024) }),
+      fix: async () => ({ kind: 'applied', reason: 'unused' }),
+    },
+  );
+  assert.equal(oversizedReason.outcome, 'failed');
+  assert.equal(oversizedReason.transitions[0]?.outcome, 'invalid-result');
 });
 
 test('rejects invalid ceilings and returns immutable evidence', async () => {
