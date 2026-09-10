@@ -2,7 +2,7 @@
 
 **Last verified:** 2026-09-03
 
-**Stage:** AC-006 bounded fix-loop policy implemented on its feature branch
+**Stage:** AC-006 merged; AC-007 selected for implementation
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -92,7 +92,7 @@
 
 ## Next task
 
-Complete AC-006 review and PR gates, then select AC-007 for QA applicability and evidence.
+Implement AC-007 QA applicability and evidence on its isolated feature branch.
 
 ## Recently completed
 
@@ -104,5 +104,6 @@ Complete AC-006 review and PR gates, then select AC-007 for QA applicability and
 - 2026-09-02 — Implemented the AC-004 Codex session boundary on its isolated feature worktree.
 - 2026-09-03 — Merged AC-004 through PR #4 and implemented AC-005 deterministic verification on its isolated feature worktree.
 - 2026-09-03 — Merged AC-005 through PR #5 and implemented the AC-006 bounded fix-loop policy on its isolated feature worktree.
+- 2026-09-09 — Merged AC-006 through PR #6 and selected AC-007 for QA applicability and evidence.
 
 Update this file when a major capability, blocker, milestone, or release fact changes.
