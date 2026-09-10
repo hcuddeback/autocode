@@ -70,6 +70,27 @@ test('applies fixes until a later check passes', async () => {
   );
 });
 
+test('preserves the callback receiver for stateful adapters', async () => {
+  const callbacks = {
+    remainingFailures: 1,
+    async check() {
+      return this.remainingFailures === 0
+        ? { kind: 'passed', reason: 'verification passed' }
+        : { kind: 'retryable', reason: 'verification failed' };
+    },
+    async fix() {
+      this.remainingFailures -= 1;
+      return { kind: 'applied', reason: 'applied stateful fix' };
+    },
+  };
+
+  const result = await runBoundedFixLoop({ maxAttempts: 1 }, callbacks);
+
+  assert.equal(result.outcome, 'succeeded');
+  assert.equal(result.attemptsUsed, 1);
+  assert.equal(callbacks.remainingFailures, 0);
+});
+
 test('does not retry a blocking check or fix', async () => {
   let calls = 0;
   const blockedCheck = await runBoundedFixLoop(

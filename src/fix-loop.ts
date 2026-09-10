@@ -52,7 +52,7 @@ export async function runBoundedFixLoop(
     const check = await invoke(
       'check',
       attemptsUsed,
-      callbacks.check,
+      callbacks,
       isCheckResult,
       transitions,
     );
@@ -80,7 +80,7 @@ export async function runBoundedFixLoop(
     const fix = await invoke(
       'fix',
       attemptsUsed,
-      callbacks.fix,
+      callbacks,
       isFixResult,
       transitions,
     );
@@ -100,13 +100,13 @@ type Validated<T> =
 async function invoke<T>(
   action: 'check' | 'fix',
   attempt: number,
-  callback: (context: FixLoopContext) => Promise<unknown>,
+  callbacks: FixLoopCallbacks,
   validate: (value: unknown) => T | undefined,
   transitions: FixLoopTransition[],
 ): Promise<Validated<T>> {
   let value: unknown;
   try {
-    value = await callback(Object.freeze({ attempt }));
+    value = await callbacks[action](Object.freeze({ attempt }));
   } catch {
     const reason = `${action} callback failed`;
     appendFailure(transitions, attempt, action, 'callback-error', reason);
