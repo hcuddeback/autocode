@@ -141,9 +141,22 @@ function readValidResult(
     return undefined;
   }
   const record = value as Record<string, unknown>;
-  if (Object.keys(record).length !== 2) return undefined;
-  const kind = record.kind;
-  const reason = record.reason;
+  const keys = Reflect.ownKeys(record);
+  if (keys.length !== 2 || !keys.includes('kind') || !keys.includes('reason')) {
+    return undefined;
+  }
+  const kindDescriptor = Object.getOwnPropertyDescriptor(record, 'kind');
+  const reasonDescriptor = Object.getOwnPropertyDescriptor(record, 'reason');
+  if (
+    kindDescriptor === undefined ||
+    reasonDescriptor === undefined ||
+    !('value' in kindDescriptor) ||
+    !('value' in reasonDescriptor)
+  ) {
+    return undefined;
+  }
+  const kind = kindDescriptor.value;
+  const reason = reasonDescriptor.value;
   if (typeof kind !== 'string' || !kinds.has(kind) || !validReason(reason)) {
     return undefined;
   }
@@ -155,8 +168,16 @@ function validReason(value: unknown): value is string {
     typeof value === 'string' &&
     value.trim() === value &&
     value.length > 0 &&
-    !value.includes('\0') &&
+    ![...value].some(isControlCharacter) &&
     Buffer.byteLength(value) <= MAX_REASON_BYTES
+  );
+}
+
+function isControlCharacter(character: string): boolean {
+  const codePoint = character.codePointAt(0);
+  return (
+    codePoint !== undefined &&
+    (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f))
   );
 }
 

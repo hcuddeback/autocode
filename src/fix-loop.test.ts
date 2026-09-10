@@ -167,6 +167,33 @@ test('callback errors and malformed results fail closed', async () => {
   );
   assert.equal(hostileResult.outcome, 'failed');
   assert.equal(hostileResult.transitions[0]?.outcome, 'invalid-result');
+
+  const inheritedResult = await runBoundedFixLoop(
+    { maxAttempts: 1 },
+    {
+      check: async () =>
+        Object.assign(
+          Object.create({ kind: 'passed', reason: 'forged success' }),
+          { foo: 'one', bar: 'two' },
+        ),
+      fix: async () => ({ kind: 'applied', reason: 'unused' }),
+    },
+  );
+  assert.equal(inheritedResult.outcome, 'failed');
+  assert.equal(inheritedResult.transitions[0]?.outcome, 'invalid-result');
+
+  const controlBearingReason = await runBoundedFixLoop(
+    { maxAttempts: 1 },
+    {
+      check: async () => ({
+        kind: 'passed',
+        reason: '\u001b[2Jforged transition',
+      }),
+      fix: async () => ({ kind: 'applied', reason: 'unused' }),
+    },
+  );
+  assert.equal(controlBearingReason.outcome, 'failed');
+  assert.equal(controlBearingReason.transitions[0]?.outcome, 'invalid-result');
 });
 
 test('rejects invalid ceilings and returns immutable evidence', async () => {
@@ -213,7 +240,7 @@ test('snapshots the validated ceiling before callbacks can mutate it', async () 
   assert.equal(fixes, 1);
 });
 
-test('snapshots untrusted callback results during validation', async () => {
+test('does not invoke accessors on untrusted callback results', async () => {
   let reasonReads = 0;
   const result = await runBoundedFixLoop(
     { maxAttempts: 1 },
@@ -227,7 +254,6 @@ test('snapshots untrusted callback results during validation', async () => {
               enumerable: true,
               get: () => {
                 reasonReads += 1;
-                if (reasonReads > 1) throw new Error('read twice');
                 return 'passed safely';
               },
             },
@@ -237,7 +263,7 @@ test('snapshots untrusted callback results during validation', async () => {
     },
   );
 
-  assert.equal(result.outcome, 'succeeded');
-  assert.equal(result.reason, 'passed safely');
-  assert.equal(reasonReads, 1);
+  assert.equal(result.outcome, 'failed');
+  assert.equal(result.transitions[0]?.outcome, 'invalid-result');
+  assert.equal(reasonReads, 0);
 });
