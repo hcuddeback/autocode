@@ -2,7 +2,7 @@
 
 **Last verified:** 2026-09-09
 
-**Stage:** AC-007 QA applicability and evidence implemented on its feature branch
+**Stage:** AC-007 post-merge review remediation is in review on its follow-up branch
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -101,7 +101,7 @@
 
 ## Next task
 
-Complete AC-007 review and PR gates, then select AC-008 for Codex PR-review findings.
+Complete AC-007 remediation PR #8 gates, then select and refine AC-008 for Codex PR-review findings.
 
 ## Recently completed
 

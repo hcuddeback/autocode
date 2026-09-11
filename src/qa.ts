@@ -57,6 +57,11 @@ export interface QaEvidence {
   readonly scenarios: readonly Readonly<QaScenarioEvidence>[];
 }
 
+interface ScenarioStartTime {
+  readonly wallClockMs: number;
+  readonly monotonicNs: bigint;
+}
+
 export async function runQaPhase(
   decision: unknown,
   callbacks?: QaCallbacks,
@@ -84,9 +89,10 @@ export async function runQaPhase(
   let runScenario: QaCallbacks['run'] | undefined;
 
   const evidence: QaScenarioEvidence[] = [];
+  let earliestStartMs: number | undefined;
   for (const scenario of validated.scenarios) {
     const sequence = evidence.length + 1;
-    const started = Date.now();
+    const started = startScenarioTiming(earliestStartMs);
     let candidate: unknown;
     try {
       if (runScenario === undefined) {
@@ -132,7 +138,7 @@ export async function runQaPhase(
       return finish('failed', reason, evidence);
     }
 
-    appendEvidence(
+    earliestStartMs = appendEvidence(
       evidence,
       scenario,
       sequence,
@@ -270,11 +276,16 @@ function appendEvidence(
   evidence: QaScenarioEvidence[],
   scenario: Readonly<QaScenario>,
   sequence: number,
-  started: number,
+  started: ScenarioStartTime,
   result: QaScenarioResult,
   outcome: QaScenarioEvidence['outcome'],
-): void {
-  const completed = Date.now();
+): number {
+  const elapsedNs = process.hrtime.bigint() - started.monotonicNs;
+  const durationMs = Math.max(0, Number(elapsedNs) / 1_000_000);
+  const completed = Math.max(
+    Date.now(),
+    started.wallClockMs + Math.ceil(durationMs),
+  );
   evidence.push({
     sequence,
     name: scenario.name,
@@ -282,10 +293,18 @@ function appendEvidence(
     outcome,
     reason: result.reason,
     artifactReferences: [...(result.artifactReferences ?? [])],
-    startedAt: new Date(started).toISOString(),
+    startedAt: new Date(started.wallClockMs).toISOString(),
     completedAt: new Date(completed).toISOString(),
-    durationMs: Math.max(0, completed - started),
+    durationMs,
   });
+  return completed;
+}
+
+function startScenarioTiming(earliestStartMs?: number): ScenarioStartTime {
+  return {
+    wallClockMs: Math.max(Date.now(), earliestStartMs ?? -Infinity),
+    monotonicNs: process.hrtime.bigint(),
+  };
 }
 
 function finish(
