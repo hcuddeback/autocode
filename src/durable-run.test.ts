@@ -580,6 +580,73 @@ test('redacts workspace credentials from execution and reconciliation reasons', 
   );
 });
 
+test('rejects credential-bearing phase definitions before creating run state', async () => {
+  const root = await fixtureProject();
+  const secret = 'definition-fixture-credential';
+  await writeFile(path.join(root, '.env'), `SERVICE_TOKEN=${secret}\n`);
+
+  await assert.rejects(
+    runDurableRun(
+      root,
+      {
+        runId: 'credential-definition',
+        phases: [{ id: 'effect', description: `Publish ${secret}` }],
+      },
+      appliedCallbacks([]),
+    ),
+    /phase definition must not contain credentials/,
+  );
+  await assert.rejects(
+    readFile(
+      path.join(
+        root,
+        '.autocode',
+        'runs',
+        'durable-credential-definition',
+        'run.json',
+      ),
+    ),
+    { code: 'ENOENT' },
+  );
+});
+
+test('rejects unignored and tracked durable run paths before execution', async () => {
+  const unignoredRoot = await fixtureProject();
+  await writeFile(path.join(unignoredRoot, '.gitignore'), '');
+  await assert.rejects(
+    runDurableRun(
+      unignoredRoot,
+      singlePhaseDefinition('unignored'),
+      appliedCallbacks([]),
+    ),
+    /must be gitignored/,
+  );
+
+  const trackedRoot = await fixtureProject();
+  const trackedRun = path.join(
+    trackedRoot,
+    '.autocode',
+    'runs',
+    'durable-tracked',
+  );
+  await mkdir(trackedRun);
+  await writeFile(path.join(trackedRun, 'run.json'), '{}\n');
+  const added = spawnSync(
+    'git',
+    ['add', '--force', '.autocode/runs/durable-tracked/run.json'],
+    { cwd: trackedRoot, encoding: 'utf8' },
+  );
+  assert.equal(added.status, 0, added.stderr);
+  await assert.rejects(
+    runDurableRun(
+      trackedRoot,
+      singlePhaseDefinition('tracked'),
+      appliedCallbacks([]),
+    ),
+    /must not be tracked/,
+  );
+});
+
 test('discards an incomplete final event record and resumes from the durable snapshot', async () => {
   const root = await fixtureProject();
   const completed = await runDurableRun(

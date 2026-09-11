@@ -168,6 +168,11 @@ interface RunPaths {
   readonly lock: string;
 }
 
+interface ResolvedRun {
+  readonly paths: RunPaths;
+  readonly workspaceSecrets: readonly string[];
+}
+
 type MutablePhaseState = {
   -readonly [Key in keyof DurablePhaseState]: DurablePhaseState[Key];
 };
@@ -181,9 +186,10 @@ export async function runDurableRun(
   const definition = normalizeDefinition(definitionValue);
   const callbacks = normalizeCallbacks(callbacksValue);
   const options = normalizeOptions(optionsValue, definition);
-  const paths = await resolveRunPaths(projectDirectory, definition.runId);
-  const workspaceSecrets = (await discoverWorkspaceCredentials(paths.root))
-    .secrets;
+  const { paths, workspaceSecrets } = await resolveRunPaths(
+    projectDirectory,
+    definition,
+  );
   const release = await acquireLock(paths);
   try {
     let state = await loadOrCreateRun(paths, definition, options);
@@ -1075,8 +1081,8 @@ function normalizeAdapterResult(
 
 async function resolveRunPaths(
   projectDirectory: string,
-  runId: string,
-): Promise<RunPaths> {
+  definition: NormalizedDefinition,
+): Promise<ResolvedRun> {
   const root = await realpath(path.resolve(projectDirectory));
   if (!(await stat(root)).isDirectory())
     throw new Error('project directory must be a directory');
@@ -1086,7 +1092,11 @@ async function resolveRunPaths(
   const runsReal = await requireRealDirectory(runs, 'runs directory');
   if (path.dirname(runsReal) !== (await realpath(state)))
     throw new Error('runs directory escapes state directory');
-  const run = path.join(runs, `durable-${runId}`);
+  const workspaceSecrets = (await discoverWorkspaceCredentials(root)).secrets;
+  assertDefinitionContainsNoSecrets(definition, workspaceSecrets);
+  const relativeRun = `.autocode/runs/durable-${definition.runId}`;
+  await assertRunArtifactsIgnored(root, relativeRun);
+  const run = path.join(runs, `durable-${definition.runId}`);
   let created = false;
   try {
     await mkdir(run);
@@ -1099,13 +1109,103 @@ async function resolveRunPaths(
     throw new Error('durable run directory escapes runs directory');
   if (created) await syncDirectory(runsReal);
   return {
-    root,
-    runs: runsReal,
-    run: runReal,
-    state: path.join(runReal, 'run.json'),
-    events: path.join(runReal, 'events.jsonl'),
-    lock: path.join(runReal, LOCK_DIRECTORY),
+    paths: {
+      root,
+      runs: runsReal,
+      run: runReal,
+      state: path.join(runReal, 'run.json'),
+      events: path.join(runReal, 'events.jsonl'),
+      lock: path.join(runReal, LOCK_DIRECTORY),
+    },
+    workspaceSecrets,
   };
+}
+
+function assertDefinitionContainsNoSecrets(
+  definition: NormalizedDefinition,
+  secrets: readonly string[],
+): void {
+  if (redactSecrets(definition.runId, secrets) !== definition.runId) {
+    throw new Error('durable run id must not contain credentials');
+  }
+  for (const phase of definition.phases) {
+    if (
+      redactSecrets(phase.id, secrets) !== phase.id ||
+      redactSecrets(phase.description, secrets) !== phase.description
+    ) {
+      throw new Error('durable phase definition must not contain credentials');
+    }
+  }
+}
+
+async function assertRunArtifactsIgnored(
+  root: string,
+  relativeRun: string,
+): Promise<void> {
+  const tracked = await gitOutput(root, ['ls-files', '-z', '--', relativeRun]);
+  if (tracked.length > 0) {
+    throw new Error('durable run artifacts must not be tracked by Git');
+  }
+  const ignored = await gitExitCode(root, [
+    'check-ignore',
+    '--quiet',
+    '--no-index',
+    '--',
+    relativeRun,
+  ]);
+  if (ignored !== 0) {
+    if (ignored === 1)
+      throw new Error('durable run artifacts must be gitignored');
+    throw new Error('could not verify durable run ignore coverage');
+  }
+}
+
+function gitOutput(
+  root: string,
+  arguments_: readonly string[],
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'git',
+      arguments_,
+      {
+        cwd: root,
+        encoding: 'utf8',
+        maxBuffer: 64 * 1024,
+        windowsHide: true,
+      },
+      (error, stdout) => (error ? reject(error) : resolve(stdout)),
+    );
+  });
+}
+
+function gitExitCode(
+  root: string,
+  arguments_: readonly string[],
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'git',
+      arguments_,
+      {
+        cwd: root,
+        encoding: 'utf8',
+        maxBuffer: 4096,
+        windowsHide: true,
+      },
+      (error) => {
+        if (error === null) {
+          resolve(0);
+          return;
+        }
+        if (typeof error.code === 'number') {
+          resolve(error.code);
+          return;
+        }
+        reject(error);
+      },
+    );
+  });
 }
 
 async function acquireLock(paths: RunPaths): Promise<() => Promise<void>> {
