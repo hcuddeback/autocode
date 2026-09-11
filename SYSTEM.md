@@ -121,11 +121,11 @@
 ## AC-010 evidence
 
 - `runDurableRun` validates one through 64 uniquely identified ordered phases and stores each run beneath the initialized project's `.autocode/runs/` boundary.
-- Each transition is appended and synced before an atomic versioned snapshot replacement; a stable effect identity is durable before its adapter is invoked.
+- Each transition is appended and synced before an atomic versioned snapshot replacement; newly published directory entries are synced where the runtime supports it, and a stable effect identity is durable before its adapter is invoked.
 - Deliberate pause occurs only after phase completion, and repeated invocation resumes from the first incomplete phase while completed runs perform no additional effects.
 - In-flight effects must reconcile as applied, not applied, or ambiguous. Applied effects are checkpointed without execution, confirmed absent effects reuse the original identity, and ambiguity blocks without invoking the effect.
 - A child-process integration test writes an effect marker and terminates before completion is checkpointed; resume reclaims the dead local lock, reconciles the marker, and does not repeat the write.
-- Deterministic tests also cover event-before-snapshot recovery, empty initial event-log recovery, interruption during lock release, pause-checkpoint recovery, definition drift, corrupt state, concurrent ownership, path traversal, hostile definitions/results, partial event tails, and deep immutability.
+- Deterministic tests also cover event-before-snapshot recovery, empty initial event-log recovery, interruption during lock release, reused process identifiers, pause-checkpoint recovery, definition drift, corrupt state, concurrent ownership, path traversal, hostile definitions/results, partial event tails, and deep immutability.
 
 ## Next task
 

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import {
   lstat,
   mkdir,
@@ -18,9 +19,11 @@ const MAX_PHASES = 64;
 const MAX_TEXT_BYTES = 4096;
 const MAX_STATE_BYTES = 1024 * 1024;
 const MAX_EVENTS_BYTES = 8 * 1024 * 1024;
+const MAX_PROCESS_IDENTITY_BYTES = 512;
 const RUN_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 const LOCK_DIRECTORY = 'run.lock';
 const LOCK_OWNER_FILE = 'owner.json';
+let ownProcessIdentityPromise: Promise<string | undefined> | undefined;
 
 export interface DurablePhaseDefinition {
   readonly id: string;
@@ -676,6 +679,7 @@ async function appendEvent(
   } finally {
     await handle.close();
   }
+  if (creating) await syncDirectory(paths.run);
 }
 
 async function publishState(
@@ -698,6 +702,7 @@ async function publishState(
   try {
     await assertRunIdentity(paths);
     await rename(temporary, paths.state);
+    await syncDirectory(paths.run);
   } catch (error: unknown) {
     await unlinkIfPresent(temporary);
     throw error;
@@ -1070,14 +1075,17 @@ async function resolveRunPaths(
   if (path.dirname(runsReal) !== (await realpath(state)))
     throw new Error('runs directory escapes state directory');
   const run = path.join(runs, `durable-${runId}`);
+  let created = false;
   try {
     await mkdir(run);
+    created = true;
   } catch (error: unknown) {
     if (!hasCode(error, 'EEXIST')) throw error;
   }
   const runReal = await requireRealDirectory(run, 'durable run directory');
   if (path.dirname(runReal) !== runsReal)
     throw new Error('durable run directory escapes runs directory');
+  if (created) await syncDirectory(runsReal);
   return {
     root,
     runs: runsReal,
@@ -1089,6 +1097,10 @@ async function resolveRunPaths(
 }
 
 async function acquireLock(paths: RunPaths): Promise<() => Promise<void>> {
+  const processIdentity = await ownProcessIdentity();
+  if (processIdentity === undefined) {
+    throw new Error('could not determine durable lock process identity');
+  }
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const token = randomUUID();
     const candidate = path.join(
@@ -1100,6 +1112,7 @@ async function acquireLock(paths: RunPaths): Promise<() => Promise<void>> {
       version: 1,
       hostname: os.hostname(),
       pid: process.pid,
+      processIdentity,
       token,
     };
     try {
@@ -1157,19 +1170,33 @@ async function reclaimDeadLocalLock(paths: RunPaths): Promise<boolean> {
   const record = mapping(owner, 'run lock owner');
   rejectUnknownKeys(
     record,
-    new Set(['version', 'hostname', 'pid', 'token']),
+    new Set(['version', 'hostname', 'pid', 'processIdentity', 'token']),
     'run lock owner',
   );
   const pid = dataValue(record, 'pid');
+  const storedProcessIdentity = dataValue(record, 'processIdentity');
   if (
     dataValue(record, 'version') !== 1 ||
     dataValue(record, 'hostname') !== os.hostname() ||
     !Number.isSafeInteger(pid) ||
     (pid as number) <= 0 ||
+    !isBoundedText(storedProcessIdentity) ||
+    Buffer.byteLength(storedProcessIdentity) > MAX_PROCESS_IDENTITY_BYTES ||
     typeof dataValue(record, 'token') !== 'string'
   )
     return false;
-  if (processAlive(pid as number)) return false;
+  if (processAlive(pid as number)) {
+    const currentProcessIdentity =
+      pid === process.pid
+        ? await ownProcessIdentity()
+        : await readProcessIdentity(pid as number);
+    if (
+      currentProcessIdentity === undefined ||
+      currentProcessIdentity === storedProcessIdentity
+    ) {
+      return false;
+    }
+  }
   const stale = `${paths.lock}.stale-${process.pid}-${randomUUID()}`;
   try {
     await rename(paths.lock, stale);
@@ -1206,6 +1233,114 @@ function processAlive(pid: number): boolean {
     return true;
   } catch (error: unknown) {
     return !hasCode(error, 'ESRCH');
+  }
+}
+
+function ownProcessIdentity(): Promise<string | undefined> {
+  ownProcessIdentityPromise ??= readProcessIdentity(process.pid);
+  return ownProcessIdentityPromise;
+}
+
+async function readProcessIdentity(pid: number): Promise<string | undefined> {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
+  if (process.platform === 'linux') {
+    try {
+      const [statContents, bootIdContents] = await Promise.all([
+        readFile(`/proc/${pid}/stat`, 'utf8'),
+        readFile('/proc/sys/kernel/random/boot_id', 'utf8'),
+      ]);
+      const closingParenthesis = statContents.lastIndexOf(')');
+      if (closingParenthesis < 0) return undefined;
+      const fields = statContents
+        .slice(closingParenthesis + 1)
+        .trim()
+        .split(/\s+/);
+      const startTicks = fields[19];
+      const bootId = bootIdContents.trim();
+      if (
+        startTicks === undefined ||
+        !/^\d+$/.test(startTicks) ||
+        !/^[0-9a-f-]{36}$/i.test(bootId)
+      ) {
+        return undefined;
+      }
+      return `linux:${bootId}:${startTicks}`;
+    } catch {
+      return undefined;
+    }
+  }
+  if (process.platform === 'darwin') {
+    const startedAt = await executeIdentityCommand('/bin/ps', [
+      '-o',
+      'lstart=',
+      '-p',
+      String(pid),
+    ]);
+    return startedAt === undefined ? undefined : `darwin:${startedAt}`;
+  }
+  if (process.platform === 'win32') {
+    const systemRoot = process.env['SystemRoot'];
+    if (typeof systemRoot !== 'string' || !path.isAbsolute(systemRoot))
+      return undefined;
+    const executable = path.join(
+      systemRoot,
+      'System32',
+      'WindowsPowerShell',
+      'v1.0',
+      'powershell.exe',
+    );
+    const startedAt = await executeIdentityCommand(executable, [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `[System.Diagnostics.Process]::GetProcessById(${pid}).StartTime.ToUniversalTime().Ticks`,
+    ]);
+    return startedAt === undefined ? undefined : `win32:${startedAt}`;
+  }
+  return undefined;
+}
+
+function executeIdentityCommand(
+  executable: string,
+  arguments_: readonly string[],
+): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    execFile(
+      executable,
+      arguments_,
+      {
+        encoding: 'utf8',
+        maxBuffer: MAX_PROCESS_IDENTITY_BYTES,
+        timeout: 2_000,
+        windowsHide: true,
+      },
+      (error, stdout) => {
+        if (error !== null) {
+          resolve(undefined);
+          return;
+        }
+        const value = stdout.trim();
+        resolve(
+          value.length > 0 &&
+            Buffer.byteLength(value) <= MAX_PROCESS_IDENTITY_BYTES &&
+            !hasControl(value)
+            ? value
+            : undefined,
+        );
+      },
+    );
+  });
+}
+
+async function syncDirectory(target: string): Promise<void> {
+  // Node cannot flush Windows directory handles; synced files and atomic rename
+  // provide the strongest publication primitive exposed by the runtime there.
+  if (process.platform === 'win32') return;
+  const handle = await open(target, 'r');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 }
 

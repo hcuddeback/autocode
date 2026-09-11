@@ -381,6 +381,32 @@ test('recovers an empty lock directory left by interrupted release', async () =>
   assert.equal(result.outcome, 'completed');
 });
 
+test('reclaims a stale lock after its owner PID is reused', async () => {
+  const root = await fixtureProject();
+  const runDefinition = singlePhaseDefinition('reused-pid');
+  const lockDirectory = path.join(
+    root,
+    '.autocode',
+    'runs',
+    'durable-reused-pid',
+    'run.lock',
+  );
+  await mkdir(lockDirectory, { recursive: true });
+  await writeFile(
+    path.join(lockDirectory, 'owner.json'),
+    `${JSON.stringify({
+      version: 1,
+      hostname: os.hostname(),
+      pid: process.pid,
+      processIdentity: 'identity-from-former-process',
+      token: 'former-owner-token',
+    })}\n`,
+  );
+
+  const result = await runDurableRun(root, runDefinition, appliedCallbacks([]));
+  assert.equal(result.outcome, 'completed');
+});
+
 test('rejects unsafe and hostile definitions and adapter results', async () => {
   const root = await fixtureProject();
   const callbacks = appliedCallbacks([]);
