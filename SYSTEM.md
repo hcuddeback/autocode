@@ -2,7 +2,7 @@
 
 **Last verified:** 2026-09-10
 
-**Stage:** AC-008 Codex PR-review finding disposition implemented on its feature branch
+**Stage:** AC-009 merge and production completion gates implemented on its feature branch
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -12,7 +12,7 @@
 
 - The clean public repository exists.
 - The product, architecture, workflow, security, release, and task contracts are documented.
-- A strict TypeScript foundation initializes local state, selects dependency-ready tasks, prepares commit-bound planning artifacts, invokes scoped role-separated Codex sessions, runs configured deterministic checks with retained evidence, applies bounded fix-loop transition policy, evaluates explicit QA applicability with structured scenario evidence, and dispositions bounded Codex PR-review findings; durable phase orchestration does not exist yet.
+- A strict TypeScript foundation initializes local state, selects dependency-ready tasks, prepares commit-bound planning artifacts, invokes scoped role-separated Codex sessions, runs configured deterministic checks with retained evidence, applies bounded fix-loop transition policy, evaluates explicit QA applicability with structured scenario evidence, dispositions bounded Codex PR-review findings, and enforces configured merge/production completion gates; durable phase orchestration does not exist yet.
 
 ## Evidence level
 
@@ -27,6 +27,7 @@
 | Bounded fix policy exists      | Deterministic transition and ceiling tests      | High                                       |
 | QA applicability policy exists | Deterministic decision and scenario tests       | High                                       |
 | PR-review disposition exists   | Deterministic finding/disposition tests         | High                                       |
+| Completion gates exist         | Deterministic merge/production gate tests       | High                                       |
 | Workflow is implemented        | Design contract only                            | High confidence that it is not implemented |
 
 ## Known gaps and blockers
@@ -107,9 +108,17 @@
 - Empty reviews pass without invoking an adapter, while callback failures and malformed or accessor-backed untrusted results fail closed without leaking exception details.
 - Deterministic tests cover clean reviews, mixed dispositions, escalation, bounds and duplicates, evidence requirements, callback failures, hostile data, ordered timing, stateful adapters, mutation isolation, and deep immutability.
 
+## AC-009 evidence
+
+- `evaluateCompletionGates` validates one through 64 uniquely configured gates per applicable phase and rejects duplicate or unconfigured observed signals.
+- Merge evidence is fresh only when bound to the exact expected head commit; required production evidence is fresh only when bound to both the exact deployment identity and source commit.
+- Production applicability is explicit: a bounded substantive not-applicable reason bypasses deployment evidence, while required production must configure and evaluate gates.
+- Missing, pending, and stale signals block completion; current failed signals fail it and take precedence over blocked signals across phases.
+- Deterministic tests cover passing merge/production and not-applicable paths, missing, pending, stale and failed signals, ordering, bounds, duplicates, unexpected signals, malformed and hostile data, caller mutation, and deep immutability.
+
 ## Next task
 
-Complete AC-008 review and PR gates, then select AC-009 for merge and production gates.
+Complete AC-009 review and PR gates, then select AC-010 for interruption-safe pause and resume.
 
 ## Recently completed
 
@@ -123,5 +132,6 @@ Complete AC-008 review and PR gates, then select AC-009 for merge and production
 - 2026-09-03 — Merged AC-005 through PR #5 and implemented the AC-006 bounded fix-loop policy on its isolated feature worktree.
 - 2026-09-09 — Merged AC-006 through PR #6 and selected AC-007 for QA applicability and evidence.
 - 2026-09-09 — Merged AC-007 through PR #7 and selected AC-008 for Codex PR-review finding disposition.
+- 2026-09-10 — Merged AC-008 through PR #9 and selected AC-009 for merge and production completion gates.
 
 Update this file when a major capability, blocker, milestone, or release fact changes.
