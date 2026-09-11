@@ -1,8 +1,8 @@
 # AutoCode system state
 
-**Last verified:** 2026-09-09
+**Last verified:** 2026-09-10
 
-**Stage:** AC-007 post-merge review remediation is in review on its follow-up branch
+**Stage:** AC-008 Codex PR-review finding disposition implemented on its feature branch
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -12,7 +12,7 @@
 
 - The clean public repository exists.
 - The product, architecture, workflow, security, release, and task contracts are documented.
-- A strict TypeScript foundation initializes local state, selects dependency-ready tasks, prepares commit-bound planning artifacts, invokes scoped role-separated Codex sessions, runs configured deterministic checks with retained evidence, applies bounded fix-loop transition policy, and evaluates explicit QA applicability with structured scenario evidence; durable phase orchestration does not exist yet.
+- A strict TypeScript foundation initializes local state, selects dependency-ready tasks, prepares commit-bound planning artifacts, invokes scoped role-separated Codex sessions, runs configured deterministic checks with retained evidence, applies bounded fix-loop transition policy, evaluates explicit QA applicability with structured scenario evidence, and dispositions bounded Codex PR-review findings; durable phase orchestration does not exist yet.
 
 ## Evidence level
 
@@ -26,6 +26,7 @@
 | Verification evidence exists   | Deterministic subprocess and artifact fixtures  | High                                       |
 | Bounded fix policy exists      | Deterministic transition and ceiling tests      | High                                       |
 | QA applicability policy exists | Deterministic decision and scenario tests       | High                                       |
+| PR-review disposition exists   | Deterministic finding/disposition tests         | High                                       |
 | Workflow is implemented        | Design contract only                            | High confidence that it is not implemented |
 
 ## Known gaps and blockers
@@ -99,9 +100,16 @@
 - Failed and blocked scenarios stop later work; callback failures and malformed or accessor-backed untrusted results fail closed without retaining exception details.
 - Deterministic tests cover applicability decisions, ordered success, failed and blocked stopping, bounds and duplicates, invalid results, callback failures, stateful adapters, and deep immutability.
 
+## AC-008 evidence
+
+- `runPrReviewPhase` validates and snapshots zero through 64 uniquely identified findings with bounded severity, summary, and source evidence.
+- Findings are processed in order and recorded as resolved, disputed with required evidence, or escalated; any escalation blocks passage after every finding receives a disposition.
+- Empty reviews pass without invoking an adapter, while callback failures and malformed or accessor-backed untrusted results fail closed without leaking exception details.
+- Deterministic tests cover clean reviews, mixed dispositions, escalation, bounds and duplicates, evidence requirements, callback failures, hostile data, ordered timing, stateful adapters, mutation isolation, and deep immutability.
+
 ## Next task
 
-Complete AC-007 remediation PR #8 gates, then select and refine AC-008 for Codex PR-review findings.
+Complete AC-008 review and PR gates, then select AC-009 for merge and production gates.
 
 ## Recently completed
 
@@ -114,5 +122,6 @@ Complete AC-007 remediation PR #8 gates, then select and refine AC-008 for Codex
 - 2026-09-03 — Merged AC-004 through PR #4 and implemented AC-005 deterministic verification on its isolated feature worktree.
 - 2026-09-03 — Merged AC-005 through PR #5 and implemented the AC-006 bounded fix-loop policy on its isolated feature worktree.
 - 2026-09-09 — Merged AC-006 through PR #6 and selected AC-007 for QA applicability and evidence.
+- 2026-09-09 — Merged AC-007 through PR #7 and selected AC-008 for Codex PR-review finding disposition.
 
 Update this file when a major capability, blocker, milestone, or release fact changes.

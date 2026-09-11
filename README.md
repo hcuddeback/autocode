@@ -8,9 +8,9 @@ AutoCode will be a local-first TypeScript CLI that runs durable software-enginee
 
 **Production:** Not deployed; planned as a locally installed CLI
 
-**Last updated:** 2026-09-09
+**Last updated:** 2026-09-10
 
-> Current reality: initialization, task selection, commit-bound planning, role-separated Codex sessions, deterministic verification, reusable bounded fix-loop policy, and explicit QA applicability/evidence policy are implemented. Durable workflow orchestration is not implemented yet.
+> Current reality: initialization, task selection, commit-bound planning, role-separated Codex sessions, deterministic verification, reusable bounded fix-loop policy, explicit QA applicability/evidence policy, and Codex PR-review finding disposition policy are implemented. Durable workflow orchestration is not implemented yet.
 
 ## Who it is for
 
@@ -119,6 +119,8 @@ Workflow adapters can use `runBoundedFixLoop` from `fix-loop.js` with the valida
 
 Workflow adapters can use `runQaPhase` from `qa.js` with an explicit `required` or `not-applicable` decision. A not-applicable decision requires a substantive reason of at least 16 UTF-8 bytes and does not accept an adapter. Required QA validates one to 32 uniquely named scenarios, runs them in order, and returns immutable structured evidence with timing, outcomes, reasons, and bounded artifact references. Failed, blocked, malformed, or throwing scenarios stop later work and fail closed without retaining exception details. Provider-specific browser tooling and durable QA artifact persistence remain later integration work.
 
+Workflow adapters can use `runPrReviewPhase` from `pr-review.js` to disposition up to 64 applicable Codex PR-review findings. Findings are copied and validated before an adapter sees them, then processed in order as resolved, disputed with at least one evidence reference, or escalated. A clean review passes without invoking an adapter, any escalation blocks passage, and callback or malformed-result failures fail closed. The returned finding evidence, timing, reasons, and references are deeply immutable. GitHub polling, review-comment mutation, durable persistence, and merge-gate integration remain later work.
+
 ## Documentation
 
 - [Product and MVP requirements](docs/PRODUCT.md)
@@ -133,7 +135,7 @@ Workflow adapters can use `runQaPhase` from `qa.js` with an explicit `required` 
 
 ## Current next step
 
-Complete AC-007 remediation PR #8 gates, then select and refine AC-008 for Codex PR-review findings.
+Complete AC-008 review and PR gates, then select AC-009 for merge and production gates.
 
 ## Guardrail
 
