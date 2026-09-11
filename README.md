@@ -8,9 +8,9 @@ AutoCode will be a local-first TypeScript CLI that runs durable software-enginee
 
 **Production:** Not deployed; planned as a locally installed CLI
 
-**Last updated:** 2026-09-10
+**Last updated:** 2026-09-11
 
-> Current reality: initialization, task selection, commit-bound planning, role-separated Codex sessions, deterministic verification, reusable bounded fix-loop policy, explicit QA applicability/evidence policy, and Codex PR-review finding disposition policy are implemented. Durable workflow orchestration is not implemented yet.
+> Current reality: initialization, task selection, commit-bound planning, role-separated Codex sessions, deterministic verification, reusable bounded fix-loop policy, explicit QA applicability/evidence policy, Codex PR-review finding disposition policy, and configured merge/production completion gates are implemented. Durable workflow orchestration is not implemented yet.
 
 ## Who it is for
 
@@ -121,6 +121,8 @@ Workflow adapters can use `runQaPhase` from `qa.js` with an explicit `required` 
 
 Workflow adapters can use `runPrReviewPhase` from `pr-review.js` to disposition up to 64 applicable Codex PR-review findings. Findings are copied and validated before an adapter sees them, then processed in order as resolved, disputed with at least one evidence reference, or escalated. A clean review passes without invoking an adapter, any escalation blocks passage, and callback or malformed-result failures fail closed. The returned finding evidence, timing, reasons, and references are deeply immutable. GitHub polling, review-comment mutation, durable persistence, and merge-gate integration remain later work.
 
+Workflow adapters can use `evaluateCompletionGates` from `completion-gates.js` to enforce configured merge and production gates without performing external side effects. Merge signals must be bound to the exact expected head commit. Production requires either a substantive not-applicable reason or one to 64 configured gates whose signals match both the exact deployment identity and source commit. Missing, pending, or stale signals block completion; current failed signals fail it; malformed, duplicate, unexpected, accessor-backed, and proxy-backed evidence is rejected. Every configured gate receives ordered, deeply immutable evidence, including its observed subject identity, and failed outcomes take precedence over blocked outcomes. GitHub, CI, deployment, merge, rollback, and durable-state adapters remain later integration work.
+
 ## Documentation
 
 - [Product and MVP requirements](docs/PRODUCT.md)
@@ -135,7 +137,7 @@ Workflow adapters can use `runPrReviewPhase` from `pr-review.js` to disposition 
 
 ## Current next step
 
-Complete AC-008 review and PR gates, then select AC-009 for merge and production gates.
+Complete AC-009 review and PR gates, then select AC-010 for interruption-safe pause and resume.
 
 ## Guardrail
 
