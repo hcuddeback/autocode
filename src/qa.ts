@@ -89,9 +89,10 @@ export async function runQaPhase(
   let runScenario: QaCallbacks['run'] | undefined;
 
   const evidence: QaScenarioEvidence[] = [];
+  let earliestStartMs: number | undefined;
   for (const scenario of validated.scenarios) {
     const sequence = evidence.length + 1;
-    const started = startScenarioTiming();
+    const started = startScenarioTiming(earliestStartMs);
     let candidate: unknown;
     try {
       if (runScenario === undefined) {
@@ -137,7 +138,7 @@ export async function runQaPhase(
       return finish('failed', reason, evidence);
     }
 
-    appendEvidence(
+    earliestStartMs = appendEvidence(
       evidence,
       scenario,
       sequence,
@@ -278,7 +279,7 @@ function appendEvidence(
   started: ScenarioStartTime,
   result: QaScenarioResult,
   outcome: QaScenarioEvidence['outcome'],
-): void {
+): number {
   const elapsedNs = process.hrtime.bigint() - started.monotonicNs;
   const durationMs = Math.max(0, Number(elapsedNs) / 1_000_000);
   const completed = Math.max(
@@ -296,11 +297,12 @@ function appendEvidence(
     completedAt: new Date(completed).toISOString(),
     durationMs,
   });
+  return completed;
 }
 
-function startScenarioTiming(): ScenarioStartTime {
+function startScenarioTiming(earliestStartMs?: number): ScenarioStartTime {
   return {
-    wallClockMs: Date.now(),
+    wallClockMs: Math.max(Date.now(), earliestStartMs ?? -Infinity),
     monotonicNs: process.hrtime.bigint(),
   };
 }

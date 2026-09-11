@@ -70,15 +70,18 @@ test('runs required scenarios in order and records structured evidence', async (
 
 test('keeps scenario timing consistent when the wall clock moves backward', async () => {
   const originalNow = Date.now;
-  const wallClockValues = [2_000, 1_000];
-  Date.now = () => wallClockValues.shift() ?? 1_000;
+  const wallClockValues = [2_000, 1_000, 500, 250];
+  Date.now = () => wallClockValues.shift() ?? 250;
 
   try {
     const result = await runQaPhase(
       {
         kind: 'required',
         reason: 'Runtime behavior requires QA.',
-        scenarios: [{ name: 'clock', description: 'Observe clock handling.' }],
+        scenarios: [
+          { name: 'first', description: 'Observe clock handling.' },
+          { name: 'second', description: 'Observe ordered clock handling.' },
+        ],
       },
       {
         async run() {
@@ -86,12 +89,18 @@ test('keeps scenario timing consistent when the wall clock moves backward', asyn
         },
       },
     );
-    const scenario = result.scenarios[0]!;
+    const first = result.scenarios[0]!;
+    const second = result.scenarios[1]!;
 
-    assert.equal(scenario.durationMs >= 0, true);
+    assert.equal(first.durationMs >= 0, true);
     assert.equal(
-      new Date(scenario.completedAt).getTime() >=
-        new Date(scenario.startedAt).getTime() + scenario.durationMs,
+      new Date(first.completedAt).getTime() >=
+        new Date(first.startedAt).getTime() + first.durationMs,
+      true,
+    );
+    assert.equal(
+      new Date(second.startedAt).getTime() >=
+        new Date(first.completedAt).getTime(),
       true,
     );
   } finally {
