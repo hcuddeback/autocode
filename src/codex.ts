@@ -654,12 +654,12 @@ export function redactSecrets(
   additionalSecrets: readonly string[] = [],
 ): string {
   let redacted = value;
-  for (const secret of [...Object.values(process.env), ...additionalSecrets]) {
-    if (secret !== undefined && secret.length >= 8) {
-      redacted = redacted.split(secret).join('<redacted>');
-      const encodedSecret = JSON.stringify(secret).slice(1, -1);
-      redacted = redacted.split(encodedSecret).join('<redacted>');
-    }
+  for (const secret of Object.values(process.env)) {
+    if (secret !== undefined && secret.length >= 8)
+      redacted = redactLiteral(redacted, secret);
+  }
+  for (const secret of additionalSecrets) {
+    if (secret.length >= 4) redacted = redactLiteral(redacted, secret);
   }
   return redacted
     .replace(
@@ -678,6 +678,15 @@ export function redactSecrets(
       '$1<redacted>',
     )
     .replace(/(:\/\/[^\s/:@]+:)[^\s@]+(@)/g, '$1<redacted>$2');
+}
+
+function redactLiteral(value: string, secret: string): string {
+  const encodedSecret = JSON.stringify(secret).slice(1, -1);
+  return value
+    .split(secret)
+    .join('<redacted>')
+    .split(encodedSecret)
+    .join('<redacted>');
 }
 
 export async function discoverWorkspaceCredentials(

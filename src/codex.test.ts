@@ -6,11 +6,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { runRoleSeparatedCodexSessions } from './codex.js';
+import { redactSecrets, runRoleSeparatedCodexSessions } from './codex.js';
 
 const execFileAsync = promisify(execFile);
 const IMPLEMENTATION_ID = '11111111-1111-4111-8111-111111111111';
 const REVIEW_ID = '22222222-2222-4222-8222-222222222222';
+
+test('redacts explicitly discovered short credentials', () => {
+  assert.equal(
+    redactSecrets('provider echoed 123456', ['123456']),
+    'provider echoed <redacted>',
+  );
+});
 
 test('runs scoped implementation and independent read-only review sessions', async () => {
   const previousPrivateKey = process.env.AUTOCODE_TEST_PRIVATE_KEY;
