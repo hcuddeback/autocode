@@ -615,6 +615,7 @@ function isBoundedText(value: unknown): value is string {
   return (
     typeof value === 'string' &&
     value.length > 0 &&
+    value.length <= MAX_TEXT_BYTES &&
     value.trim() === value &&
     Buffer.byteLength(value, 'utf8') <= MAX_TEXT_BYTES &&
     !hasControlCharacter(value)

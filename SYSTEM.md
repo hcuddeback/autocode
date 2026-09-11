@@ -115,7 +115,7 @@
 - Production applicability is explicit: a bounded substantive not-applicable reason bypasses deployment evidence, while required production must configure and evaluate gates.
 - Missing, pending, and stale signals block completion; current failed signals fail it and take precedence over blocked signals across phases.
 - Deterministic tests cover passing merge/production and not-applicable paths, missing, pending, stale and failed signals, ordering, bounds, duplicates, unexpected signals, malformed and hostile data, caller mutation, and deep immutability.
-- The Codex PR-review finding about accepting unsupported intermediate commit-identity lengths was corrected and reverified.
+- Codex PR-review findings about unsupported intermediate commit-identity lengths and prompt rejection of oversized untrusted text were corrected and reverified.
 
 ## Next task
 

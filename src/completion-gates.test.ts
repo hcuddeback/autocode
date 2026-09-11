@@ -413,6 +413,10 @@ test('rejects malformed identities, statuses, text, and unknown properties', () 
   badText.merge.requirements[0]!.description = 'line\nbreak';
   cases.push(badText);
 
+  const oversizedText = passingInput();
+  oversizedText.merge.signals[0]!.reason = 'x'.repeat(4097);
+  cases.push(oversizedText);
+
   const unknown = passingInput();
   unknown.merge.signals[0] = {
     ...unknown.merge.signals[0]!,
