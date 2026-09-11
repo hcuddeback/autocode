@@ -24,7 +24,7 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 
 ## Immediate queue
 
-`AC-010` is ready on `feat/AC-010-pause-resume`.
+`AC-010` is in review on `feat/AC-010-pause-resume`: implementation and local deterministic gates pass; independent and PR gates remain.
 
 ## JIT task process
 

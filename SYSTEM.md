@@ -2,7 +2,7 @@
 
 **Last verified:** 2026-09-11
 
-**Stage:** AC-009 merge and production completion gates implemented on its feature branch
+**Stage:** AC-010 durable pause/resume implemented on its feature branch
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -12,7 +12,7 @@
 
 - The clean public repository exists.
 - The product, architecture, workflow, security, release, and task contracts are documented.
-- A strict TypeScript foundation initializes local state, selects dependency-ready tasks, prepares commit-bound planning artifacts, invokes scoped role-separated Codex sessions, runs configured deterministic checks with retained evidence, applies bounded fix-loop transition policy, evaluates explicit QA applicability with structured scenario evidence, dispositions bounded Codex PR-review findings, and enforces configured merge/production completion gates; durable phase orchestration does not exist yet.
+- A strict TypeScript foundation initializes local state, selects dependency-ready tasks, prepares commit-bound planning artifacts, invokes scoped role-separated Codex sessions, runs configured deterministic checks with retained evidence, applies reusable review/QA/fix policies, enforces configured completion gates, and executes bounded ordered effect phases through durable pause/resume checkpoints with reconciliation.
 
 ## Evidence level
 
@@ -28,11 +28,12 @@
 | QA applicability policy exists | Deterministic decision and scenario tests       | High                                       |
 | PR-review disposition exists   | Deterministic finding/disposition tests         | High                                       |
 | Completion gates exist         | Deterministic merge/production gate tests       | High                                       |
-| Workflow is implemented        | Design contract only                            | High confidence that it is not implemented |
+| Durable pause/resume exists    | Unit and forced-interruption subprocess tests   | High                                       |
+| End-to-end workflow is wired   | Individual boundaries only                      | High confidence that it is not implemented |
 
 ## Known gaps and blockers
 
-- CI, integrated workflow phases, durable run state, and session resume are absent.
+- CI, integrated workflow phase wiring, Codex session continuation, and durable pacing/retry budgets are absent.
 - License has not been selected and added.
 
 ## Current milestone
@@ -117,9 +118,18 @@
 - Deterministic tests cover passing merge/production and not-applicable paths, missing, pending, stale and failed signals, ordering, bounds, duplicates, unexpected signals, malformed and hostile data, caller mutation, and deep immutability.
 - Codex PR-review findings about unsupported intermediate commit-identity lengths and prompt rejection of oversized untrusted text were corrected and reverified.
 
+## AC-010 evidence
+
+- `runDurableRun` validates one through 64 uniquely identified ordered phases and stores each run beneath the initialized project's `.autocode/runs/` boundary.
+- Each transition is appended and synced before an atomic versioned snapshot replacement; a stable effect identity is durable before its adapter is invoked.
+- Deliberate pause occurs only after phase completion, and repeated invocation resumes from the first incomplete phase while completed runs perform no additional effects.
+- In-flight effects must reconcile as applied, not applied, or ambiguous. Applied effects are checkpointed without execution, confirmed absent effects reuse the original identity, and ambiguity blocks without invoking the effect.
+- A child-process integration test writes an effect marker and terminates before completion is checkpointed; resume reclaims the dead local lock, reconciles the marker, and does not repeat the write.
+- Deterministic tests also cover event-before-snapshot recovery, definition drift, corrupt state, concurrent ownership, path traversal, hostile definitions/results, partial event tails, and deep immutability.
+
 ## Next task
 
-Complete AC-009 review and PR gates, then select AC-010 for interruption-safe pause and resume.
+Complete AC-010 review and PR gates, then select AC-011 for durable pacing, waits, and retry policy.
 
 ## Recently completed
 
@@ -134,5 +144,6 @@ Complete AC-009 review and PR gates, then select AC-010 for interruption-safe pa
 - 2026-09-09 — Merged AC-006 through PR #6 and selected AC-007 for QA applicability and evidence.
 - 2026-09-09 — Merged AC-007 through PR #7 and selected AC-008 for Codex PR-review finding disposition.
 - 2026-09-10 — Merged AC-008 through PR #9 and selected AC-009 for merge and production completion gates.
+- 2026-09-11 — Merged AC-009 through PR #10 and selected AC-010 for interruption-safe pause and resume.
 
 Update this file when a major capability, blocker, milestone, or release fact changes.
