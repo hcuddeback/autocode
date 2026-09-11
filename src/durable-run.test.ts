@@ -535,17 +535,26 @@ test('rejects unsafe and hostile definitions and adapter results', async () => {
   assert.equal(resultGetterCalls, 0);
 });
 
-test('redacts workspace credentials from execution and reconciliation reasons', async () => {
+test('refreshes credential redaction after execution and reconciliation callbacks', async () => {
   const root = await fixtureProject();
-  const secret = '123456';
-  await writeFile(path.join(root, '.env'), `SERVICE_TOKEN=${secret}\n`);
+  const initialSecret = '123456';
+  const executionSecret = '654321';
+  const reconciliationSecret = '987654';
+  await writeFile(path.join(root, '.env'), `SERVICE_TOKEN=${initialSecret}\n`);
 
   const executed = await runDurableRun(
     root,
     singlePhaseDefinition('redacted-execution'),
     {
       async execute() {
-        return { kind: 'applied', reason: `provider echoed ${secret}` };
+        await writeFile(
+          path.join(root, '.env'),
+          `SERVICE_TOKEN=${executionSecret}\n`,
+        );
+        return {
+          kind: 'applied',
+          reason: `provider echoed ${executionSecret}`,
+        };
       },
       async reconcile() {
         throw new Error('not expected');
@@ -555,13 +564,13 @@ test('redacts workspace credentials from execution and reconciliation reasons', 
   assert.equal(
     (
       await readFile(path.join(executed.runDirectory, 'events.jsonl'), 'utf8')
-    ).includes(secret),
+    ).includes(executionSecret),
     false,
   );
   assert.equal(
     (
       await readFile(path.join(executed.runDirectory, 'run.json'), 'utf8')
-    ).includes(secret),
+    ).includes(executionSecret),
     false,
   );
 
@@ -594,7 +603,14 @@ test('redacts workspace credentials from execution and reconciliation reasons', 
       throw new Error('must not execute again');
     },
     async reconcile() {
-      return { kind: 'applied', reason: `provider echoed ${secret}` };
+      await writeFile(
+        path.join(root, '.env'),
+        `SERVICE_TOKEN=${reconciliationSecret}\n`,
+      );
+      return {
+        kind: 'applied',
+        reason: `provider echoed ${reconciliationSecret}`,
+      };
     },
   });
   const durableContents = await Promise.all([
@@ -602,7 +618,11 @@ test('redacts workspace credentials from execution and reconciliation reasons', 
     readFile(path.join(reconciled.runDirectory, 'run.json'), 'utf8'),
   ]);
   assert.equal(
-    durableContents.some((contents) => contents.includes(secret)),
+    durableContents.some((contents) =>
+      [initialSecret, executionSecret, reconciliationSecret].some((secret) =>
+        contents.includes(secret),
+      ),
+    ),
     false,
   );
   assert.equal(

@@ -121,7 +121,7 @@
 ## AC-010 evidence
 
 - `runDurableRun` validates one through 64 uniquely identified ordered phases and stores each run beneath the initialized project's `.autocode/runs/` boundary.
-- Run and phase identifiers are canonical lowercase path segments; each invocation verifies that its run path remains untracked and gitignored, rejects credential-bearing definitions, and redacts known environment values plus explicitly discovered workspace credentials of four or more characters from untrusted adapter reasons before durable persistence.
+- Run and phase identifiers are canonical lowercase path segments; each invocation verifies that its run path remains untracked and gitignored, rejects credential-bearing definitions, and redacts known environment values plus explicitly discovered workspace credentials of four or more characters from untrusted adapter reasons before durable persistence, refreshing credential discovery after every adapter callback.
 - Each transition is appended and synced before an atomic versioned snapshot replacement; newly published directory entries are synced where the runtime supports it, and a stable effect identity is durable before its adapter is invoked.
 - Deliberate pause occurs only after phase completion, and repeated invocation resumes from the first incomplete phase while completed runs perform no additional effects.
 - In-flight effects must reconcile as applied, not applied, or ambiguous. Applied effects are checkpointed without execution, confirmed absent effects reuse the original identity, and ambiguity blocks without invoking the effect.

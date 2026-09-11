@@ -245,6 +245,7 @@ export async function runDurableRun(
 
       if (phase.status === 'in-flight') {
         const reconciliation = await invokeReconcile(
+          paths,
           callbacks,
           definition,
           phase,
@@ -333,6 +334,7 @@ async function executeEffect(
   resuming: boolean,
 ): Promise<DurableRunState> {
   const context = effectContext(definition.runId, phase, resuming);
+  const callbackSecrets = await refreshWorkspaceSecrets(paths.root, secrets);
   let candidate: unknown;
   try {
     candidate = await callbacks.execute.call(
@@ -345,7 +347,10 @@ async function executeEffect(
       `effect adapter failed for phase ${phase.id}; reconciliation is required before resume`,
     );
   }
-  const result = normalizeEffectResult(candidate, secrets);
+  const result = normalizeEffectResult(
+    candidate,
+    await refreshWorkspaceSecrets(paths.root, callbackSecrets),
+  );
   if (result === undefined) {
     throw new Error(
       `effect adapter returned an invalid result for phase ${phase.id}; reconciliation is required before resume`,
@@ -385,11 +390,13 @@ async function completeEffect(
 }
 
 async function invokeReconcile(
+  paths: RunPaths,
   callbacks: NormalizedCallbacks,
   definition: NormalizedDefinition,
   phase: DurablePhaseState,
   secrets: readonly string[],
 ): Promise<DurableReconciliationResult> {
+  const callbackSecrets = await refreshWorkspaceSecrets(paths.root, secrets);
   let candidate: unknown;
   try {
     candidate = await callbacks.reconcile.call(
@@ -400,13 +407,24 @@ async function invokeReconcile(
   } catch {
     throw new Error(`reconciliation adapter failed for phase ${phase.id}`);
   }
-  const result = normalizeReconciliationResult(candidate, secrets);
+  const result = normalizeReconciliationResult(
+    candidate,
+    await refreshWorkspaceSecrets(paths.root, callbackSecrets),
+  );
   if (result === undefined) {
     throw new Error(
       `reconciliation adapter returned an invalid result for phase ${phase.id}`,
     );
   }
   return result;
+}
+
+async function refreshWorkspaceSecrets(
+  root: string,
+  baseline: readonly string[],
+): Promise<readonly string[]> {
+  const current = (await discoverWorkspaceCredentials(root)).secrets;
+  return [...new Set([...baseline, ...current])];
 }
 
 function effectContext(
