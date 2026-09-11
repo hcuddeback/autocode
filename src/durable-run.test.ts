@@ -419,6 +419,14 @@ test('rejects unsafe and hostile definitions and adapter results', async () => {
     /run id is invalid/,
   );
   await assert.rejects(
+    runDurableRun(
+      root,
+      { runId: 'Case-Alias', phases: definition.phases },
+      callbacks,
+    ),
+    /run id is invalid/,
+  );
+  await assert.rejects(
     runDurableRun(root, new Proxy(definition, {}), callbacks),
     /plain mapping/,
   );
@@ -496,6 +504,82 @@ test('rejects unsafe and hostile definitions and adapter results', async () => {
   assert.equal(resultGetterCalls, 0);
 });
 
+test('redacts workspace credentials from execution and reconciliation reasons', async () => {
+  const root = await fixtureProject();
+  const secret = 'opaque-fixture-credential';
+  await writeFile(path.join(root, '.env'), `SERVICE_TOKEN=${secret}\n`);
+
+  const executed = await runDurableRun(
+    root,
+    singlePhaseDefinition('redacted-execution'),
+    {
+      async execute() {
+        return { kind: 'applied', reason: `provider echoed ${secret}` };
+      },
+      async reconcile() {
+        throw new Error('not expected');
+      },
+    },
+  );
+  assert.equal(
+    (
+      await readFile(path.join(executed.runDirectory, 'events.jsonl'), 'utf8')
+    ).includes(secret),
+    false,
+  );
+  assert.equal(
+    (
+      await readFile(path.join(executed.runDirectory, 'run.json'), 'utf8')
+    ).includes(secret),
+    false,
+  );
+
+  const reconciliationDefinition = singlePhaseDefinition(
+    'redacted-reconciliation',
+  );
+  await assert.rejects(
+    runDurableRun(
+      root,
+      reconciliationDefinition,
+      {
+        async execute() {
+          return { kind: 'applied', reason: 'effect applied' };
+        },
+        async reconcile() {
+          throw new Error('not reached before interruption');
+        },
+      },
+      {
+        async onCheckpoint(checkpoint) {
+          if (checkpoint === 'after-effect-applied')
+            throw new Error('forced reconciliation');
+        },
+      },
+    ),
+    /forced reconciliation/,
+  );
+  const reconciled = await runDurableRun(root, reconciliationDefinition, {
+    async execute() {
+      throw new Error('must not execute again');
+    },
+    async reconcile() {
+      return { kind: 'applied', reason: `provider echoed ${secret}` };
+    },
+  });
+  const durableContents = await Promise.all([
+    readFile(path.join(reconciled.runDirectory, 'events.jsonl'), 'utf8'),
+    readFile(path.join(reconciled.runDirectory, 'run.json'), 'utf8'),
+  ]);
+  assert.equal(
+    durableContents.some((contents) => contents.includes(secret)),
+    false,
+  );
+  assert.equal(
+    durableContents.every((contents) => contents.includes('<redacted>')),
+    true,
+  );
+});
+
 test('discards an incomplete final event record and resumes from the durable snapshot', async () => {
   const root = await fixtureProject();
   const completed = await runDurableRun(
@@ -517,6 +601,12 @@ test('discards an incomplete final event record and resumes from the durable sna
 async function fixtureProject(): Promise<string> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-durable-'));
   temporaryDirectories.push(root);
+  const initialized = spawnSync('git', ['init', '--quiet'], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  assert.equal(initialized.status, 0, initialized.stderr);
+  await writeFile(path.join(root, '.gitignore'), '.autocode/\n.env\n');
   await mkdir(path.join(root, '.autocode', 'runs'), { recursive: true });
   return root;
 }

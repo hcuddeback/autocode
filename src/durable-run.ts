@@ -14,13 +14,14 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { types as utilTypes } from 'node:util';
+import { discoverWorkspaceCredentials, redactSecrets } from './codex.js';
 
 const MAX_PHASES = 64;
 const MAX_TEXT_BYTES = 4096;
 const MAX_STATE_BYTES = 1024 * 1024;
 const MAX_EVENTS_BYTES = 8 * 1024 * 1024;
 const MAX_PROCESS_IDENTITY_BYTES = 512;
-const RUN_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
+const RUN_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const LOCK_DIRECTORY = 'run.lock';
 const LOCK_OWNER_FILE = 'owner.json';
 let ownProcessIdentityPromise: Promise<string | undefined> | undefined;
@@ -181,6 +182,8 @@ export async function runDurableRun(
   const callbacks = normalizeCallbacks(callbacksValue);
   const options = normalizeOptions(optionsValue, definition);
   const paths = await resolveRunPaths(projectDirectory, definition.runId);
+  const workspaceSecrets = (await discoverWorkspaceCredentials(paths.root))
+    .secrets;
   const release = await acquireLock(paths);
   try {
     let state = await loadOrCreateRun(paths, definition, options);
@@ -239,6 +242,7 @@ export async function runDurableRun(
           callbacks,
           definition,
           phase,
+          workspaceSecrets,
         );
         if (reconciliation.kind === 'ambiguous') {
           state = await transition(
@@ -267,6 +271,7 @@ export async function runDurableRun(
             phase,
             callbacks,
             options,
+            workspaceSecrets,
             true,
           );
         }
@@ -290,6 +295,7 @@ export async function runDurableRun(
           phaseById(state, phase.id),
           callbacks,
           options,
+          workspaceSecrets,
           false,
         );
       }
@@ -317,6 +323,7 @@ async function executeEffect(
   phase: DurablePhaseState,
   callbacks: NormalizedCallbacks,
   options: NormalizedOptions,
+  secrets: readonly string[],
   resuming: boolean,
 ): Promise<DurableRunState> {
   const context = effectContext(definition.runId, phase, resuming);
@@ -332,7 +339,7 @@ async function executeEffect(
       `effect adapter failed for phase ${phase.id}; reconciliation is required before resume`,
     );
   }
-  const result = normalizeEffectResult(candidate);
+  const result = normalizeEffectResult(candidate, secrets);
   if (result === undefined) {
     throw new Error(
       `effect adapter returned an invalid result for phase ${phase.id}; reconciliation is required before resume`,
@@ -375,6 +382,7 @@ async function invokeReconcile(
   callbacks: NormalizedCallbacks,
   definition: NormalizedDefinition,
   phase: DurablePhaseState,
+  secrets: readonly string[],
 ): Promise<DurableReconciliationResult> {
   let candidate: unknown;
   try {
@@ -386,7 +394,7 @@ async function invokeReconcile(
   } catch {
     throw new Error(`reconciliation adapter failed for phase ${phase.id}`);
   }
-  const result = normalizeReconciliationResult(candidate);
+  const result = normalizeReconciliationResult(candidate, secrets);
   if (result === undefined) {
     throw new Error(
       `reconciliation adapter returned an invalid result for phase ${phase.id}`,
@@ -1030,23 +1038,27 @@ function normalizeOptions(
 
 function normalizeEffectResult(
   value: unknown,
+  secrets: readonly string[],
 ): DurableEffectResult | undefined {
-  return normalizeAdapterResult(value, new Set(['applied'])) as
+  return normalizeAdapterResult(value, new Set(['applied']), secrets) as
     DurableEffectResult | undefined;
 }
 
 function normalizeReconciliationResult(
   value: unknown,
+  secrets: readonly string[],
 ): DurableReconciliationResult | undefined {
   return normalizeAdapterResult(
     value,
     new Set(['applied', 'not-applied', 'ambiguous']),
+    secrets,
   ) as DurableReconciliationResult | undefined;
 }
 
 function normalizeAdapterResult(
   value: unknown,
   kinds: ReadonlySet<string>,
+  secrets: readonly string[],
 ): { kind: string; reason: string } | undefined {
   try {
     const record = mapping(value, 'adapter result');
@@ -1055,7 +1067,7 @@ function normalizeAdapterResult(
     const reason = dataValue(record, 'reason');
     if (typeof kind !== 'string' || !kinds.has(kind) || !isBoundedText(reason))
       return undefined;
-    return Object.freeze({ kind, reason });
+    return Object.freeze({ kind, reason: redactSecrets(reason, secrets) });
   } catch {
     return undefined;
   }
