@@ -8,7 +8,7 @@ AutoCode will be a local-first TypeScript CLI that runs durable software-enginee
 
 **Production:** Not deployed; planned as a locally installed CLI
 
-**Last updated:** 2026-09-10
+**Last updated:** 2026-09-11
 
 > Current reality: initialization, task selection, commit-bound planning, role-separated Codex sessions, deterministic verification, reusable bounded fix-loop policy, explicit QA applicability/evidence policy, Codex PR-review finding disposition policy, and configured merge/production completion gates are implemented. Durable workflow orchestration is not implemented yet.
 

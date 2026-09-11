@@ -595,7 +595,10 @@ function signalStatus(value: unknown, field: string): GateSignalStatus {
 }
 
 function commitIdentity(value: unknown, field: string): string {
-  if (typeof value !== 'string' || !/^[0-9a-f]{40,64}$/.test(value)) {
+  if (
+    typeof value !== 'string' ||
+    !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value)
+  ) {
     throw new Error(`${field} is invalid`);
   }
   return value;

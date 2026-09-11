@@ -114,6 +114,20 @@ test('passes complete current merge and production evidence in configured order'
   );
 });
 
+test('accepts full SHA-256 commit identities', () => {
+  const input = passingInput();
+  const sha256Commit = 'c'.repeat(64);
+  input.merge.headCommit = sha256Commit;
+  for (const signal of input.merge.signals) signal.headCommit = sha256Commit;
+  if (input.production.kind !== 'required') assert.fail('expected production');
+  input.production.sourceCommit = sha256Commit;
+  for (const signal of input.production.signals) {
+    signal.sourceCommit = sha256Commit;
+  }
+
+  assert.equal(evaluateCompletionGates(input).outcome, 'passed');
+});
+
 test('passes after merge when production is explicitly not applicable', () => {
   const input = passingInput();
   input.production = {
@@ -379,6 +393,17 @@ test('rejects malformed identities, statuses, text, and unknown properties', () 
   const badCommit = passingInput();
   badCommit.merge.headCommit = 'HEAD';
   cases.push(badCommit);
+
+  const intermediateSha1Length = passingInput();
+  intermediateSha1Length.merge.headCommit = 'a'.repeat(41);
+  cases.push(intermediateSha1Length);
+
+  const intermediateSha256Length = passingInput();
+  if (intermediateSha256Length.production.kind !== 'required') {
+    assert.fail('expected production');
+  }
+  intermediateSha256Length.production.signals[0]!.sourceCommit = 'a'.repeat(63);
+  cases.push(intermediateSha256Length);
 
   const badStatus = passingInput();
   badStatus.merge.signals[0]!.status = 'success' as never;
