@@ -6,6 +6,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import os from 'node:os';
@@ -407,6 +408,36 @@ test('reclaims a stale lock after its owner PID is reused', async () => {
   assert.equal(result.outcome, 'completed');
 });
 
+test('rejects a symlinked lock directory without modifying its target', async () => {
+  const root = await fixtureProject();
+  const runDirectory = path.join(
+    root,
+    '.autocode',
+    'runs',
+    'durable-symlinked-lock',
+  );
+  const target = path.join(root, 'lock-target');
+  await mkdir(runDirectory);
+  await mkdir(target);
+  const ownerPath = path.join(target, 'owner.json');
+  await writeFile(ownerPath, 'preserve target contents\n');
+  await symlink(
+    target,
+    path.join(runDirectory, 'run.lock'),
+    process.platform === 'win32' ? 'junction' : 'dir',
+  );
+
+  await assert.rejects(
+    runDurableRun(
+      root,
+      singlePhaseDefinition('symlinked-lock'),
+      appliedCallbacks([]),
+    ),
+    /lock directory must be a real directory/,
+  );
+  assert.equal(await readFile(ownerPath, 'utf8'), 'preserve target contents\n');
+});
+
 test('rejects unsafe and hostile definitions and adapter results', async () => {
   const root = await fixtureProject();
   const callbacks = appliedCallbacks([]);
@@ -578,6 +609,35 @@ test('redacts workspace credentials from execution and reconciliation reasons', 
     durableContents.every((contents) => contents.includes('<redacted>')),
     true,
   );
+});
+
+test('rejects an adapter reason that exceeds bounds after redaction', async () => {
+  const root = await fixtureProject();
+  const secret = '12345678';
+  const runDefinition = singlePhaseDefinition('expanded-redaction');
+  await writeFile(path.join(root, '.env'), `SERVICE_TOKEN=${secret}\n`);
+
+  await assert.rejects(
+    runDurableRun(root, runDefinition, {
+      async execute() {
+        return { kind: 'applied', reason: secret.repeat(512) };
+      },
+      async reconcile() {
+        throw new Error('not reached');
+      },
+    }),
+    /invalid result.*reconciliation is required/,
+  );
+
+  const resumed = await runDurableRun(root, runDefinition, {
+    async execute() {
+      throw new Error('must not execute again');
+    },
+    async reconcile() {
+      return { kind: 'applied', reason: 'effect reconciled safely' };
+    },
+  });
+  assert.equal(resumed.outcome, 'completed');
 });
 
 test('rejects credential-bearing phase definitions before creating run state', async () => {

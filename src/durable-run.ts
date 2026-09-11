@@ -1073,7 +1073,9 @@ function normalizeAdapterResult(
     const reason = dataValue(record, 'reason');
     if (typeof kind !== 'string' || !kinds.has(kind) || !isBoundedText(reason))
       return undefined;
-    return Object.freeze({ kind, reason: redactSecrets(reason, secrets) });
+    const redactedReason = redactSecrets(reason, secrets);
+    if (!isBoundedText(redactedReason)) return undefined;
+    return Object.freeze({ kind, reason: redactedReason });
   } catch {
     return undefined;
   }
@@ -1259,6 +1261,13 @@ async function removeLockCandidate(candidate: string): Promise<void> {
 }
 
 async function reclaimDeadLocalLock(paths: RunPaths): Promise<boolean> {
+  const lockReal = await requireRealDirectory(
+    paths.lock,
+    'durable run lock directory',
+  );
+  if (lockReal !== paths.lock || path.dirname(lockReal) !== paths.run) {
+    throw new Error('durable run lock directory identity changed');
+  }
   const ownerPath = path.join(paths.lock, LOCK_OWNER_FILE);
   let owner: unknown;
   try {
