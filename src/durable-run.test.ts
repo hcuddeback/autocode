@@ -139,6 +139,65 @@ test('recovers an event appended before its snapshot without repeating the effec
   assert.equal(executions, 1);
 });
 
+test('recovers an empty event log left by interrupted initial publication', async () => {
+  const root = await fixtureProject();
+  const runDefinition = singlePhaseDefinition('empty-event-log');
+  const runDirectory = path.join(
+    root,
+    '.autocode',
+    'runs',
+    'durable-empty-event-log',
+  );
+  await mkdir(runDirectory);
+  await writeFile(path.join(runDirectory, 'events.jsonl'), '');
+  const calls: string[] = [];
+
+  const result = await runDurableRun(
+    root,
+    runDefinition,
+    appliedCallbacks(calls),
+  );
+
+  assert.equal(result.outcome, 'completed');
+  assert.deepEqual(calls, ['effect']);
+});
+
+test('preserves a requested pause across the completion checkpoint window', async () => {
+  const root = await fixtureProject();
+  const calls: string[] = [];
+  let interrupted = false;
+
+  await assert.rejects(
+    runDurableRun(root, definition, appliedCallbacks(calls), {
+      pauseAfterPhase: 'first',
+      async onCheckpoint(checkpoint, state) {
+        if (
+          !interrupted &&
+          checkpoint === 'after-event-appended' &&
+          state.phases[0]?.status === 'completed'
+        ) {
+          interrupted = true;
+          throw new Error('forced pause checkpoint window');
+        }
+      },
+    }),
+    /forced pause checkpoint window/,
+  );
+
+  const resumed = await runDurableRun(
+    root,
+    definition,
+    appliedCallbacks(calls),
+    { pauseAfterPhase: 'first' },
+  );
+  assert.equal(resumed.outcome, 'paused');
+  assert.deepEqual(calls, ['first']);
+  assert.deepEqual(
+    resumed.state.phases.map((phase) => phase.status),
+    ['completed', 'pending'],
+  );
+});
+
 test('forced process interruption reconciles the applied effect without repeating it', async () => {
   const root = await fixtureProject();
   const marker = path.join(root, 'effect-marker.txt');
@@ -305,6 +364,21 @@ test('rejects concurrent ownership and resumes after the owner releases', async 
   );
   releaseEffect();
   assert.equal((await first).outcome, 'completed');
+});
+
+test('recovers an empty lock directory left by interrupted release', async () => {
+  const root = await fixtureProject();
+  const runDefinition = singlePhaseDefinition('empty-lock');
+  const runDirectory = path.join(
+    root,
+    '.autocode',
+    'runs',
+    'durable-empty-lock',
+  );
+  await mkdir(path.join(runDirectory, 'run.lock'), { recursive: true });
+
+  const result = await runDurableRun(root, runDefinition, appliedCallbacks([]));
+  assert.equal(result.outcome, 'completed');
 });
 
 test('rejects unsafe and hostile definitions and adapter results', async () => {

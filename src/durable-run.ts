@@ -200,6 +200,23 @@ export async function runDurableRun(
     }
 
     while (true) {
+      if (
+        options.pauseAfterPhase !== undefined &&
+        phaseById(state, options.pauseAfterPhase).status === 'completed' &&
+        !state.phases.some((candidate) => candidate.status === 'in-flight')
+      ) {
+        state = await transition(
+          paths,
+          definition,
+          state,
+          {
+            type: 'run-paused',
+            reason: `paused after phase ${options.pauseAfterPhase}`,
+          },
+          options,
+        );
+        return finish(paths, state);
+      }
       const phase = state.phases.find(
         (candidate) => candidate.status !== 'completed',
       );
@@ -427,16 +444,7 @@ async function loadRun(
   if (eventRead.events.length === 0) {
     if (snapshotValue !== undefined)
       throw new Error('run snapshot exists without durable events');
-    if (eventRead.hadPartialTail) {
-      const handle = await openRegularFile(paths.events, 'r+', 'run event log');
-      try {
-        await handle.truncate(0);
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-      await unlink(paths.events);
-    }
+    if (eventRead.hadFile) await unlink(paths.events);
     return undefined;
   }
 
@@ -701,6 +709,7 @@ async function readEvents(
   definition: NormalizedDefinition,
 ): Promise<{
   events: DurableEvent[];
+  hadFile: boolean;
   hadPartialTail: boolean;
   completeBytes: number;
 }> {
@@ -713,7 +722,12 @@ async function readEvents(
     );
   } catch (error: unknown) {
     if (hasCode(error, 'ENOENT'))
-      return { events: [], hadPartialTail: false, completeBytes: 0 };
+      return {
+        events: [],
+        hadFile: false,
+        hadPartialTail: false,
+        completeBytes: 0,
+      };
     throw error;
   }
   const hadPartialTail = contents.length > 0 && !contents.endsWith('\n');
@@ -733,6 +747,7 @@ async function readEvents(
   }
   return {
     events,
+    hadFile: true,
     hadPartialTail,
     completeBytes: Buffer.byteLength(completeText),
   };
@@ -1126,7 +1141,17 @@ async function reclaimDeadLocalLock(paths: RunPaths): Promise<boolean> {
       await readBoundedFile(ownerPath, 4096, 'run lock owner'),
     );
   } catch (error: unknown) {
-    if (hasCode(error, 'ENOENT')) return false;
+    if (hasCode(error, 'ENOENT')) {
+      const stale = `${paths.lock}.stale-${process.pid}-${randomUUID()}`;
+      try {
+        await rename(paths.lock, stale);
+      } catch (renameError: unknown) {
+        if (hasCode(renameError, 'ENOENT')) return true;
+        throw renameError;
+      }
+      await rmdir(stale);
+      return true;
+    }
     throw new Error('run lock owner is invalid', { cause: error });
   }
   const record = mapping(owner, 'run lock owner');
@@ -1169,8 +1194,10 @@ async function releaseLock(paths: RunPaths, token: string): Promise<void> {
   ) {
     throw new Error('durable run lock ownership changed before release');
   }
-  await unlink(ownerPath);
-  await rmdir(paths.lock);
+  const released = `${paths.lock}.released-${process.pid}-${randomUUID()}`;
+  await rename(paths.lock, released);
+  await unlink(path.join(released, LOCK_OWNER_FILE));
+  await rmdir(released);
 }
 
 function processAlive(pid: number): boolean {
