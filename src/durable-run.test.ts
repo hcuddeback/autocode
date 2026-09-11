@@ -537,7 +537,7 @@ test('rejects unsafe and hostile definitions and adapter results', async () => {
 
 test('redacts workspace credentials from execution and reconciliation reasons', async () => {
   const root = await fixtureProject();
-  const secret = 'opaque-fixture-credential';
+  const secret = '123456';
   await writeFile(path.join(root, '.env'), `SERVICE_TOKEN=${secret}\n`);
 
   const executed = await runDurableRun(
@@ -642,7 +642,7 @@ test('rejects an adapter reason that exceeds bounds after redaction', async () =
 
 test('rejects credential-bearing phase definitions before creating run state', async () => {
   const root = await fixtureProject();
-  const secret = 'definition-fixture-credential';
+  const secret = '654321';
   await writeFile(path.join(root, '.env'), `SERVICE_TOKEN=${secret}\n`);
 
   await assert.rejects(
