@@ -24,7 +24,7 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 
 ## Immediate queue
 
-AC-007 is complete. AC-008 is the next MVP outcome awaiting JIT task refinement.
+`AC-007` remediation is in review on `fix/AC-007-review-findings`: implementation and local gates pass; PR #8 review and merge gates remain.
 
 ## JIT task process
 

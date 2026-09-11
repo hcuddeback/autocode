@@ -2,7 +2,7 @@
 
 **Last verified:** 2026-09-09
 
-**Stage:** AC-007 QA applicability and evidence complete; AC-008 is next for JIT refinement
+**Stage:** AC-007 post-merge review remediation is in review on its follow-up branch
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -101,7 +101,7 @@
 
 ## Next task
 
-Select and refine AC-008 for Codex PR-review findings.
+Complete AC-007 remediation PR #8 gates, then select and refine AC-008 for Codex PR-review findings.
 
 ## Recently completed
 
@@ -114,6 +114,5 @@ Select and refine AC-008 for Codex PR-review findings.
 - 2026-09-03 — Merged AC-004 through PR #4 and implemented AC-005 deterministic verification on its isolated feature worktree.
 - 2026-09-03 — Merged AC-005 through PR #5 and implemented the AC-006 bounded fix-loop policy on its isolated feature worktree.
 - 2026-09-09 — Merged AC-006 through PR #6 and selected AC-007 for QA applicability and evidence.
-- 2026-09-09 — Merged AC-007 through PR #7 and resolved its post-merge review findings on a follow-up remediation branch.
 
 Update this file when a major capability, blocker, milestone, or release fact changes.
