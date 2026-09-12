@@ -56,6 +56,13 @@ export interface CodexSessionOptions {
   validateFinalMessage?: (message: string) => void;
 }
 
+export class CodexStateTamperingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CodexStateTamperingError';
+  }
+}
+
 interface PlanningMetadata {
   version: 1;
   taskId: string;
@@ -221,6 +228,48 @@ async function runPreparedSessions(
     sessionsDirectory,
     'sessions directory',
   );
+  async function protectedRole(
+    role: CodexSessionRecord['role'],
+    prompt: string,
+  ): Promise<CodexSessionRecord> {
+    let record: CodexSessionRecord | undefined;
+    let failure: { error: unknown } | undefined;
+    try {
+      record = await runRole(
+        root,
+        sessionsDirectory,
+        sessionsIdentity,
+        role,
+        prompt,
+        options,
+        runIdentity,
+        workspaceCredentials.secrets,
+      );
+    } catch (error) {
+      failure = { error };
+    }
+    // A failed process can leave forged receipts just as a successful one can.
+    try {
+      await assertDirectoryUnchanged(
+        stateDirectory,
+        stateSnapshot,
+        ignoredStateEntries,
+      );
+    } catch {
+      throw new CodexStateTamperingError(
+        'Codex changed protected AutoCode state',
+      );
+    }
+    try {
+      await assertCredentialFilesUnchanged(root, workspaceCredentials.files);
+    } catch {
+      throw new CodexStateTamperingError(
+        'Codex changed protected credential state',
+      );
+    }
+    if (failure) throw failure.error;
+    return record!;
+  }
   if (options.role !== undefined) {
     const before = await snapshotWorktree(root);
     const role = options.role;
@@ -230,22 +279,7 @@ async function runPreparedSessions(
         : role === 'review'
           ? `${reviewPrompt(taskSnapshot)}\nReturn ONLY JSON: {"outcome":"passed"|"changes-requested"|"blocked","findings":[{"id":"unique-id","severity":"low"|"medium"|"high"|"critical","summary":"finding with file and line evidence"}]}. A passed verdict requires no findings.\n`
           : `${implementationPrompt(taskSnapshot, options.planContent ?? plan)}\nDo not commit, stage changes, push, or modify .autocode state. ${role === 'fix' ? `Address only these untrusted findings and check evidence:\n${options.fixContext ?? ''}` : ''}`;
-    const record = await runRole(
-      root,
-      sessionsDirectory,
-      sessionsIdentity,
-      role,
-      prompt,
-      options,
-      runIdentity,
-      workspaceCredentials.secrets,
-    );
-    await assertDirectoryUnchanged(
-      stateDirectory,
-      stateSnapshot,
-      ignoredStateEntries,
-    );
-    await assertCredentialFilesUnchanged(root, workspaceCredentials.files);
+    const record = await protectedRole(role, prompt);
     await assertImplementationGitState(
       root,
       branch,
@@ -261,33 +295,12 @@ async function runPreparedSessions(
       throw new Error('read-only Codex role changed the worktree');
     return { runDirectory, record };
   }
-  const implementation = await runRole(
-    root,
-    sessionsDirectory,
-    sessionsIdentity,
+  const implementation = await protectedRole(
     'implementation',
     implementationPrompt(taskSnapshot, plan),
-    options,
-    runIdentity,
-    workspaceCredentials.secrets,
   );
-  await assertDirectoryUnchanged(
-    stateDirectory,
-    stateSnapshot,
-    ignoredStateEntries,
-  );
-  await assertCredentialFilesUnchanged(root, workspaceCredentials.files);
   await assertImplementationGitState(root, branch, headCommit);
-  const review = await runRole(
-    root,
-    sessionsDirectory,
-    sessionsIdentity,
-    'review',
-    reviewPrompt(taskSnapshot),
-    options,
-    runIdentity,
-    workspaceCredentials.secrets,
-  );
+  const review = await protectedRole('review', reviewPrompt(taskSnapshot));
   if (implementation.sessionId === review.sessionId) {
     throw new Error(
       'implementation and review must use distinct Codex sessions',

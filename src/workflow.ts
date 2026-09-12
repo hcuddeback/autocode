@@ -8,6 +8,7 @@ import { CONFIG_FILE, validateConfig } from './config.js';
 import { loadTaskCatalog, selectProjectTask } from './tasks.js';
 import { prepareImplementationPlan } from './planning.js';
 import {
+  CodexStateTamperingError,
   assertCredentialFilesUnchanged,
   assertDirectoryUnchanged,
   discoverWorkspaceCredentials,
@@ -311,246 +312,252 @@ export async function runProjectWorkflow(
     },
     {
       async execute(phase, context) {
-        const previous = await latest();
-        if (previous && previous.workspace !== (await currentWorkspace()))
-          return {
-            kind: 'blocked',
-            reason: 'workspace changed; evidence requires a new run',
+        try {
+          const previous = await latest();
+          if (previous && previous.workspace !== (await currentWorkspace()))
+            return {
+              kind: 'blocked',
+              reason: 'workspace changed; evidence requires a new run',
+            };
+          const own = await receipt(phase.id);
+          if (own) return own.result;
+          let result: DurableEffectResult = {
+            kind: 'applied',
+            reason: `${phase.id} evidence retained`,
           };
-        const own = await receipt(phase.id);
-        if (own) return own.result;
-        let result: DurableEffectResult = {
-          kind: 'applied',
-          reason: `${phase.id} evidence retained`,
-        };
-        let evidence: unknown;
-        if (
-          phase.id === 'planning' ||
-          phase.id === 'implementation' ||
-          phase.id.startsWith('fix-')
-        ) {
-          if (phase.id.startsWith('fix-') && (await anyPassed()))
-            evidence = { skipped: true, reason: 'an earlier round passed' };
-          else {
-            const role = phase.id.startsWith('fix-')
-              ? 'fix'
-              : (phase.id as CodexSessionRecord['role']);
-            const previousRound =
-              role === 'fix' ? Number(phase.id.slice(4)) - 1 : undefined;
-            const context =
-              previousRound === undefined
-                ? undefined
-                : JSON.stringify({
-                    verification: (await receipt(`verify-${previousRound}`))
-                      ?.evidence,
-                    review: (await receipt(`review-${previousRound}`))
-                      ?.evidence,
-                  });
-            const generatedPlan =
-              role === 'planning'
-                ? undefined
-                : ((await receipt('planning'))?.evidence as { plan?: string })
-                    ?.plan;
-            const record = await runPreparedCodexRole(
-              root,
-              role,
-              `workflow-${phase.id}`,
-              {
-                ...options.codex,
-                ...(context === undefined ? {} : { fixContext: context }),
-                ...(generatedPlan === undefined
-                  ? {}
-                  : { planContent: generatedPlan }),
-              },
-            );
-            await assertFreshSession(record);
-            evidence = record;
-            if (role === 'planning')
-              evidence = {
-                record,
-                plan: await safeRead(
-                  root,
-                  `${preparedRelative}/workflow-planning/planning/final.txt`,
-                ),
-              };
-          }
-        } else if (phase.id.startsWith('verify-')) {
-          if (await anyPassed())
-            evidence = { skipped: true, reason: 'an earlier round passed' };
-          else {
-            try {
-              evidence = await runDeterministicVerification(root, {
-                evidenceName: `workflow-${phase.id}`,
-                retainFailure: true,
-                taskId: task.taskId,
-              });
-            } catch (error) {
-              if (error instanceof VerificationStateTamperingError)
-                return { kind: 'failed', reason: error.message };
-              throw error;
-            }
-          }
-        } else if (phase.id.startsWith('review-')) {
-          if (await anyPassed())
-            evidence = { skipped: true, reason: 'an earlier round passed' };
-          else {
-            const round = Number(phase.id.slice(7));
-            const verification = (await receipt(`verify-${round}`))
-              ?.evidence as { passed?: boolean } | undefined;
-            if (verification?.passed === false)
-              evidence = {
-                outcome: 'changes-requested',
-                findings: [],
-                reason:
-                  'deterministic checks failed; independent review deferred until fresh checks pass',
-              };
+          let evidence: unknown;
+          if (
+            phase.id === 'planning' ||
+            phase.id === 'implementation' ||
+            phase.id.startsWith('fix-')
+          ) {
+            if (phase.id.startsWith('fix-') && (await anyPassed()))
+              evidence = { skipped: true, reason: 'an earlier round passed' };
             else {
-              let verdict: ReviewVerdict | undefined;
+              const role = phase.id.startsWith('fix-')
+                ? 'fix'
+                : (phase.id as CodexSessionRecord['role']);
+              const previousRound =
+                role === 'fix' ? Number(phase.id.slice(4)) - 1 : undefined;
+              const context =
+                previousRound === undefined
+                  ? undefined
+                  : JSON.stringify({
+                      verification: (await receipt(`verify-${previousRound}`))
+                        ?.evidence,
+                      review: (await receipt(`review-${previousRound}`))
+                        ?.evidence,
+                    });
+              const generatedPlan =
+                role === 'planning'
+                  ? undefined
+                  : ((await receipt('planning'))?.evidence as { plan?: string })
+                      ?.plan;
               const record = await runPreparedCodexRole(
                 root,
-                'review',
+                role,
                 `workflow-${phase.id}`,
                 {
                   ...options.codex,
-                  validateFinalMessage(message) {
-                    verdict = parseReview(message);
-                  },
+                  ...(context === undefined ? {} : { fixContext: context }),
+                  ...(generatedPlan === undefined
+                    ? {}
+                    : { planContent: generatedPlan }),
                 },
               );
               await assertFreshSession(record);
-              if (verdict === undefined)
-                throw new Error(
-                  'independent review did not retain a validated verdict',
-                );
-              if (
-                record.sessionId ===
-                (
-                  (await receipt('implementation'))
-                    ?.evidence as CodexSessionRecord
-                )?.sessionId
-              )
-                throw new Error('review must be independent');
-              evidence = { ...verdict, record };
-              if (verdict.outcome === 'blocked')
-                result = {
-                  kind: 'blocked',
-                  reason: 'independent review requires operator input',
+              evidence = record;
+              if (role === 'planning')
+                evidence = {
+                  record,
+                  plan: await safeRead(
+                    root,
+                    `${preparedRelative}/workflow-planning/planning/final.txt`,
+                  ),
                 };
             }
-          }
-        } else if (phase.id === 'qa') {
-          if (!(await anyPassed()))
-            result = {
-              kind: 'failed',
-              reason:
-                'bounded fix rounds exhausted without passing verification and review',
-            };
-          else if (!policy.qa)
-            result = {
-              kind: 'blocked',
-              reason: 'explicit QA applicability policy is required',
-            };
-          else if (policy.qa.kind === 'required' && !options.qa) {
-            result = {
-              kind: 'blocked',
-              reason: 'required QA needs a scenario adapter',
-            };
-            // This receipt proves only this attempt stopped before any QA callback.
-            await save(`qa-awaiting-adapter-${context.attempt}`, result, {
-              prerequisite: 'qa-adapter',
-              effectId: context.effectId,
-              attempt: context.attempt,
-            });
-            return result;
-          } else {
-            const beforeQa = await currentWorkspace();
-            const credentialsBeforeQa =
-              await discoverWorkspaceCredentials(root);
-            const stateDirectory = await safePath(root, '.autocode', true);
-            const ignoredStateEntries = new Set<string>();
-            const stateSnapshot = await snapshotDirectory(
-              stateDirectory,
-              ignoredStateEntries,
-            );
-            evidence = await runQaPhase(
-              policy.qa,
-              policy.qa.kind === 'required' ? options.qa : undefined,
-            );
-            try {
-              await assertCredentialFilesUnchanged(
-                root,
-                credentialsBeforeQa.files,
-              );
-            } catch {
-              return {
-                kind: 'failed',
-                reason: 'QA changed protected credential state',
-              };
+          } else if (phase.id.startsWith('verify-')) {
+            if (await anyPassed())
+              evidence = { skipped: true, reason: 'an earlier round passed' };
+            else {
+              try {
+                evidence = await runDeterministicVerification(root, {
+                  evidenceName: `workflow-${phase.id}`,
+                  retainFailure: true,
+                  taskId: task.taskId,
+                });
+              } catch (error) {
+                if (error instanceof VerificationStateTamperingError)
+                  return { kind: 'failed', reason: error.message };
+                throw error;
+              }
             }
-            try {
-              await safePath(root, '.autocode', true);
-              await assertDirectoryUnchanged(
+          } else if (phase.id.startsWith('review-')) {
+            if (await anyPassed())
+              evidence = { skipped: true, reason: 'an earlier round passed' };
+            else {
+              const round = Number(phase.id.slice(7));
+              const verification = (await receipt(`verify-${round}`))
+                ?.evidence as { passed?: boolean } | undefined;
+              if (verification?.passed === false)
+                evidence = {
+                  outcome: 'changes-requested',
+                  findings: [],
+                  reason:
+                    'deterministic checks failed; independent review deferred until fresh checks pass',
+                };
+              else {
+                let verdict: ReviewVerdict | undefined;
+                const record = await runPreparedCodexRole(
+                  root,
+                  'review',
+                  `workflow-${phase.id}`,
+                  {
+                    ...options.codex,
+                    validateFinalMessage(message) {
+                      verdict = parseReview(message);
+                    },
+                  },
+                );
+                await assertFreshSession(record);
+                if (verdict === undefined)
+                  throw new Error(
+                    'independent review did not retain a validated verdict',
+                  );
+                if (
+                  record.sessionId ===
+                  (
+                    (await receipt('implementation'))
+                      ?.evidence as CodexSessionRecord
+                  )?.sessionId
+                )
+                  throw new Error('review must be independent');
+                evidence = { ...verdict, record };
+                if (verdict.outcome === 'blocked')
+                  result = {
+                    kind: 'blocked',
+                    reason: 'independent review requires operator input',
+                  };
+              }
+            }
+          } else if (phase.id === 'qa') {
+            if (!(await anyPassed()))
+              result = {
+                kind: 'failed',
+                reason:
+                  'bounded fix rounds exhausted without passing verification and review',
+              };
+            else if (!policy.qa)
+              result = {
+                kind: 'blocked',
+                reason: 'explicit QA applicability policy is required',
+              };
+            else if (policy.qa.kind === 'required' && !options.qa) {
+              result = {
+                kind: 'blocked',
+                reason: 'required QA needs a scenario adapter',
+              };
+              // This receipt proves only this attempt stopped before any QA callback.
+              await save(`qa-awaiting-adapter-${context.attempt}`, result, {
+                prerequisite: 'qa-adapter',
+                effectId: context.effectId,
+                attempt: context.attempt,
+              });
+              return result;
+            } else {
+              const beforeQa = await currentWorkspace();
+              const credentialsBeforeQa =
+                await discoverWorkspaceCredentials(root);
+              const stateDirectory = await safePath(root, '.autocode', true);
+              const ignoredStateEntries = new Set<string>();
+              const stateSnapshot = await snapshotDirectory(
                 stateDirectory,
-                stateSnapshot,
                 ignoredStateEntries,
               );
-            } catch {
-              return {
-                kind: 'failed',
-                reason: 'QA changed protected AutoCode state',
-              };
+              evidence = await runQaPhase(
+                policy.qa,
+                policy.qa.kind === 'required' ? options.qa : undefined,
+              );
+              try {
+                await assertCredentialFilesUnchanged(
+                  root,
+                  credentialsBeforeQa.files,
+                );
+              } catch {
+                return {
+                  kind: 'failed',
+                  reason: 'QA changed protected credential state',
+                };
+              }
+              try {
+                await safePath(root, '.autocode', true);
+                await assertDirectoryUnchanged(
+                  stateDirectory,
+                  stateSnapshot,
+                  ignoredStateEntries,
+                );
+              } catch {
+                return {
+                  kind: 'failed',
+                  reason: 'QA changed protected AutoCode state',
+                };
+              }
+              if (beforeQa !== (await currentWorkspace()))
+                result = {
+                  kind: 'blocked',
+                  reason:
+                    'QA changed the workspace; fresh verification and review are required in a new run',
+                };
+              const outcome = (evidence as { outcome: string }).outcome;
+              if (outcome === 'failed' || outcome === 'blocked')
+                result = {
+                  kind: outcome,
+                  reason: 'QA did not pass; operator disposition is required',
+                };
             }
-            if (beforeQa !== (await currentWorkspace()))
+          } else {
+            if (
+              !policy.pullRequest ||
+              taskPolicy.pull_request !== 'not_applicable'
+            )
               result = {
                 kind: 'blocked',
                 reason:
-                  'QA changed the workspace; fresh verification and review are required in a new run',
+                  'PR publication and exact-head remote review/merge gates require an external adapter; no automatic remote effects are configured',
               };
-            const outcome = (evidence as { outcome: string }).outcome;
-            if (outcome === 'failed' || outcome === 'blocked')
-              result = {
-                kind: outcome,
-                reason: 'QA did not pass; operator disposition is required',
-              };
-          }
-        } else {
-          if (
-            !policy.pullRequest ||
-            taskPolicy.pull_request !== 'not_applicable'
-          )
-            result = {
-              kind: 'blocked',
-              reason:
-                'PR publication and exact-head remote review/merge gates require an external adapter; no automatic remote effects are configured',
-            };
-          else if (!policy.completion)
-            result = {
-              kind: 'blocked',
-              reason:
-                'configured completion and production applicability evidence is required',
-            };
-          else if (policy.completion.production.kind === 'required')
-            result = {
-              kind: 'blocked',
-              reason:
-                'required production verification needs an external deployment adapter and committed implementation identity',
-            };
-          else {
-            evidence = evaluateCompletionGates(policy.completion);
-            if (policy.completion.merge.headCommit !== head)
+            else if (!policy.completion)
               result = {
                 kind: 'blocked',
-                reason: 'completion policy is bound to a different commit',
+                reason:
+                  'configured completion and production applicability evidence is required',
               };
-            else if ((evidence as { outcome: string }).outcome !== 'passed')
+            else if (policy.completion.production.kind === 'required')
               result = {
-                kind: (evidence as { outcome: 'blocked' | 'failed' }).outcome,
-                reason: 'configured completion gates did not pass',
+                kind: 'blocked',
+                reason:
+                  'required production verification needs an external deployment adapter and committed implementation identity',
               };
+            else {
+              evidence = evaluateCompletionGates(policy.completion);
+              if (policy.completion.merge.headCommit !== head)
+                result = {
+                  kind: 'blocked',
+                  reason: 'completion policy is bound to a different commit',
+                };
+              else if ((evidence as { outcome: string }).outcome !== 'passed')
+                result = {
+                  kind: (evidence as { outcome: 'blocked' | 'failed' }).outcome,
+                  reason: 'configured completion gates did not pass',
+                };
+            }
           }
+          await save(phase.id, result, evidence ?? { reason: result.reason });
+          return result;
+        } catch (error) {
+          if (error instanceof CodexStateTamperingError)
+            return { kind: 'failed', reason: error.message };
+          throw error;
         }
-        await save(phase.id, result, evidence ?? { reason: result.reason });
-        return result;
       },
       async reconcile(phase, context) {
         const own = await receipt(phase.id);

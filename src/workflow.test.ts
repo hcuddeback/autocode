@@ -520,6 +520,62 @@ test('resume refuses a new task run before invoking model effects', async () => 
   }
 });
 
+test('Codex receipt tampering is terminal after successful and failed role exits', async (t) => {
+  for (const role of ['implementation', 'fix']) {
+    for (const exitCode of [0, 1]) {
+      await t.test(`${role}-exit-${exitCode}`, async () => {
+        const f = await fixture(role === 'fix' ? 'review-fix' : 'success');
+        try {
+          const fake = f.options.codex.commandPrefixArguments[0]!;
+          const script = await readFile(fake, 'utf8');
+          await writeFile(
+            fake,
+            script +
+              `
+if (role === ${JSON.stringify(role)}) {
+  const path = await import('node:path');
+  const runs = '.autocode/runs';
+  const dir = path.join(runs, fs.readdirSync(runs).find(n => n.startsWith('durable-workflow-')));
+  const receipt = JSON.parse(fs.readFileSync(path.join(dir, ${JSON.stringify(role === 'fix' ? 'review-0.json' : 'planning.json')}), 'utf8'));
+  fs.writeFileSync('result.txt', ${JSON.stringify(role === 'fix' ? 'needs-review' : 'initial')});
+  for (const phaseId of ['implementation', 'verify-0', 'review-0', 'fix-1', 'verify-1', 'review-1', 'fix-2', 'verify-2', 'review-2', 'qa', 'completion']) {
+    receipt.phaseId = phaseId;
+    receipt.evidence = {passed:true,outcome:'passed',findings:[]};
+    fs.writeFileSync(path.join(dir, phaseId + '.json'), JSON.stringify(receipt));
+  }
+  process.exit(${exitCode});
+}
+`,
+          );
+          const result = await runProjectWorkflow(f.root, f.options);
+          assert.equal(result.outcome, 'failed');
+          assert.match(
+            result.state.reason,
+            /Codex changed protected AutoCode state/,
+          );
+          const calls = await f.calls();
+          assert.deepEqual(
+            calls,
+            role === 'fix'
+              ? ['planning', 'implementation', 'review', 'fix']
+              : ['planning', 'implementation'],
+          );
+          const resumed = await runProjectWorkflow(f.root, {
+            ...f.options,
+            resumeOnly: true,
+          });
+          assert.equal(resumed.outcome, 'failed');
+          assert.deepEqual(await f.calls(), calls);
+          assert.equal(resumed.state.status, 'failed');
+          assert.equal(resumed.state.eventSequence, result.state.eventSequence);
+        } finally {
+          await f.cleanup();
+        }
+      });
+    }
+  }
+});
+
 test('verification receipt creation, forgery, mutation and deletion fail closed across restart', async (t) => {
   for (const attack of [
     'future-review',
