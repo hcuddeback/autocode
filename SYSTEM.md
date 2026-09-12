@@ -1,6 +1,6 @@
 # AutoCode system state
 
-**Last verified:** 2026-09-11
+**Last verified:** 2026-09-12
 
 **Stage:** AC-001 through AC-011 and PR #13 merged; AC-012 local workflow integration is active and unmerged
 
@@ -148,7 +148,9 @@ See `docs/MVP_AUDIT.md` for requirement-by-requirement code evidence and the rem
 
 ## Next task
 
-Finish AC-012 deterministic verification, independent review, fixture QA, and required PR/merge gates. Then select the next remaining MVP outcome from `docs/MVP_AUDIT.md` after resolving the external lifecycle scope question.
+AC-012 verification was refreshed on 2026-09-12 against implementation commit `1509c66`: formatting, lint, typecheck, compilation, built CLI help, and diff checks pass. The full serialized suite outside the restricted Windows sandbox passes 193 tests with four platform-specific skips and no failures, including CLI fixture QA and interruption/resume. The restricted run reproduced the known concurrent-initialization failure and was stopped before the full rerun. Independent external review still requires explicit source-sharing authorization; the branch remains unpublished.
+
+Finish AC-012 independent review and required PR/merge gates. Then select the next remaining MVP outcome from `docs/MVP_AUDIT.md` after resolving the external lifecycle scope question.
 
 ## Recently completed
 
