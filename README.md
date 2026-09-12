@@ -154,7 +154,7 @@ Existing `sessions`, `verify`, and policy APIs remain individual boundaries; the
 
 ## Current next step
 
-Complete AC-012 verification, independent review, fixture QA, and PR/merge gates, then select the next audited MVP gap.
+Complete AC-012 remote PR review and merge gates in [PR #14](https://github.com/hcuddeback/autocode/pull/14). Local verification, fixture QA, and the owner-accepted chat review are recorded in the task. Then select the next audited MVP gap.
 
 ## Guardrail
 

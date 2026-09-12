@@ -2,7 +2,7 @@
 
 **Last verified:** 2026-09-12
 
-**Stage:** AC-001 through AC-011 and PR #13 merged; AC-012 local workflow integration is active and unmerged
+**Stage:** AC-001 through AC-011 and PR #13 merged; AC-012 local workflow integration is published in PR #14 and unmerged
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -43,6 +43,8 @@
 See `docs/MVP_AUDIT.md` for requirement-by-requirement code evidence and the remaining acceptance/release gaps. The complete MVP is not yet accepted or released.
 
 ## AC-012 review corrections
+
+Published as [PR #14](https://github.com/hcuddeback/autocode/pull/14) from `feat/AC-012-integrated-workflow`. Commit `1980bca` contains the verified corrections and owner-authorized publication policy changes. The owner accepts this chat as the independent review. Required exact-head PR review and human merge authorization remain pending.
 
 The AC-012 feature worktree now checks all protected AutoCode state around deterministic commands and QA callbacks. Detected state tampering terminates the run before forged receipts can advance it, and restart cannot complete a failed run. Separate, immutable QA preflight receipts bind the missing adapter to one effect and attempt. Supplying the adapter resumes that unstarted attempt through the durable retry policy; prior preflight evidence cannot replay an interrupted callback.
 
@@ -156,7 +158,7 @@ The full serialized suite after these source changes passed 201 tests with four 
 
 AC-012 verification was refreshed on 2026-09-12 against implementation commit `1509c66`: formatting, lint, typecheck, compilation, built CLI help, and diff checks pass. The full serialized suite outside the restricted Windows sandbox passes 193 tests with four platform-specific skips and no failures, including CLI fixture QA and interruption/resume. The restricted run reproduced the known concurrent-initialization failure and was stopped before the full rerun. This historical checkpoint preceded the owner-accepted chat review and D-005 publication authorization; current correction evidence is recorded above.
 
-Publish AC-012 and finish required PR/merge gates; the owner-accepted chat review is recorded above. Then select the next remaining MVP outcome from `docs/MVP_AUDIT.md` after resolving the external lifecycle scope question.
+Finish required review/merge gates for AC-012 PR #14; the owner-accepted chat review is recorded above. Then select the next remaining MVP outcome from `docs/MVP_AUDIT.md` after resolving the external lifecycle scope question.
 
 ## Recently completed
 
