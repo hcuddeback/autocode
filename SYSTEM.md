@@ -16,31 +16,37 @@
 
 ## Evidence level
 
-| Claim                          | Evidence                                              | Confidence                                                                   |
-| ------------------------------ | ----------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Documentation baseline exists  | Repository files and internal-link validation         | High                                                                         |
-| CLI is usable                  | Build, initialization, and selection tests            | High                                                                         |
-| Task selection is implemented  | Ready/blocked/malformed/completed fixture tests       | High                                                                         |
-| JIT planning is implemented    | Commit/task binding and artifact safety tests         | High                                                                         |
-| Codex session roles exist      | Fake-Codex subprocess and failure-path tests          | High                                                                         |
-| Verification evidence exists   | Deterministic subprocess and artifact fixtures        | High                                                                         |
-| Bounded fix policy exists      | Deterministic transition and ceiling tests            | High                                                                         |
-| QA applicability policy exists | Deterministic decision and scenario tests             | High                                                                         |
-| PR-review disposition exists   | Deterministic finding/disposition tests               | High                                                                         |
-| Completion gates exist         | Deterministic merge/production gate tests             | High                                                                         |
-| Durable pause/resume exists    | Unit and forced-interruption subprocess tests         | High                                                                         |
-| Durable pacing/retry exists    | Restart, budget, cooldown, and backoff tests          | High                                                                         |
-| Local workflow is integrated   | AC-012 phase fixtures, including process interruption | Full suite: 189 passed, four platform skips; final workflow rerun: 13 passed |
+| Claim                          | Evidence                                              | Confidence                                                                        |
+| ------------------------------ | ----------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Documentation baseline exists  | Repository files and internal-link validation         | High                                                                              |
+| CLI is usable                  | Build, initialization, and selection tests            | High                                                                              |
+| Task selection is implemented  | Ready/blocked/malformed/completed fixture tests       | High                                                                              |
+| JIT planning is implemented    | Commit/task binding and artifact safety tests         | High                                                                              |
+| Codex session roles exist      | Fake-Codex subprocess and failure-path tests          | High                                                                              |
+| Verification evidence exists   | Deterministic subprocess and artifact fixtures        | High                                                                              |
+| Bounded fix policy exists      | Deterministic transition and ceiling tests            | High                                                                              |
+| QA applicability policy exists | Deterministic decision and scenario tests             | High                                                                              |
+| PR-review disposition exists   | Deterministic finding/disposition tests               | High                                                                              |
+| Completion gates exist         | Deterministic merge/production gate tests             | High                                                                              |
+| Durable pause/resume exists    | Unit and forced-interruption subprocess tests         | High                                                                              |
+| Durable pacing/retry exists    | Restart, budget, cooldown, and backoff tests          | High                                                                              |
+| Local workflow is integrated   | AC-012 phase fixtures, including process interruption | Full suite after review corrections: 201 passed, four platform skips, no failures |
 
 ## Known gaps and blockers
 
 - CI, required CLI QA adapters/QA-fix rounds, remote lifecycle adapters, and task completion updates are absent. Native Codex continuation is unused; fresh scoped roles provide the documented fallback.
-- PR #13 merged as `63e8a49`. AC-012 is on `feat/AC-012-integrated-workflow` in its isolated worktree; full/static verification, final affected-workflow tests, and CLI fixture QA pass. Independent review plus required publication/merge gates remain pending; the task is in review.
-- Independent external Codex review of AC-012 was rejected by automatic approval review pending explicit authorization to transmit its source diff. No review pass is claimed and the feature has not been published.
+- PR #13 merged as `63e8a49`. AC-012 is on `feat/AC-012-integrated-workflow` in its isolated worktree; full/static verification, final affected-workflow tests, and CLI fixture QA pass. The owner accepts this chat as the independent review, and both findings are resolved. Required PR/merge gates remain pending; the task is in review.
+- The owner accepts the current chat as AC-012 independent review and authorizes commit, push, and PR creation without a separate manual review (D-005). Exact-head remote PR review and human merge authorization remain merge gates.
 - macOS subprocess execution fails closed; supported-platform acceptance remains open.
 - License has not been selected and added.
 
 See `docs/MVP_AUDIT.md` for requirement-by-requirement code evidence and the remaining acceptance/release gaps. The complete MVP is not yet accepted or released.
+
+## AC-012 review corrections
+
+The AC-012 feature worktree now checks all protected AutoCode state around deterministic commands and QA callbacks. Detected state tampering terminates the run before forged receipts can advance it, and restart cannot complete a failed run. Separate, immutable QA preflight receipts bind the missing adapter to one effect and attempt. Supplying the adapter resumes that unstarted attempt through the durable retry policy; prior preflight evidence cannot replay an interrupted callback.
+
+The full serialized suite after these source changes passed 201 tests with four platform skips and no failures in the restricted Windows sandbox using Node.js 24.19.0 and the locked repository tools. The focused regression run passed seven tests. Formatting, lint, typecheck, clean compilation, built CLI help, and a built CLI run/resume fixture pass. Evidence is retained under the feature worktree's gitignored `.autocode/implementation-plans/`. The owner accepts this chat as the independent review and both findings are resolved with regression evidence. Publication is authorized under D-005; required PR/merge gates remain pending.
 
 ## Current milestone
 
@@ -148,9 +154,9 @@ See `docs/MVP_AUDIT.md` for requirement-by-requirement code evidence and the rem
 
 ## Next task
 
-AC-012 verification was refreshed on 2026-09-12 against implementation commit `1509c66`: formatting, lint, typecheck, compilation, built CLI help, and diff checks pass. The full serialized suite outside the restricted Windows sandbox passes 193 tests with four platform-specific skips and no failures, including CLI fixture QA and interruption/resume. The restricted run reproduced the known concurrent-initialization failure and was stopped before the full rerun. Independent external review still requires explicit source-sharing authorization; the branch remains unpublished.
+AC-012 verification was refreshed on 2026-09-12 against implementation commit `1509c66`: formatting, lint, typecheck, compilation, built CLI help, and diff checks pass. The full serialized suite outside the restricted Windows sandbox passes 193 tests with four platform-specific skips and no failures, including CLI fixture QA and interruption/resume. The restricted run reproduced the known concurrent-initialization failure and was stopped before the full rerun. This historical checkpoint preceded the owner-accepted chat review and D-005 publication authorization; current correction evidence is recorded above.
 
-Finish AC-012 independent review and required PR/merge gates. Then select the next remaining MVP outcome from `docs/MVP_AUDIT.md` after resolving the external lifecycle scope question.
+Publish AC-012 and finish required PR/merge gates; the owner-accepted chat review is recorded above. Then select the next remaining MVP outcome from `docs/MVP_AUDIT.md` after resolving the external lifecycle scope question.
 
 ## Recently completed
 

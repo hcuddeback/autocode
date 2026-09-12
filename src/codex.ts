@@ -923,7 +923,7 @@ function parseJson<T>(contents: string, description: string): T {
   }
 }
 
-async function snapshotDirectory(
+export async function snapshotDirectory(
   root: string,
   ignoredEntries: ReadonlySet<string>,
 ): Promise<Map<string, string>> {
@@ -960,7 +960,7 @@ async function walkDirectory(
   }
 }
 
-async function assertDirectoryUnchanged(
+export async function assertDirectoryUnchanged(
   directory: string,
   before: Map<string, string>,
   ignoredEntries: ReadonlySet<string>,

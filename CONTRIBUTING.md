@@ -21,6 +21,8 @@ AutoCode is in its foundation phase. Changes should keep the first release small
 
 ## Pull requests
 
+Agents may commit scoped task changes, push the feature branch, and open a PR after deterministic checks and applicable QA pass, without a separate manual review or permission request. Independent critical review remains part of task completion and may be recorded in the current review chat when the owner accepts that chat as the review. Required remote checks, PR review, and human merge authorization still apply at merge.
+
 Pull requests should explain:
 
 - The user-visible or workflow outcome.

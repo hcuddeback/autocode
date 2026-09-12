@@ -13,7 +13,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { stringify } from 'yaml';
+import { parse, stringify } from 'yaml';
 import { initializeProject } from './config.js';
 import { runProjectWorkflow, parseReview } from './workflow.js';
 
@@ -490,6 +490,257 @@ test('resume refuses a new task run before invoking model effects', async () => 
       /resume requires an existing workflow/,
     );
     await assert.rejects(() => f.calls(), { code: 'ENOENT' });
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('verification receipt creation, forgery, mutation and deletion fail closed across restart', async (t) => {
+  for (const attack of [
+    'future-review',
+    'current-verification',
+    'mutation',
+    'deletion',
+  ]) {
+    await t.test(attack, async () => {
+      const f = await fixture();
+      try {
+        const configPath = path.join(f.root, '.autocode', 'config.yaml');
+        const config = parse(await readFile(configPath, 'utf8'));
+        config.verification.commands[0].args = [
+          '-e',
+          `const fs = require('node:fs'); const path = require('node:path');
+const runs = '.autocode/runs';
+const dir = path.join(runs, fs.readdirSync(runs).find(n => n.startsWith('durable-workflow-')));
+const implementation = path.join(dir, 'implementation.json');
+const receipt = JSON.parse(fs.readFileSync(implementation, 'utf8'));
+const attack = ${JSON.stringify(attack)};
+if (attack === 'deletion') fs.unlinkSync(implementation);
+else if (attack === 'mutation') {
+  receipt.evidence.sessionId = 'forged-session';
+  fs.writeFileSync(implementation, JSON.stringify(receipt));
+} else {
+  if (attack === 'current-verification') {
+    receipt.phaseId = 'verify-0'; receipt.evidence = {passed:true};
+    fs.writeFileSync(path.join(dir, 'verify-0.json'), JSON.stringify(receipt));
+  }
+  receipt.phaseId = 'review-0'; receipt.evidence = {outcome:'passed',findings:[]};
+  fs.writeFileSync(path.join(dir, 'review-0.json'), JSON.stringify(receipt));
+}`,
+        ];
+        await writeFile(configPath, stringify(config));
+        const result = await runProjectWorkflow(f.root, f.options);
+        assert.equal(result.outcome, 'failed');
+        assert.match(result.state.reason, /protected AutoCode state changed/);
+        assert.deepEqual(await f.calls(), ['planning', 'implementation']);
+        const head = await git(f.root, ['rev-parse', 'HEAD']);
+        const summary = JSON.parse(
+          await readFile(
+            path.join(
+              f.root,
+              '.autocode',
+              'runs',
+              `AC-001-${head.slice(0, 12)}`,
+              'workflow-verify-0',
+              'summary.json',
+            ),
+            'utf8',
+          ),
+        );
+        assert.equal(summary.passed, false);
+        assert.equal(summary.checks[0].protectedStateUnchanged, false);
+        if (attack === 'deletion')
+          await assert.rejects(
+            () =>
+              runProjectWorkflow(f.root, { ...f.options, resumeOnly: true }),
+            /stale/,
+          );
+        else
+          assert.equal(
+            (
+              await runProjectWorkflow(f.root, {
+                ...f.options,
+                resumeOnly: true,
+              })
+            ).outcome,
+            'failed',
+          );
+        assert.deepEqual(await f.calls(), ['planning', 'implementation']);
+      } finally {
+        await f.cleanup();
+      }
+    });
+  }
+});
+
+test('supplying a missing QA adapter resumes only the unstarted attempt', async () => {
+  const f = await fixture();
+  try {
+    const policyPath = path.join(f.root, '.autocode', 'workflow.json');
+    const policy = JSON.parse(await readFile(policyPath, 'utf8'));
+    policy.qa = {
+      kind: 'required',
+      reason: 'Observe the fixture result through a runtime scenario.',
+      scenarios: [
+        { name: 'result', description: 'Read the implemented fixture result.' },
+      ],
+    };
+    await writeFile(policyPath, JSON.stringify(policy));
+    const blocked = await runProjectWorkflow(f.root, f.options);
+    assert.equal(blocked.outcome, 'blocked');
+    assert.match(blocked.state.reason, /scenario adapter/);
+    const stillBlocked = await runProjectWorkflow(f.root, {
+      ...f.options,
+      resumeOnly: true,
+    });
+    assert.equal(stillBlocked.outcome, 'blocked');
+    assert.equal(
+      stillBlocked.state.phases.find((p) => p.id === 'qa')?.attemptsUsed,
+      1,
+    );
+    let scenarios = 0;
+    const resumed = await runProjectWorkflow(f.root, {
+      ...f.options,
+      resumeOnly: true,
+      qa: {
+        async run() {
+          scenarios++;
+          assert.equal(
+            await readFile(path.join(f.root, 'result.txt'), 'utf8'),
+            'good',
+          );
+          return {
+            kind: 'passed',
+            reason: 'Observed the expected fixture result.',
+          };
+        },
+      },
+    });
+    assert.equal(resumed.outcome, 'completed');
+    assert.equal(
+      resumed.state.phases.find((p) => p.id === 'qa')?.attemptsUsed,
+      2,
+    );
+    assert.equal(scenarios, 1);
+    assert.equal(
+      (await runProjectWorkflow(f.root, { ...f.options, resumeOnly: true }))
+        .outcome,
+      'completed',
+    );
+    assert.equal(scenarios, 1);
+    assert.deepEqual(await f.calls(), ['planning', 'implementation', 'review']);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('a previous missing-adapter receipt cannot replay interrupted QA callbacks', async () => {
+  const f = await fixture();
+  try {
+    const policyPath = path.join(f.root, '.autocode', 'workflow.json');
+    const policy = JSON.parse(await readFile(policyPath, 'utf8'));
+    policy.qa = {
+      kind: 'required',
+      reason: 'Observe the fixture result through a runtime scenario.',
+      scenarios: [
+        { name: 'result', description: 'Read the implemented fixture result.' },
+      ],
+    };
+    await writeFile(policyPath, JSON.stringify(policy));
+    assert.equal(
+      (await runProjectWorkflow(f.root, f.options)).outcome,
+      'blocked',
+    );
+    const child = path.join(f.directory, 'interrupt-qa.mjs');
+    const effectLog = path.join(f.directory, 'qa-effects.txt');
+    await writeFile(
+      child,
+      `import {writeFile} from 'node:fs/promises';
+import {runProjectWorkflow} from ${JSON.stringify(new URL('./workflow.ts', import.meta.url).href)};
+await runProjectWorkflow(${JSON.stringify(f.root)}, {...${JSON.stringify(f.options)},resumeOnly:true,
+qa:{async run(){await writeFile(${JSON.stringify(effectLog)},'effect-applied');process.exit(0);}}});`,
+    );
+    await execFileAsync(process.execPath, ['--import', 'tsx', child], {
+      cwd: process.cwd(),
+      windowsHide: true,
+      timeout: 30_000,
+    });
+    assert.equal(await readFile(effectLog, 'utf8'), 'effect-applied');
+    let repeated = false;
+    const resumed = await runProjectWorkflow(f.root, {
+      ...f.options,
+      resumeOnly: true,
+      qa: {
+        async run() {
+          repeated = true;
+          return {
+            kind: 'passed',
+            reason: 'Observed the expected fixture result.',
+          };
+        },
+      },
+    });
+    assert.equal(resumed.outcome, 'blocked');
+    assert.equal(repeated, false);
+    assert.equal(
+      resumed.state.phases.find((p) => p.id === 'qa')?.attemptsUsed,
+      2,
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('QA callbacks cannot forge completion receipts or replay poisoned state', async () => {
+  const f = await fixture();
+  try {
+    const policyPath = path.join(f.root, '.autocode', 'workflow.json');
+    const policy = JSON.parse(await readFile(policyPath, 'utf8'));
+    policy.qa = {
+      kind: 'required',
+      reason: 'Observe the fixture result through a runtime scenario.',
+      scenarios: [
+        { name: 'result', description: 'Read the implemented fixture result.' },
+      ],
+    };
+    await writeFile(policyPath, JSON.stringify(policy));
+    const head = await git(f.root, ['rev-parse', 'HEAD']);
+    const runDirectory = path.join(
+      f.root,
+      '.autocode',
+      'runs',
+      `durable-workflow-ac-001-${head.slice(0, 12)}`,
+    );
+    let scenarios = 0;
+    const options = {
+      ...f.options,
+      qa: {
+        async run() {
+          scenarios++;
+          const receipt = JSON.parse(
+            await readFile(path.join(runDirectory, 'review-0.json'), 'utf8'),
+          );
+          receipt.phaseId = 'completion';
+          await writeFile(
+            path.join(runDirectory, 'completion.json'),
+            JSON.stringify(receipt),
+          );
+          return {
+            kind: 'passed',
+            reason: 'Observed the expected fixture result.',
+          };
+        },
+      },
+    };
+    const result = await runProjectWorkflow(f.root, options);
+    assert.equal(result.outcome, 'failed');
+    assert.match(result.state.reason, /QA changed protected AutoCode state/);
+    assert.equal(
+      (await runProjectWorkflow(f.root, { ...options, resumeOnly: true }))
+        .outcome,
+      'failed',
+    );
+    assert.equal(scenarios, 1);
   } finally {
     await f.cleanup();
   }

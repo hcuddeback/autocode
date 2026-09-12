@@ -38,7 +38,7 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 8. Confirm implementation is running from that feature branch/worktree; stop if the current branch is `main`.
 9. Generate the detailed plan immediately before coding.
 10. Implement and run deterministic verification, independent critical review, fixes, and applicable QA.
-11. Only after those implementation gates pass, push the feature branch and open its required PR.
+11. After deterministic verification and applicable QA pass, autonomously commit the scoped changes, push the feature branch, and open its required PR. A separate manual or external review is not a publication gate; owner-accepted review chats may supply independent review evidence for completion.
 12. Merge only through configured gates and human authorization.
 13. After merge gates pass, mark the task `done`, move it to `tasks/completed/`, and update the queue and `SYSTEM.md`.
 

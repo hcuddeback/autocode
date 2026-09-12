@@ -16,7 +16,12 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { parse as parseYaml } from 'yaml';
-import { discoverWorkspaceCredentials, redactSecrets } from './codex.js';
+import {
+  assertDirectoryUnchanged,
+  discoverWorkspaceCredentials,
+  redactSecrets,
+  snapshotDirectory,
+} from './codex.js';
 import { CONFIG_FILE, validateConfig } from './config.js';
 import { loadTaskCatalog, selectProjectTask } from './tasks.js';
 
@@ -71,6 +76,16 @@ interface SecuredVerificationCommand {
   command: string;
   arguments: string[];
   systemdUnit?: string;
+}
+
+/** Tampered workflow state must never be reconciled from subprocess-written receipts. */
+export class VerificationStateTamperingError extends Error {
+  constructor() {
+    super(
+      'deterministic verification failed: protected AutoCode state changed',
+    );
+    this.name = 'VerificationStateTamperingError';
+  }
 }
 
 export async function runDeterministicVerification(
@@ -194,8 +209,21 @@ export async function runDeterministicVerification(
   );
   await assertDirectoryIdentity(runIdentity, 'prepared run directory');
   const credentials = await discoverWorkspaceCredentials(root);
+  const stateDirectory = path.join(root, '.autocode');
+  const stateIdentity = await directoryIdentity(
+    stateDirectory,
+    'state directory',
+  );
+  const ignoredStateEntries = new Set([
+    normalizedRelativePath(stateDirectory, evidenceDirectory),
+  ]);
+  const stateSnapshot = await snapshotDirectory(
+    stateDirectory,
+    ignoredStateEntries,
+  );
   const checks: VerificationCheckRecord[] = [];
   let passed = true;
+  let stateTampered = false;
   for (const configured of config.verification.commands) {
     const started = Date.now();
     const startedAt = new Date(started).toISOString();
@@ -242,7 +270,17 @@ export async function runDeterministicVerification(
     const worktreeUnchanged =
       currentStatus === initialStatus &&
       currentWorktreeSnapshot === initialWorktreeSnapshot;
-    const protectedStateUnchanged = await filesUnchanged(protectedFiles);
+    const protectedStateUnchanged =
+      (await safeInspection(async () => {
+        await assertDirectoryIdentity(stateIdentity, 'state directory');
+        await assertDirectoryUnchanged(
+          stateDirectory,
+          stateSnapshot,
+          ignoredStateEntries,
+        );
+        return true;
+      })) === true && (await filesUnchanged(protectedFiles));
+    stateTampered = !protectedStateUnchanged;
     const record: VerificationCheckRecord = {
       version: 1,
       name: configured.name,
@@ -269,13 +307,18 @@ export async function runDeterministicVerification(
         worktreeUnchanged &&
         protectedStateUnchanged,
     };
-    await persistCheck(
-      evidenceDirectory,
-      evidenceIdentity,
-      record,
-      processResult,
-      credentials.secrets,
-    );
+    try {
+      await persistCheck(
+        evidenceDirectory,
+        evidenceIdentity,
+        record,
+        processResult,
+        credentials.secrets,
+      );
+    } catch (error) {
+      if (stateTampered) throw new VerificationStateTamperingError();
+      throw error;
+    }
     checks.push(record);
     if (!record.passed) {
       passed = false;
@@ -283,15 +326,21 @@ export async function runDeterministicVerification(
     }
   }
   const result = { runDirectory, passed, checks };
-  await assertDirectoryIdentity(
-    evidenceIdentity,
-    'verification evidence directory',
-  );
-  await writeFile(
-    path.join(evidenceDirectory, 'summary.json'),
-    `${JSON.stringify(result, null, 2)}\n`,
-    { flag: 'wx' },
-  );
+  try {
+    await assertDirectoryIdentity(
+      evidenceIdentity,
+      'verification evidence directory',
+    );
+    await writeFile(
+      path.join(evidenceDirectory, 'summary.json'),
+      `${JSON.stringify(result, null, 2)}\n`,
+      { flag: 'wx' },
+    );
+  } catch (error) {
+    if (stateTampered) throw new VerificationStateTamperingError();
+    throw error;
+  }
+  if (stateTampered) throw new VerificationStateTamperingError();
   if (!passed && !options.retainFailure)
     throw new Error(
       'deterministic verification failed; retained evidence identifies the failing check',

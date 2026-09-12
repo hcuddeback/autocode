@@ -8,15 +8,18 @@ import { CONFIG_FILE, validateConfig } from './config.js';
 import { loadTaskCatalog, selectProjectTask } from './tasks.js';
 import { prepareImplementationPlan } from './planning.js';
 import {
+  assertDirectoryUnchanged,
   discoverWorkspaceCredentials,
   redactSecrets,
   runPreparedCodexRole,
+  snapshotDirectory,
   type CodexSessionOptions,
   type CodexSessionRecord,
 } from './codex.js';
 import {
   runDeterministicVerification,
   snapshotWorktree,
+  VerificationStateTamperingError,
 } from './verification.js';
 import {
   runDurableRun,
@@ -287,7 +290,7 @@ export async function runProjectWorkflow(
       })),
     },
     {
-      async execute(phase) {
+      async execute(phase, context) {
         const previous = await latest();
         if (previous && previous.workspace !== (await currentWorkspace()))
           return {
@@ -354,12 +357,19 @@ export async function runProjectWorkflow(
         } else if (phase.id.startsWith('verify-')) {
           if (await anyPassed())
             evidence = { skipped: true, reason: 'an earlier round passed' };
-          else
-            evidence = await runDeterministicVerification(root, {
-              evidenceName: `workflow-${phase.id}`,
-              retainFailure: true,
-              taskId: task.taskId,
-            });
+          else {
+            try {
+              evidence = await runDeterministicVerification(root, {
+                evidenceName: `workflow-${phase.id}`,
+                retainFailure: true,
+                taskId: task.taskId,
+              });
+            } catch (error) {
+              if (error instanceof VerificationStateTamperingError)
+                return { kind: 'failed', reason: error.message };
+              throw error;
+            }
+          }
         } else if (phase.id.startsWith('review-')) {
           if (await anyPassed())
             evidence = { skipped: true, reason: 'an earlier round passed' };
@@ -416,17 +426,43 @@ export async function runProjectWorkflow(
               kind: 'blocked',
               reason: 'explicit QA applicability policy is required',
             };
-          else if (policy.qa.kind === 'required' && !options.qa)
+          else if (policy.qa.kind === 'required' && !options.qa) {
             result = {
               kind: 'blocked',
               reason: 'required QA needs a scenario adapter',
             };
-          else {
+            // This receipt proves only this attempt stopped before any QA callback.
+            await save(`qa-awaiting-adapter-${context.attempt}`, result, {
+              prerequisite: 'qa-adapter',
+              effectId: context.effectId,
+              attempt: context.attempt,
+            });
+            return result;
+          } else {
             const beforeQa = await currentWorkspace();
+            const stateDirectory = await safePath(root, '.autocode', true);
+            const ignoredStateEntries = new Set<string>();
+            const stateSnapshot = await snapshotDirectory(
+              stateDirectory,
+              ignoredStateEntries,
+            );
             evidence = await runQaPhase(
               policy.qa,
               policy.qa.kind === 'required' ? options.qa : undefined,
             );
+            try {
+              await safePath(root, '.autocode', true);
+              await assertDirectoryUnchanged(
+                stateDirectory,
+                stateSnapshot,
+                ignoredStateEntries,
+              );
+            } catch {
+              return {
+                kind: 'failed',
+                reason: 'QA changed protected AutoCode state',
+              };
+            }
             if (beforeQa !== (await currentWorkspace()))
               result = {
                 kind: 'blocked',
@@ -479,7 +515,7 @@ export async function runProjectWorkflow(
         await save(phase.id, result, evidence ?? { reason: result.reason });
         return result;
       },
-      async reconcile(phase) {
+      async reconcile(phase, context) {
         const own = await receipt(phase.id);
         if (
           own &&
@@ -490,6 +526,31 @@ export async function runProjectWorkflow(
             kind: 'applied',
             reason: 'validated completed phase receipt; effect is not repeated',
           };
+        if (
+          phase.id === 'qa' &&
+          !own &&
+          policy.qa?.kind === 'required' &&
+          options.qa
+        ) {
+          const waiting = await receipt(
+            `qa-awaiting-adapter-${context.attempt}`,
+          );
+          const evidence = waiting?.evidence as
+            | { prerequisite?: string; effectId?: string; attempt?: number }
+            | undefined;
+          if (
+            waiting?.result.kind === 'blocked' &&
+            waiting.workspace === (await currentWorkspace()) &&
+            evidence?.prerequisite === 'qa-adapter' &&
+            evidence.effectId === context.effectId &&
+            evidence.attempt === context.attempt
+          )
+            return {
+              kind: 'not-applied',
+              reason:
+                'QA adapter supplied; the recorded attempt invoked no QA callback',
+            };
+        }
         return {
           kind: 'ambiguous',
           reason:

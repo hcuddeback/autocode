@@ -2,7 +2,7 @@
 
 **Status:** Baseline design
 
-**Last reviewed:** 2026-09-11 (AC-012 local code assessment; independent review pending)
+**Last reviewed:** 2026-09-12 (AC-012 corrections; owner-accepted chat review)
 
 ## Data classification
 
@@ -32,7 +32,7 @@ MVP 1 assumes a trusted operator and local machine. Repository content, tasks, i
 
 ## Pre-release checklist
 
-AC-012 protects operator workflow policy from model changes, rejects symlinked receipt inputs, checks file identity around reads, publishes receipts without overwrite, and binds phase results to the exact task/configuration/plan/Git/workspace identity. Read-only role or QA workspace changes invalidate local completion. Uncertain interrupted model effects remain blocked; no remote effects are issued by the integrated runner. Independent source review, distribution verification, dependency audit, and secret scan remain separate gates; do not mark this checklist complete from the fixture tests alone.
+AC-012 protects operator workflow policy from model changes, rejects symlinked receipt inputs, checks file identity around reads, publishes receipts without overwrite, and binds phase results to the exact task/configuration/plan/Git/workspace identity. Deterministic commands are checked against all protected AutoCode state, excluding only their current verification output directory. State tampering produces a terminal workflow failure before any forged receipt can advance the run, including after restart. QA callbacks cannot change protected state and retain passing results. Read-only role or QA workspace changes invalidate local completion. Attempt-bound preflight receipts permit retry only when a missing QA adapter prevented any callback invocation; interrupted callbacks remain ambiguous. Uncertain interrupted model effects remain blocked; no remote effects are issued by the integrated runner. Independent source review, distribution verification, dependency audit, and secret scan remain separate gates; do not mark this checklist complete from the fixture tests alone.
 
 - [ ] Traversal and command-policy tests pass.
 - [ ] Redaction and malicious-input tests pass.
