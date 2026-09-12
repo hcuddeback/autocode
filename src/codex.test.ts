@@ -19,6 +19,31 @@ test('redacts explicitly discovered short credentials', () => {
   );
 });
 
+test('redacts longer overlapping literals before shorter credentials', () => {
+  for (const secrets of [
+    ['abcd', 'abcdEFGHIJKL'],
+    ['abcdEFGHIJKL', 'abcd'],
+  ]) {
+    assert.equal(
+      redactSecrets('provider echoed abcdEFGHIJKL and abcd', secrets),
+      'provider echoed <redacted> and <redacted>',
+    );
+  }
+  const previous = process.env.AUTOCODE_OVERLAPPING_SECRET;
+  process.env.AUTOCODE_OVERLAPPING_SECRET = 'abcdEFGH';
+  try {
+    assert.equal(redactSecrets('abcdEFGHIJKL', ['abcdEFGHIJKL']), '<redacted>');
+    const encoded = JSON.stringify('abcd\nEFGHIJKL').slice(1, -1);
+    assert.equal(
+      redactSecrets(encoded, ['abcd', 'abcd\nEFGHIJKL']),
+      '<redacted>',
+    );
+  } finally {
+    if (previous === undefined) delete process.env.AUTOCODE_OVERLAPPING_SECRET;
+    else process.env.AUTOCODE_OVERLAPPING_SECRET = previous;
+  }
+});
+
 test('runs scoped implementation and independent read-only review sessions', async () => {
   const previousPrivateKey = process.env.AUTOCODE_TEST_PRIVATE_KEY;
   const previousDatabaseUrl = process.env.AUTOCODE_TEST_DATABASE_URL;

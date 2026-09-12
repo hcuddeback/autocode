@@ -2,7 +2,7 @@
 
 **Last verified:** 2026-09-11
 
-**Stage:** AC-011 durable pacing and retry policy implemented on its feature branch
+**Stage:** AC-010 and AC-011 merged; AC-010 post-merge corrections remain in PR #13
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -35,6 +35,7 @@
 ## Known gaps and blockers
 
 - CI, integrated workflow phase wiring, and Codex session continuation are absent.
+- AC-010 post-merge corrections are on the PR #13 feature branch; its review and human-authorized merge remain pending.
 - License has not been selected and added.
 
 ## Current milestone
@@ -128,6 +129,8 @@
 - In-flight effects must reconcile as applied, not applied, or ambiguous. Applied effects are checkpointed without execution, confirmed absent effects reuse the original identity, and ambiguity blocks without invoking the effect.
 - A child-process integration test writes an effect marker and terminates before completion is checkpointed; resume reclaims the dead local lock, reconciles the marker, and does not repeat the write.
 - Deterministic tests also cover event-before-snapshot recovery, empty initial event-log recovery, interruption during lock release, reused process identifiers, symlinked lock rejection, pause-checkpoint recovery, definition drift, bounded credential redaction/rejection, Git ignore and tracking drift, corrupt state, concurrent ownership, path traversal, hostile definitions/results, partial event tails, and deep immutability.
+- PR #11 merged as `48b5dcf` before two final P1 findings were posted. A bounded follow-up on `fix/AC-010-review-findings` checks the exact moved lock owner before deletion, excludes live quarantined owners during acquisition, recovers abandoned dead quarantines, and redacts eligible raw and JSON-escaped secret literals longest-first. Regression tests reproduce concurrent stale/empty-lock reclamation with a third contender and verify overlapping credentials do not reach durable evidence.
+- Follow-up verification passes formatting, lint, typecheck, compilation, all 22 durable-run tests, and both focused redaction tests. The full suite passes outside the restricted Windows sandbox with one test file at a time (162 passed, four platform-specific skips, no tests omitted). Earlier parallel runs encountered unrelated Windows concurrent-initialization EPERM/EBUSY failures. The owner authorized external Codex review of this diff; independent read-only review found no actionable regressions. Fixes were published as `51ddc9d` in PR #13; both original PR #11 threads are resolved, and no unresolved threads remain on PR #11. Follow-up PR review and human-authorized merge remain.
 
 ## AC-011 evidence
 
@@ -141,7 +144,7 @@
 
 ## Next task
 
-Complete AC-011 PR gates, then reassess the remaining MVP integration gap against current evidence.
+Complete PR #13 review and merge gates for AC-010 post-merge corrections, then reassess the remaining MVP integration gap against current evidence.
 
 ## Recently completed
 
@@ -157,5 +160,7 @@ Complete AC-011 PR gates, then reassess the remaining MVP integration gap agains
 - 2026-09-09 — Merged AC-007 through PR #7 and selected AC-008 for Codex PR-review finding disposition.
 - 2026-09-10 — Merged AC-008 through PR #9 and selected AC-009 for merge and production completion gates.
 - 2026-09-11 — Merged AC-009 through PR #10 and selected AC-010 for interruption-safe pause and resume.
+
+- 2026-09-11 — Confirmed AC-011 merged through PR #12 as `c2625a7`; AC-010 follow-up remains in PR #13.
 
 Update this file when a major capability, blocker, milestone, or release fact changes.
