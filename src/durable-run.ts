@@ -5,6 +5,7 @@ import {
   mkdir,
   open,
   readFile,
+  readdir,
   realpath,
   rename,
   rmdir,
@@ -1264,6 +1265,12 @@ async function acquireLock(paths: RunPaths): Promise<() => Promise<void>> {
       }
       continue;
     }
+    try {
+      await reconcileQuarantinedLocks(paths);
+    } catch (error: unknown) {
+      await releaseLock(paths, token);
+      throw error;
+    }
     return async () => releaseLock(paths, token);
   }
   throw new Error('could not acquire durable run lock');
@@ -1294,18 +1301,15 @@ async function reclaimDeadLocalLock(paths: RunPaths): Promise<boolean> {
     );
   } catch (error: unknown) {
     if (hasCode(error, 'ENOENT')) {
-      const stale = `${paths.lock}.stale-${process.pid}-${randomUUID()}`;
-      try {
-        await rename(paths.lock, stale);
-      } catch (renameError: unknown) {
-        if (hasCode(renameError, 'ENOENT')) return true;
-        throw renameError;
-      }
-      await rmdir(stale);
-      return true;
+      return quarantineInspectedLock(paths, undefined);
     }
     throw new Error('run lock owner is invalid', { cause: error });
   }
+  if (!(await lockOwnerIsDead(owner))) return false;
+  return quarantineInspectedLock(paths, owner);
+}
+
+async function lockOwnerIsDead(owner: unknown): Promise<boolean> {
   const record = mapping(owner, 'run lock owner');
   rejectUnknownKeys(
     record,
@@ -1336,6 +1340,13 @@ async function reclaimDeadLocalLock(paths: RunPaths): Promise<boolean> {
       return false;
     }
   }
+  return true;
+}
+
+async function quarantineInspectedLock(
+  paths: RunPaths,
+  inspectedOwner: unknown,
+): Promise<boolean> {
   const stale = `${paths.lock}.stale-${process.pid}-${randomUUID()}`;
   try {
     await rename(paths.lock, stale);
@@ -1343,9 +1354,56 @@ async function reclaimDeadLocalLock(paths: RunPaths): Promise<boolean> {
     if (hasCode(error, 'ENOENT')) return true;
     throw error;
   }
-  await unlink(path.join(stale, LOCK_OWNER_FILE));
-  await rmdir(stale);
+  const staleReal = await requireRealDirectory(
+    stale,
+    'quarantined run lock directory',
+  );
+  if (staleReal !== stale || path.dirname(staleReal) !== paths.run)
+    throw new Error('quarantined run lock directory identity changed');
+  const movedOwner = await readJsonIfPresent(
+    path.join(stale, LOCK_OWNER_FILE),
+    4096,
+    'quarantined run lock owner',
+  );
+  if (JSON.stringify(movedOwner) !== JSON.stringify(inspectedOwner)) {
+    // A different owner won acquisition after our stale observation. Preserve it.
+    await rename(stale, paths.lock);
+    throw new Error('durable run lock owner changed during reclamation');
+  }
+  await unlinkIfPresent(path.join(stale, LOCK_OWNER_FILE));
+  try {
+    await rmdir(stale);
+  } catch (error: unknown) {
+    if (!hasCode(error, 'ENOENT')) throw error;
+  }
   return true;
+}
+
+async function reconcileQuarantinedLocks(paths: RunPaths): Promise<void> {
+  const entries = await readdir(paths.run);
+  for (const entry of entries) {
+    if (!entry.startsWith(`${LOCK_DIRECTORY}.stale-`)) continue;
+    const stale = path.join(paths.run, entry);
+    try {
+      const staleReal = await requireRealDirectory(
+        stale,
+        'quarantined run lock directory',
+      );
+      if (staleReal !== stale || path.dirname(staleReal) !== paths.run)
+        throw new Error('quarantined run lock directory identity changed');
+      const owner = await readJsonIfPresent(
+        path.join(stale, LOCK_OWNER_FILE),
+        4096,
+        'quarantined run lock owner',
+      );
+      if (owner !== undefined && !(await lockOwnerIsDead(owner)))
+        throw new Error('durable run is already locked by a quarantined owner');
+      await unlinkIfPresent(path.join(stale, LOCK_OWNER_FILE));
+      await rmdir(stale);
+    } catch (error: unknown) {
+      if (!hasCode(error, 'ENOENT')) throw error;
+    }
+  }
 }
 
 async function releaseLock(paths: RunPaths, token: string): Promise<void> {

@@ -11,7 +11,9 @@ import {
 } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, test } from 'node:test';
+import { afterEach, mock, test } from 'node:test';
+import fsPromises from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { runDurableRun } from './durable-run.js';
 
 const temporaryDirectories: string[] = [];
@@ -24,6 +26,8 @@ const definition = {
 } as const;
 
 afterEach(async () => {
+  mock.restoreAll();
+  syncBuiltinESMExports();
   await Promise.all(
     temporaryDirectories
       .splice(0)
@@ -406,6 +410,199 @@ test('reclaims a stale lock after its owner PID is reused', async () => {
 
   const result = await runDurableRun(root, runDefinition, appliedCallbacks([]));
   assert.equal(result.outcome, 'completed');
+});
+
+test('stale reclamation preserves a replacement owner and excludes a third invocation', async () => {
+  for (const empty of [false, true]) {
+    const root = await fixtureProject();
+    const runDefinition = singlePhaseDefinition(
+      empty ? 'empty-reclaim-race' : 'reclaim-race',
+    );
+    const runDirectory = path.join(
+      root,
+      '.autocode',
+      'runs',
+      `durable-${runDefinition.runId}`,
+    );
+    const lockDirectory = path.join(runDirectory, 'run.lock');
+    await mkdir(lockDirectory, { recursive: true });
+    if (!empty)
+      await writeFile(
+        path.join(lockDirectory, 'owner.json'),
+        JSON.stringify({
+          version: 1,
+          hostname: os.hostname(),
+          pid: process.pid,
+          processIdentity: 'former-process',
+          token: 'former-token',
+        }),
+      );
+    let inspected!: () => void;
+    const inspection = new Promise<void>((resolve) => {
+      inspected = resolve;
+    });
+    let resumeReclaimer!: () => void;
+    const reclaimGate = new Promise<void>((resolve) => {
+      resumeReclaimer = resolve;
+    });
+    let quarantined!: () => void;
+    const quarantine = new Promise<void>((resolve) => {
+      quarantined = resolve;
+    });
+    let resumeValidation!: () => void;
+    const validationGate = new Promise<void>((resolve) => {
+      resumeValidation = resolve;
+    });
+    let firstRename = true;
+    const nativeRename = fsPromises.rename;
+    mock.method(
+      fsPromises,
+      'rename',
+      async (
+        source: Parameters<typeof nativeRename>[0],
+        target: Parameters<typeof nativeRename>[1],
+      ) => {
+        if (
+          source === lockDirectory &&
+          String(target).includes('.stale-') &&
+          firstRename
+        ) {
+          firstRename = false;
+          inspected();
+          await reclaimGate;
+          await nativeRename(source, target);
+          quarantined();
+          await validationGate;
+          return;
+        }
+        return nativeRename(source, target);
+      },
+    );
+    syncBuiltinESMExports();
+    const attempts: string[] = [];
+    const first = assert.rejects(
+      runDurableRun(root, runDefinition, appliedCallbacks(attempts)),
+      /owner changed during reclamation/,
+    );
+    await inspection;
+    let executing!: () => void;
+    const execution = new Promise<void>((resolve) => {
+      executing = resolve;
+    });
+    let finishEffect!: () => void;
+    const effectGate = new Promise<void>((resolve) => {
+      finishEffect = resolve;
+    });
+    const second = runDurableRun(root, runDefinition, {
+      async execute() {
+        attempts.push('second');
+        executing();
+        await effectGate;
+        return { kind: 'applied', reason: 'one effect' };
+      },
+      async reconcile() {
+        throw new Error('unexpected');
+      },
+    });
+    await execution;
+    const replacementOwner = await readFile(
+      path.join(lockDirectory, 'owner.json'),
+      'utf8',
+    );
+    resumeReclaimer();
+    await quarantine;
+    await assert.rejects(
+      runDurableRun(root, runDefinition, appliedCallbacks(attempts)),
+      /already locked by a quarantined owner/,
+    );
+    resumeValidation();
+    await first;
+    assert.equal(
+      await readFile(path.join(lockDirectory, 'owner.json'), 'utf8'),
+      replacementOwner,
+    );
+    finishEffect();
+    assert.equal((await second).outcome, 'completed');
+    assert.deepEqual(attempts, ['second']);
+    mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});
+
+test('recovers a dead quarantine left by interrupted reclamation', async () => {
+  const root = await fixtureProject();
+  const runDefinition = singlePhaseDefinition('dead-quarantine');
+  const stale = path.join(
+    root,
+    '.autocode',
+    'runs',
+    'durable-dead-quarantine',
+    'run.lock.stale-former-owner',
+  );
+  await mkdir(stale, { recursive: true });
+  await writeFile(
+    path.join(stale, 'owner.json'),
+    JSON.stringify({
+      version: 1,
+      hostname: os.hostname(),
+      pid: process.pid,
+      processIdentity: 'former-process',
+      token: 'former-token',
+    }),
+  );
+  assert.equal(
+    (await runDurableRun(root, runDefinition, appliedCallbacks([]))).outcome,
+    'completed',
+  );
+  await assert.rejects(readFile(path.join(stale, 'owner.json')), {
+    code: 'ENOENT',
+  });
+});
+
+test('overlapping workspace secrets never reach execution or reconciliation evidence', async () => {
+  const root = await fixtureProject();
+  await writeFile(path.join(root, '.env'), 'SHORT=abcd\nLONG=abcdEFGHIJKL\n');
+  const runDefinition = singlePhaseDefinition('overlapping-secrets');
+  let interrupt = true;
+  const callbacks = {
+    async execute() {
+      return { kind: 'applied', reason: 'provider echoed abcdEFGHIJKL' };
+    },
+    async reconcile() {
+      return { kind: 'applied', reason: 'provider echoed abcdEFGHIJKL' };
+    },
+  };
+  await assert.rejects(
+    runDurableRun(root, runDefinition, callbacks, {
+      async onCheckpoint(checkpoint) {
+        if (interrupt && checkpoint === 'after-effect-applied') {
+          interrupt = false;
+          throw new Error('interrupt');
+        }
+      },
+    }),
+    /interrupt/,
+  );
+  const result = await runDurableRun(root, runDefinition, callbacks);
+  for (const name of ['events.jsonl', 'run.json']) {
+    const contents = await readFile(
+      path.join(result.runDirectory, name),
+      'utf8',
+    );
+    assert.equal(contents.includes('abcd'), false);
+    assert.equal(contents.includes('EFGHIJKL'), false);
+  }
+  await assert.rejects(
+    runDurableRun(
+      root,
+      {
+        runId: 'overlapping-definition',
+        phases: [{ id: 'effect', description: 'Use abcdEFGHIJKL' }],
+      },
+      appliedCallbacks([]),
+    ),
+    /credential/,
+  );
 });
 
 test('rejects a symlinked lock directory without modifying its target', async () => {
