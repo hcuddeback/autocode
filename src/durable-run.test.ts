@@ -745,6 +745,602 @@ test('discards an incomplete final event record and resumes from the durable sna
   assert.equal((await readFile(eventsPath, 'utf8')).endsWith('\n'), true);
 });
 
+test('restart preserves the original retry timestamp and attempt count', async () => {
+  const root = await fixtureProject();
+  const runDefinition = pacedDefinition('persisted-retry', {
+    initialBackoffMs: 1_000,
+    maxBackoffMs: 4_000,
+  });
+  let now = 10_000;
+  const attempts: number[] = [];
+  let interrupt = true;
+  await assert.rejects(
+    runDurableRun(
+      root,
+      runDefinition,
+      {
+        async execute(_phase, context) {
+          attempts.push(context.attempt);
+          return { kind: 'retryable', reason: 'provider asked for retry' };
+        },
+        async reconcile() {
+          throw new Error('not expected for a durably scheduled retry');
+        },
+      },
+      {
+        clock: () => now,
+        async wait(milliseconds) {
+          now += milliseconds;
+        },
+        async onCheckpoint(checkpoint, state) {
+          if (
+            interrupt &&
+            checkpoint === 'after-state-published' &&
+            state.status === 'waiting'
+          ) {
+            interrupt = false;
+            throw new Error('restart during backoff');
+          }
+        },
+      },
+    ),
+    /restart during backoff/,
+  );
+
+  now = 10_250;
+  const waits: number[] = [];
+  const resumed = await runDurableRun(
+    root,
+    runDefinition,
+    {
+      async execute(_phase, context) {
+        attempts.push(context.attempt);
+        return { kind: 'applied', reason: 'retry succeeded' };
+      },
+      async reconcile() {
+        throw new Error('scheduled retries do not reconcile');
+      },
+    },
+    {
+      clock: () => now,
+      async wait(milliseconds) {
+        waits.push(milliseconds);
+        now += milliseconds;
+      },
+    },
+  );
+
+  assert.equal(resumed.outcome, 'completed');
+  assert.deepEqual(waits, [750]);
+  assert.deepEqual(attempts, [1, 2]);
+  assert.equal(resumed.state.phases[0]?.attemptsUsed, 2);
+  assert.equal(Object.isFrozen(resumed.state.retryPolicy), true);
+});
+
+test('clock deadline races fail durably before an attempt event is appended', async () => {
+  const root = await fixtureProject();
+  const times = [1_000, 1_000, 1_100];
+  const result = await runDurableRun(
+    root,
+    pacedDefinition('deadline-race', { maxElapsedMs: 100 }),
+    appliedCallbacks([]),
+    {
+      clock: () => times.shift() ?? 1_100,
+    },
+  );
+  assert.equal(result.outcome, 'failed');
+  assert.deepEqual(
+    (await eventLines(result.runDirectory)).map((event) => event.type),
+    ['run-created', 'run-failed'],
+  );
+  const resumed = await runDurableRun(
+    root,
+    pacedDefinition('deadline-race', { maxElapsedMs: 100 }),
+    appliedCallbacks([]),
+  );
+  assert.equal(resumed.outcome, 'failed');
+});
+
+test('a waiting run can pause safely after an earlier completed phase', async () => {
+  const root = await fixtureProject();
+  let now = 15_000;
+  let interrupted = false;
+  const runDefinition = {
+    runId: 'pause-waiting',
+    phases: definition.phases,
+    retryPolicy: {
+      ...defaultTestPolicy(),
+      initialBackoffMs: 1_000,
+      maxBackoffMs: 1_000,
+    },
+  };
+  await assert.rejects(
+    runDurableRun(
+      root,
+      runDefinition,
+      {
+        async execute(phase) {
+          return phase.id === 'first'
+            ? { kind: 'applied', reason: 'first applied' }
+            : { kind: 'retryable', reason: 'second waits' };
+        },
+        async reconcile() {
+          throw new Error('not expected');
+        },
+      },
+      {
+        clock: () => now,
+        async wait(milliseconds) {
+          now += milliseconds;
+        },
+        async onCheckpoint(checkpoint, state) {
+          if (
+            !interrupted &&
+            checkpoint === 'after-state-published' &&
+            state.status === 'waiting'
+          ) {
+            interrupted = true;
+            throw new Error('restart before pause request');
+          }
+        },
+      },
+    ),
+    /restart before pause request/,
+  );
+
+  const paused = await runDurableRun(
+    root,
+    runDefinition,
+    appliedCallbacks([]),
+    {
+      pauseAfterPhase: 'first',
+      clock: () => now,
+      async wait(milliseconds) {
+        now += milliseconds;
+      },
+    },
+  );
+  assert.equal(paused.outcome, 'paused');
+  assert.equal(paused.state.phases[1]?.status, 'waiting');
+  assert.equal(
+    (
+      await runDurableRun(root, runDefinition, appliedCallbacks([]), {
+        pauseAfterPhase: 'first',
+        clock: () => now,
+      })
+    ).outcome,
+    'paused',
+  );
+});
+
+test('large clock rollback splits waits into Node-safe timer intervals', async () => {
+  const root = await fixtureProject();
+  const runDefinition = pacedDefinition('timer-cap', {
+    initialBackoffMs: 1_000,
+    maxBackoffMs: 1_000,
+  });
+  let now = 3_000_000_000;
+  let interrupted = false;
+  await assert.rejects(
+    runDurableRun(
+      root,
+      runDefinition,
+      {
+        async execute() {
+          return { kind: 'retryable', reason: 'retry after rollback' };
+        },
+        async reconcile() {
+          throw new Error('not expected');
+        },
+      },
+      {
+        clock: () => now,
+        async wait(milliseconds) {
+          now += milliseconds;
+        },
+        async onCheckpoint(checkpoint, state) {
+          if (
+            !interrupted &&
+            checkpoint === 'after-state-published' &&
+            state.status === 'waiting'
+          ) {
+            interrupted = true;
+            throw new Error('restart before rollback');
+          }
+        },
+      },
+    ),
+    /restart before rollback/,
+  );
+
+  now = 0;
+  const waits: number[] = [];
+  const result = await runDurableRun(
+    root,
+    runDefinition,
+    {
+      async execute() {
+        return { kind: 'applied', reason: 'retry applied' };
+      },
+      async reconcile() {
+        throw new Error('not expected');
+      },
+    },
+    {
+      clock: () => now,
+      async wait(milliseconds) {
+        waits.push(milliseconds);
+        now += milliseconds;
+      },
+    },
+  );
+  assert.equal(result.outcome, 'completed');
+  assert.deepEqual(waits, [2_147_483_647, 852_517_353]);
+});
+
+test('restart cannot reset or exceed the persisted attempt ceiling', async () => {
+  const root = await fixtureProject();
+  const runDefinition = pacedDefinition('attempt-ceiling', {
+    maxAttempts: 2,
+    initialBackoffMs: 100,
+    maxBackoffMs: 100,
+  });
+  let now = 20_000;
+  let interrupt = true;
+  const attempts: number[] = [];
+  const callbacks = {
+    async execute(_phase: unknown, context: { attempt: number }) {
+      attempts.push(context.attempt);
+      return { kind: 'retryable' as const, reason: 'still unavailable' };
+    },
+    async reconcile() {
+      throw new Error('not expected');
+    },
+  };
+  await assert.rejects(
+    runDurableRun(root, runDefinition, callbacks, {
+      clock: () => now,
+      async wait(milliseconds) {
+        now += milliseconds;
+      },
+      async onCheckpoint(checkpoint, state) {
+        if (
+          interrupt &&
+          checkpoint === 'after-state-published' &&
+          state.status === 'waiting'
+        ) {
+          interrupt = false;
+          throw new Error('restart after first attempt');
+        }
+      },
+    }),
+    /restart after first attempt/,
+  );
+
+  const result = await runDurableRun(root, runDefinition, callbacks, {
+    clock: () => now,
+    async wait(milliseconds) {
+      now += milliseconds;
+    },
+  });
+
+  assert.equal(result.outcome, 'failed');
+  assert.deepEqual(attempts, [1, 2]);
+  assert.match(result.state.reason, /ceiling exhausted.*2 attempts/);
+  assert.equal(
+    (await eventLines(result.runDirectory)).filter(
+      (event) => event.type === 'effect-started',
+    ).length,
+    2,
+  );
+});
+
+test('upgrades a compatible AC-010 snapshot without resetting durable history', async () => {
+  const root = await fixtureProject();
+  const runDefinition = singlePhaseDefinition('legacy-snapshot');
+  const completed = await runDurableRun(
+    root,
+    runDefinition,
+    appliedCallbacks([]),
+  );
+  const statePath = path.join(completed.runDirectory, 'run.json');
+  const legacy = JSON.parse(await readFile(statePath, 'utf8')) as Record<
+    string,
+    unknown
+  >;
+  legacy.version = 1;
+  delete legacy.nextEffectAt;
+  delete legacy.retryPolicy;
+  for (const phase of legacy.phases as Array<Record<string, unknown>>) {
+    delete phase.attemptsUsed;
+    delete phase.nextAttemptAt;
+  }
+  const eventsPath = path.join(completed.runDirectory, 'events.jsonl');
+  const events = await eventLines(completed.runDirectory);
+  const twoDaysLater = new Date(
+    Date.parse(legacy.createdAt as string) + 2 * MAX_TEST_DELAY,
+  ).toISOString();
+  for (const event of events) {
+    event.version = 1;
+    if ((event.sequence as number) > 1) event.at = twoDaysLater;
+  }
+  legacy.updatedAt = twoDaysLater;
+  await writeFile(
+    eventsPath,
+    `${events.map((event) => JSON.stringify(event)).join('\n')}\n`,
+  );
+  await writeFile(statePath, `${JSON.stringify(legacy)}\n`);
+
+  const calls: string[] = [];
+  const resumed = await runDurableRun(
+    root,
+    runDefinition,
+    appliedCallbacks(calls),
+  );
+  assert.equal(resumed.outcome, 'completed');
+  assert.deepEqual(calls, []);
+  assert.equal(resumed.state.version, 2);
+  assert.equal(resumed.state.phases[0]?.attemptsUsed, 1);
+  assert.equal(
+    (JSON.parse(await readFile(statePath, 'utf8')) as { version: number })
+      .version,
+    2,
+  );
+});
+
+test('rejects version-one events appended after version-two history begins', async () => {
+  const root = await fixtureProject();
+  const runDefinition = pacedDefinition('downgraded-event');
+  const completed = await runDurableRun(
+    root,
+    runDefinition,
+    appliedCallbacks([]),
+  );
+  const events = await eventLines(completed.runDirectory);
+  events[1]!.version = 1;
+  await writeFile(
+    path.join(completed.runDirectory, 'events.jsonl'),
+    `${events.map((event) => JSON.stringify(event)).join('\n')}\n`,
+  );
+  await assert.rejects(
+    runDurableRun(root, runDefinition, appliedCallbacks([])),
+    /version 1 durable events must form a legacy prefix/,
+  );
+});
+
+test('enforces minimum spacing, exponential backoff cap, and retry-after', async () => {
+  const root = await fixtureProject();
+  let now = 30_000;
+  const starts: number[] = [];
+  const waits: number[] = [];
+  const runDefinition = pacedDefinition('pacing-arithmetic', {
+    maxAttempts: 4,
+    minimumIntervalMs: 50,
+    initialBackoffMs: 100,
+    backoffMultiplier: 3,
+    maxBackoffMs: 250,
+  });
+  const result = await runDurableRun(
+    root,
+    runDefinition,
+    {
+      async execute(_phase, context) {
+        starts.push(now);
+        if (context.attempt === 1) {
+          return {
+            kind: 'retryable',
+            reason: 'rate limited',
+            retryAfterMs: 150,
+          };
+        }
+        if (context.attempt < 4)
+          return { kind: 'retryable', reason: 'not ready' };
+        return { kind: 'applied', reason: 'eventually ready' };
+      },
+      async reconcile() {
+        throw new Error('not expected');
+      },
+    },
+    {
+      clock: () => now,
+      async wait(milliseconds) {
+        waits.push(milliseconds);
+        now += milliseconds;
+      },
+    },
+  );
+
+  assert.equal(result.outcome, 'completed');
+  assert.deepEqual(starts, [30_000, 30_150, 30_400, 30_650]);
+  assert.deepEqual(waits, [150, 250, 250]);
+});
+
+test('minimum interval paces separate phases and survives elapsed-time limits', async () => {
+  const root = await fixtureProject();
+  let now = 40_000;
+  const waits: number[] = [];
+  const calls: string[] = [];
+  const result = await runDurableRun(
+    root,
+    {
+      runId: 'minimum-interval',
+      phases: definition.phases,
+      retryPolicy: {
+        maxAttempts: 2,
+        maxElapsedMs: 10_000,
+        minimumIntervalMs: 500,
+        initialBackoffMs: 0,
+        backoffMultiplier: 2,
+        maxBackoffMs: 0,
+      },
+    },
+    appliedCallbacks(calls),
+    {
+      clock: () => now,
+      async wait(milliseconds) {
+        waits.push(milliseconds);
+        now += milliseconds;
+      },
+    },
+  );
+  assert.equal(result.outcome, 'completed');
+  assert.deepEqual(calls, ['first', 'second']);
+  assert.deepEqual(waits, [500]);
+
+  const elapsedRoot = await fixtureProject();
+  now = 50_000;
+  const elapsed = await runDurableRun(
+    elapsedRoot,
+    pacedDefinition('elapsed-ceiling', {
+      maxElapsedMs: 500,
+      initialBackoffMs: 100,
+      maxBackoffMs: 100,
+    }),
+    {
+      async execute() {
+        return {
+          kind: 'retryable',
+          reason: 'provider delay exceeds remaining budget',
+          retryAfterMs: 500,
+        };
+      },
+      async reconcile() {
+        throw new Error('not expected');
+      },
+    },
+    {
+      clock: () => now,
+      async wait() {
+        throw new Error('must fail without waiting past the ceiling');
+      },
+    },
+  );
+  assert.equal(elapsed.outcome, 'failed');
+  assert.match(elapsed.state.reason, /elapsed-time ceiling/);
+});
+
+test('reconciliation-confirmed retries consume budget and preserve identity', async () => {
+  const root = await fixtureProject();
+  const runDefinition = pacedDefinition('reconciled-budget', {
+    maxAttempts: 2,
+  });
+  let interrupt = true;
+  const attempts: number[] = [];
+  const identities: string[] = [];
+  await assert.rejects(
+    runDurableRun(
+      root,
+      runDefinition,
+      {
+        async execute(_phase, context) {
+          attempts.push(context.attempt);
+          identities.push(context.effectId);
+          throw new Error('uncertain transport result');
+        },
+        async reconcile() {
+          throw new Error('not reached in first invocation');
+        },
+      },
+      {
+        async onCheckpoint(checkpoint, state) {
+          if (
+            interrupt &&
+            checkpoint === 'after-state-published' &&
+            state.phases[0]?.status === 'in-flight'
+          ) {
+            interrupt = false;
+          }
+        },
+      },
+    ),
+    /reconciliation is required/,
+  );
+
+  const resumed = await runDurableRun(root, runDefinition, {
+    async execute(_phase, context) {
+      attempts.push(context.attempt);
+      identities.push(context.effectId);
+      return { kind: 'retryable', reason: 'confirmed retry also failed' };
+    },
+    async reconcile(_phase, context) {
+      identities.push(context.effectId);
+      return { kind: 'not-applied', reason: 'provider confirms absence' };
+    },
+  });
+  assert.equal(resumed.outcome, 'failed');
+  assert.deepEqual(attempts, [1, 2]);
+  assert.equal(new Set(identities).size, 1);
+});
+
+test('rejects malformed pacing policies, retry delays, clocks, and waits', async () => {
+  const root = await fixtureProject();
+  const callbacks = appliedCallbacks([]);
+  for (const retryPolicy of [
+    { ...defaultTestPolicy(), maxAttempts: 0 },
+    { ...defaultTestPolicy(), maxElapsedMs: Number.POSITIVE_INFINITY },
+    { ...defaultTestPolicy(), minimumIntervalMs: -1 },
+    { ...defaultTestPolicy(), maxBackoffMs: 50, initialBackoffMs: 100 },
+    { ...defaultTestPolicy(), extra: true },
+    new Proxy(defaultTestPolicy(), {}),
+  ]) {
+    await assert.rejects(
+      runDurableRun(
+        root,
+        {
+          ...singlePhaseDefinition(`invalid-policy-${Math.random()}`),
+          runId: 'invalid-policy',
+          retryPolicy,
+        } as Parameters<typeof runDurableRun>[1],
+        callbacks,
+      ),
+      /retryPolicy|plain mapping/,
+    );
+  }
+
+  await assert.rejects(
+    runDurableRun(root, pacedDefinition('invalid-retry-delay'), {
+      async execute() {
+        return {
+          kind: 'retryable',
+          reason: 'bad retry delay',
+          retryAfterMs: MAX_TEST_DELAY + 1,
+        };
+      },
+      async reconcile() {
+        throw new Error('not expected');
+      },
+    }),
+    /invalid result.*reconciliation is required/,
+  );
+  await assert.rejects(
+    runDurableRun(root, pacedDefinition('invalid-clock'), callbacks, {
+      clock: () => Number.NaN,
+    }),
+    /invalid timestamp/,
+  );
+
+  const now = 60_000;
+  await assert.rejects(
+    runDurableRun(
+      root,
+      pacedDefinition('stalled-wait', {
+        initialBackoffMs: 10,
+        maxBackoffMs: 10,
+      }),
+      {
+        async execute() {
+          return { kind: 'retryable', reason: 'retry later' };
+        },
+        async reconcile() {
+          throw new Error('not expected');
+        },
+      },
+      { clock: () => now, async wait() {} },
+    ),
+    /without clock progress/,
+  );
+});
+
 async function fixtureProject(): Promise<string> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-durable-'));
   temporaryDirectories.push(root);
@@ -763,6 +1359,29 @@ function singlePhaseDefinition(runId: string, phaseId = 'effect') {
     runId,
     phases: [{ id: phaseId, description: 'Apply one external effect.' }],
   } as const;
+}
+
+const MAX_TEST_DELAY = 24 * 60 * 60 * 1000;
+
+function defaultTestPolicy() {
+  return {
+    maxAttempts: 3,
+    maxElapsedMs: MAX_TEST_DELAY,
+    minimumIntervalMs: 0,
+    initialBackoffMs: 0,
+    backoffMultiplier: 2,
+    maxBackoffMs: 0,
+  };
+}
+
+function pacedDefinition(
+  runId: string,
+  overrides: Partial<ReturnType<typeof defaultTestPolicy>> = {},
+) {
+  return {
+    ...singlePhaseDefinition(runId),
+    retryPolicy: { ...defaultTestPolicy(), ...overrides },
+  };
 }
 
 function appliedCallbacks(calls: string[]) {

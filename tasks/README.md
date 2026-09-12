@@ -24,7 +24,7 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 
 ## Immediate queue
 
-`AC-011` is ready on `feat/AC-011-pacing-retry`.
+`AC-011` is in review on `feat/AC-011-pacing-retry`; implementation, deterministic validation, and independent critical review are complete.
 
 ## JIT task process
 
