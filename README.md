@@ -10,7 +10,7 @@ AutoCode will be a local-first TypeScript CLI that runs durable software-enginee
 
 **Last updated:** 2026-09-11
 
-> Current reality: initialization, task selection, commit-bound planning, role-separated Codex sessions, deterministic verification, reusable workflow policies, completion gates, and a durable pause/resume executor with effect reconciliation are implemented. End-to-end workflow wiring and pacing policy are not implemented yet.
+> Current reality: initialization, task selection, commit-bound planning, role-separated Codex sessions, deterministic verification, reusable workflow policies, completion gates, and a durable pause/resume executor with effect reconciliation and persisted pacing/retry budgets are implemented. End-to-end workflow wiring is not implemented yet.
 
 ## Who it is for
 
@@ -123,7 +123,9 @@ Workflow adapters can use `runPrReviewPhase` from `pr-review.js` to disposition 
 
 Workflow adapters can use `evaluateCompletionGates` from `completion-gates.js` to enforce configured merge and production gates without performing external side effects. Merge signals must be bound to the exact expected head commit. Production requires either a substantive not-applicable reason or one to 64 configured gates whose signals match both the exact deployment identity and source commit. Missing, pending, or stale signals block completion; current failed signals fail it; malformed, duplicate, unexpected, accessor-backed, and proxy-backed evidence is rejected. Every configured gate receives ordered, deeply immutable evidence, including its observed subject identity, and failed outcomes take precedence over blocked outcomes. GitHub, CI, deployment, merge, rollback, and durable-state adapters remain later integration work.
 
-Workflow adapters can use `runDurableRun` from `durable-run.js` to execute one to 64 ordered effect phases under a per-run lock. Run and phase IDs use canonical lowercase path-safe identifiers, and every invocation verifies that its run path remains untracked and gitignored before writing. The executor appends and syncs a transition event before atomically replacing its versioned snapshot, persists a deterministic effect identity before invoking an adapter, rejects credential-bearing definitions, and redacts known workspace credentials from adapter reasons before persistence. `pauseAfterPhase` stops only after a completed phase. If execution is interrupted while an effect is in flight, the next invocation must reconcile that same identity as `applied`, `not-applied`, or `ambiguous`; only a confirmed `not-applied` result permits execution, while ambiguity blocks. Completed runs are idempotent, definition drift and corrupt state fail closed, and a subprocess integration test covers termination after the effect but before its completion checkpoint. Provider-specific adapters, end-to-end phase wiring, and AC-011 pacing remain later work.
+Workflow adapters can use `runDurableRun` from `durable-run.js` to execute one to 64 ordered effect phases under a per-run lock. Run and phase IDs use canonical lowercase path-safe identifiers, and every invocation verifies that its run path remains untracked and gitignored before writing. The executor appends and syncs a transition event before atomically replacing its versioned snapshot, persists a deterministic effect identity before invoking an adapter, rejects credential-bearing definitions, and redacts known workspace credentials from adapter reasons before persistence. `pauseAfterPhase` stops only after a completed phase. If execution is interrupted while an effect is in flight, the next invocation must reconcile that same identity as `applied`, `not-applied`, or `ambiguous`; only a confirmed `not-applied` result permits another counted attempt, while ambiguity blocks.
+
+An optional `retryPolicy` on the durable definition configures `maxAttempts`, `maxElapsedMs`, `minimumIntervalMs`, `initialBackoffMs`, `backoffMultiplier`, and `maxBackoffMs`. An effect adapter may return `retryable` with a bounded optional `retryAfterMs`. Attempt starts and absolute next-eligible timestamps are written to the event log before execution or waiting, so restart cannot reset a ceiling or recompute a shorter delay. Exhausted attempt/time budgets end as `failed`; wait or clock failures leave recoverable durable state and fail closed. Definitions without a policy receive bounded defaults, and compatible AC-010 snapshots are upgraded from snapshot version 1 to version 2 during replay. Injectable clocks and waiters exist for deterministic adapter tests; production callers should use the defaults. Provider-specific adapters and end-to-end phase wiring remain later work.
 
 ## Documentation
 
@@ -139,7 +141,7 @@ Workflow adapters can use `runDurableRun` from `durable-run.js` to execute one t
 
 ## Current next step
 
-Complete AC-010 review and PR gates, then select AC-011 for durable pacing and retry policy.
+Complete AC-011 review and PR gates, then reassess the remaining MVP integration gap against current evidence.
 
 ## Guardrail
 
