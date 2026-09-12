@@ -4,11 +4,12 @@ Record durable choices with meaningful alternatives; do not duplicate task histo
 
 ## Decision index
 
-| ID    | Date       | Status   | Decision                                            | Revisit trigger                                 |
-| ----- | ---------- | -------- | --------------------------------------------------- | ----------------------------------------------- |
-| D-001 | 2026-09-02 | accepted | Local-first TypeScript CLI around Codex CLI         | Local execution cannot meet a measured need     |
-| D-002 | 2026-09-02 | accepted | MVP document, small queue, JIT tasks, and JIT plans | Rework shows a planning horizon is wrong        |
-| D-003 | 2026-09-02 | accepted | QA as an explicit applicability-gated phase         | Evidence shows it belongs outside orchestration |
+| ID    | Date       | Status   | Decision                                            | Revisit trigger                                                             |
+| ----- | ---------- | -------- | --------------------------------------------------- | --------------------------------------------------------------------------- |
+| D-001 | 2026-09-02 | accepted | Local-first TypeScript CLI around Codex CLI         | Local execution cannot meet a measured need                                 |
+| D-002 | 2026-09-02 | accepted | MVP document, small queue, JIT tasks, and JIT plans | Rework shows a planning horizon is wrong                                    |
+| D-003 | 2026-09-02 | accepted | QA as an explicit applicability-gated phase         | Evidence shows it belongs outside orchestration                             |
+| D-004 | 2026-09-11 | accepted | Fresh scoped sessions with durable phase receipts   | Stable continuation/reconciliation evidence justifies a different interface |
 
 ## D-001 — Local TypeScript CLI
 
@@ -38,3 +39,13 @@ Record durable choices with meaningful alternatives; do not duplicate task histo
 **Decision:** Persist a QA applicability decision, run scenario-based QA when required, and invalidate affected evidence after fixes.
 
 **Consequence:** User-facing work receives runtime evidence without forcing QA onto irrelevant changes.
+
+## D-004 — Fresh sessions and conservative model-effect reconciliation
+
+**Context:** The local workflow needs safe restart before native Codex session continuation has been proven. PRODUCT explicitly permits fresh scoped sessions with persisted artifacts.
+
+**Decision:** Run planning, implementation, fixes, and review as fresh role-scoped Codex CLI sessions. Persist successful phase receipts after protected-state/Git checks. Resume reconciles successful current receipts without invoking Codex again; interrupted model effects without safe receipts block for operator reconciliation. Bind receipts to task, operator policy/configuration, prepared plan, base Git identity, and workspace digest.
+
+**Alternatives:** Automatically retrying uncertain model work can repeat changes or external effects. Requiring native session continuation would prevent the local slice without improving deterministic evidence today.
+
+**Consequence:** Workflow resume is implemented without claiming native session continuation. Configuration/workspace drift requires fresh evidence. This decision does not narrow PRODUCT's still-open PR/production or supported-platform requirements.

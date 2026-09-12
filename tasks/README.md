@@ -24,7 +24,7 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 
 ## Immediate queue
 
-`AC-010` and `AC-011` merged through PRs #11 and #12. AC-010 post-merge lock/security findings remain in follow-up PR #13 on `fix/AC-010-review-findings`; finish its review and merge gates before selecting further implementation.
+`AC-010`, `AC-011`, and the AC-010 corrections in PR #13 are merged. `AC-012.md` is the active integration contract on `feat/AC-012-integrated-workflow`, based on main `63e8a49`. Finish deterministic verification, independent review, fixture QA, and required PR/merge gates before marking it done. The MVP code audit lives in `docs/MVP_AUDIT.md`; remaining release or external-integration outcomes must be selected JIT after this task rather than implemented on this branch.
 
 ## JIT task process
 

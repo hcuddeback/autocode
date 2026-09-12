@@ -1,8 +1,8 @@
 # AutoCode workflow
 
-**Status:** Selected target workflow; not yet implemented
+**Status:** Local workflow integrated in AC-012; external lifecycle remains adapter work
 
-**Last updated:** 2026-09-02
+**Last updated:** 2026-09-11
 
 ## Planning hierarchy
 
@@ -40,7 +40,21 @@ Before implementation begins, create the task's feature branch from current `mai
 | Production verification     | Confirm deployed behavior                                        | Deployment identity, smoke results, rollback signal                         |
 | Complete                    | Update task/system state and select next work                    | Immutable run summary                                                       |
 
-## QA policy
+## Implemented local execution
+
+`autocode run <worktree>` and `autocode resume <worktree>` invoke the same durable workflow; resume requires an existing matching run and cannot start new model work. The operator supplies a complete `ready` task, its declared linked feature worktree, and configured deterministic commands. The runner prepares a task/commit snapshot when absent, starts a read-only planning session, passes its retained plan to implementation, and checkpoints verification and structured independent review separately. Failed checks defer review until a fixed round passes checks. Actionable review findings require another bounded fix round with fresh checks and review. Unused rounds retain explicit skip receipts. Verification binds explicitly to the selected task even when other tasks are ready.
+
+`.autocode/workflow.json` is protected operator policy: version 1, an explicit `qa` decision accepted by `runQaPhase`, and optional `pullRequest`/`completion` policy. Missing QA blocks. Required QA needs the workflow API's scenario adapter; the CLI has no browser/runtime adapter. A scenario that changes the workspace blocks because checks and review are stale. QA failures currently require operator disposition rather than automatic QA-fix rounds.
+
+PR-required tasks stop as blocked at the external boundary. This runner does not commit, push, publish, poll reviews, merge, deploy, mark task contracts done, or advance the queue. Disposable local workflows may complete only when the task explicitly declares `pull_request: not_applicable`, operator policy records a substantive `pullRequest: {kind: "not-applicable", reason: "..."}` exception, and `completion` passes `evaluateCompletionGates` for the prepared commit with explicit production applicability. Such completion is local run completion, not proof of a published or merged task.
+
+Required production verification also blocks until a deployment adapter can bind observed behavior to committed implementation. Passing static signals for the prepared base commit cannot prove the uncommitted implementation was deployed. Local-only completion therefore requires production to be explicitly not applicable.
+
+Phase receipts and the durable event log live under `.autocode/runs/durable-workflow-<task>-<commit>/`; subprocess output remains in the prepared task run. Receipts bind task/configuration/policy/prepared plan and Git identity, plus the workspace digest after the phase. Resume rejects changed task, base commit, branch, configuration, plan, or workspace. Successful current receipts reconcile without repeating their effect. Interrupted model work without a successful receipt, malformed review, and blocked phase receipts require operator reconciliation. Changing policy or workspace requires a fresh prepared run (normally a new base commit); there is no unsafe automatic state reset.
+
+The integrated runner supports up to 19 fix rounds within the durable engine's 64-phase ceiling. Durable attempt, elapsed, and pacing defaults remain persisted; quiet hours and operator-configured workflow pacing are not CLI features. Native model-session continuation is deliberately unnecessary: each scoped role starts a fresh session.
+
+## Target QA policy
 
 QA is an explicit phase, not an implied part of unit tests. It is normally required for UI/interaction, auth, onboarding, payments, public APIs, external-provider journeys, migrations, deployment behavior, or regressions requiring observed behavior.
 

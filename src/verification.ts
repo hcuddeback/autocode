@@ -18,7 +18,7 @@ import { execFile } from 'node:child_process';
 import { parse as parseYaml } from 'yaml';
 import { discoverWorkspaceCredentials, redactSecrets } from './codex.js';
 import { CONFIG_FILE, validateConfig } from './config.js';
-import { loadTaskCatalog } from './tasks.js';
+import { loadTaskCatalog, selectProjectTask } from './tasks.js';
 
 const execFileAsync = promisify(execFile);
 const OMITTED_OUTPUT = '[output omitted: exceeded configured limit]\n';
@@ -75,7 +75,15 @@ interface SecuredVerificationCommand {
 
 export async function runDeterministicVerification(
   projectDirectory: string,
+  options: {
+    evidenceName?: string;
+    retainFailure?: boolean;
+    taskId?: string;
+  } = {},
 ): Promise<VerificationResult> {
+  const evidenceName = options.evidenceName ?? 'evidence';
+  if (!/^[a-z][a-z0-9-]{0,63}$/.test(evidenceName))
+    throw new Error('invalid verification evidence name');
   const root = await verifiedProjectRoot(projectDirectory);
   const config = validateConfig(
     parseYaml(
@@ -88,10 +96,20 @@ export async function runDeterministicVerification(
   const active = (await loadTaskCatalog(root)).filter((task) =>
     ['ready', 'in_progress', 'review'].includes(task.status),
   );
-  if (active.length !== 1) {
+  const task =
+    options.taskId === undefined
+      ? active[0]
+      : active.find((entry) => entry.taskId === options.taskId);
+  if ((options.taskId === undefined && active.length !== 1) || !task) {
     throw new Error('verification requires exactly one active task');
   }
-  const task = active[0]!;
+  if (options.taskId !== undefined) {
+    const selection = await selectProjectTask(root);
+    if (selection.kind !== 'selected' || selection.task.taskId !== task.taskId)
+      throw new Error(
+        'workflow verification must match the dependency-ready selected task',
+      );
+  }
   const [branch, headCommit, initialStatus] = await Promise.all([
     gitOutput(root, ['branch', '--show-current']),
     gitOutput(root, ['rev-parse', '--verify', 'HEAD']),
@@ -156,7 +174,7 @@ export async function runDeterministicVerification(
     );
   }
 
-  const evidenceDirectory = path.join(runDirectory, 'evidence');
+  const evidenceDirectory = path.join(runDirectory, evidenceName);
   await assertDirectoryIdentity(runsIdentity, 'runs directory');
   await assertDirectoryIdentity(runIdentity, 'prepared run directory');
   try {
@@ -274,7 +292,7 @@ export async function runDeterministicVerification(
     `${JSON.stringify(result, null, 2)}\n`,
     { flag: 'wx' },
   );
-  if (!passed)
+  if (!passed && !options.retainFailure)
     throw new Error(
       'deterministic verification failed; retained evidence identifies the failing check',
     );
@@ -319,7 +337,7 @@ function secureVerificationCommand(
   };
 }
 
-async function snapshotWorktree(root: string): Promise<string> {
+export async function snapshotWorktree(root: string): Promise<string> {
   const digest = createHash('sha256');
   await hashGitOutput(digest, root, [
     'diff',

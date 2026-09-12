@@ -2,7 +2,7 @@
 
 **Status:** Baseline design
 
-**Last reviewed:** 2026-09-02
+**Last reviewed:** 2026-09-11 (AC-012 local code assessment; independent review pending)
 
 ## Data classification
 
@@ -31,6 +31,8 @@ MVP 1 assumes a trusted operator and local machine. Repository content, tasks, i
 - Record/reconcile external effects before retrying.
 
 ## Pre-release checklist
+
+AC-012 protects operator workflow policy from model changes, rejects symlinked receipt inputs, checks file identity around reads, publishes receipts without overwrite, and binds phase results to the exact task/configuration/plan/Git/workspace identity. Read-only role or QA workspace changes invalidate local completion. Uncertain interrupted model effects remain blocked; no remote effects are issued by the integrated runner. Independent source review, distribution verification, dependency audit, and secret scan remain separate gates; do not mark this checklist complete from the fixture tests alone.
 
 - [ ] Traversal and command-policy tests pass.
 - [ ] Redaction and malicious-input tests pass.

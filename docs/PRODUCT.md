@@ -79,6 +79,8 @@ A developer needs to hand an approved MVP task to a local orchestrator so Codex 
 
 ## Open questions
 
+The AC-012 code assessment is in `MVP_AUDIT.md`. It demonstrates the local fixture slice while identifying QA recovery, external lifecycle, task ownership/completion, platform, and release gaps. The external-phase question below remains unresolved; neither completed foundation tasks nor local run completion satisfy the full release checklist.
+
 - [x] Finalize the boundary between JIT task refinement and JIT implementation planning during schema work: operators author task contracts; AutoCode validates and snapshots them before model-authored planning begins.
 - [ ] Select the public package/binary name after checking registry availability.
 - [ ] Decide which PR/production phases enter MVP 1 after the local slice is proven.
