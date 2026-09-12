@@ -81,6 +81,8 @@ Pure internal changes may record QA as not applicable when deterministic tests c
 
 ## Pause, resume, and pacing
 
+Local workflow receipts preserve typed control fields and redact free-text payloads before JSON serialization. Independent review parses bounded raw output in memory and retains a validated structured verdict separately from redacted display artifacts. Freshness includes discovered ignored credential paths and content hashes; QA cannot modify, remove, or add these files and retain passing evidence. Receipts from the earlier AC-012 worktree-only fingerprint are conservatively stale under the credential-aware fingerprint and require a new run.
+
 After each side effect and phase result, record a safe checkpoint. Resume validates state, locks the run, reconciles Git/external systems, invalidates stale evidence, and continues from the first incomplete safe transition.
 
 Pacing may enforce cooldowns, quiet hours, attempt/time ceilings, stop-after-current-task, and polling backoff.

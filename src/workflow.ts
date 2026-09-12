@@ -8,6 +8,7 @@ import { CONFIG_FILE, validateConfig } from './config.js';
 import { loadTaskCatalog, selectProjectTask } from './tasks.js';
 import { prepareImplementationPlan } from './planning.js';
 import {
+  assertCredentialFilesUnchanged,
   assertDirectoryUnchanged,
   discoverWorkspaceCredentials,
   redactSecrets,
@@ -35,6 +36,17 @@ import {
 
 const execFileAsync = promisify(execFile);
 const MAX_FILE_BYTES = 1024 * 1024;
+const PAYLOAD_TEXT_FIELDS = new Set([
+  'reason',
+  'summary',
+  'plan',
+  'command',
+  'arguments',
+  'runDirectory',
+  'name',
+  'description',
+  'artifactReferences',
+]);
 
 /** Operator policy is protected state, never model output. Missing policy blocks. */
 export interface WorkflowPolicy {
@@ -178,7 +190,15 @@ export async function runProjectWorkflow(
       (await safeRead(root, `${preparedRelative}/plan.md`)) !== initialPlan
     )
       throw new Error('workflow configuration or prepared plan changed');
-    return snapshotWorktree(root);
+    const credentials = await discoverWorkspaceCredentials(root);
+    return hash(
+      JSON.stringify({
+        worktree: await snapshotWorktree(root),
+        credentials: [...credentials.files].sort(([left], [right]) =>
+          left.localeCompare(right),
+        ),
+      }),
+    );
   }
 
   async function receipt(phaseId: string): Promise<Receipt | undefined> {
@@ -223,13 +243,13 @@ export async function runProjectWorkflow(
       phaseId,
       binding,
       workspace,
-      result,
-      evidence,
+      result: {
+        ...result,
+        reason: redactSecrets(result.reason, credentials.secrets),
+      },
+      evidence: redactWorkflowPayload(evidence, credentials.secrets),
     };
-    const contents = redactSecrets(
-      JSON.stringify(value, null, 2),
-      credentials.secrets,
-    );
+    const contents = JSON.stringify(value, null, 2);
     if (Buffer.byteLength(contents) > MAX_FILE_BYTES)
       throw new Error('workflow evidence exceeds limit');
     const destination = await safePath(
@@ -385,19 +405,23 @@ export async function runProjectWorkflow(
                   'deterministic checks failed; independent review deferred until fresh checks pass',
               };
             else {
+              let verdict: ReviewVerdict | undefined;
               const record = await runPreparedCodexRole(
                 root,
                 'review',
                 `workflow-${phase.id}`,
-                options.codex,
+                {
+                  ...options.codex,
+                  validateFinalMessage(message) {
+                    verdict = parseReview(message);
+                  },
+                },
               );
               await assertFreshSession(record);
-              const verdict = parseReview(
-                await safeRead(
-                  root,
-                  `${preparedRelative}/workflow-${phase.id}/review/final.txt`,
-                ),
-              );
+              if (verdict === undefined)
+                throw new Error(
+                  'independent review did not retain a validated verdict',
+                );
               if (
                 record.sessionId ===
                 (
@@ -440,6 +464,8 @@ export async function runProjectWorkflow(
             return result;
           } else {
             const beforeQa = await currentWorkspace();
+            const credentialsBeforeQa =
+              await discoverWorkspaceCredentials(root);
             const stateDirectory = await safePath(root, '.autocode', true);
             const ignoredStateEntries = new Set<string>();
             const stateSnapshot = await snapshotDirectory(
@@ -450,6 +476,17 @@ export async function runProjectWorkflow(
               policy.qa,
               policy.qa.kind === 'required' ? options.qa : undefined,
             );
+            try {
+              await assertCredentialFilesUnchanged(
+                root,
+                credentialsBeforeQa.files,
+              );
+            } catch {
+              return {
+                kind: 'failed',
+                reason: 'QA changed protected credential state',
+              };
+            }
             try {
               await safePath(root, '.autocode', true);
               await assertDirectoryUnchanged(
@@ -623,6 +660,31 @@ export function parseReview(text: string): ReviewVerdict {
 
 function hash(text: string): string {
   return createHash('sha256').update(text).digest('hex');
+}
+
+/** Redact payload text, never JSON syntax, validated controls, or freshness metadata. */
+function redactWorkflowPayload(
+  value: unknown,
+  secrets: readonly string[],
+  field = '',
+): unknown {
+  if (typeof value === 'string') {
+    if (field === 'id' && redactSecrets(value, secrets) !== value)
+      return `redacted-${hash(value).slice(0, 24)}`;
+    return PAYLOAD_TEXT_FIELDS.has(field)
+      ? redactSecrets(value, secrets)
+      : value;
+  }
+  if (Array.isArray(value))
+    return value.map((entry) => redactWorkflowPayload(entry, secrets, field));
+  if (value !== null && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        redactWorkflowPayload(entry, secrets, key),
+      ]),
+    );
+  return value;
 }
 
 async function git(root: string, args: string[]): Promise<string> {

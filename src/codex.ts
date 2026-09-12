@@ -52,6 +52,8 @@ export interface CodexSessionOptions {
   artifactName?: string;
   fixContext?: string;
   planContent?: string;
+  /** Trusted integrated boundary: validate the bounded raw final message in memory. */
+  validateFinalMessage?: (message: string) => void;
 }
 
 interface PlanningMetadata {
@@ -346,6 +348,21 @@ async function runRole(
           command: path.basename(command),
           arguments: redactArguments(arguments_, root),
         };
+  let invalidFinalMessage = false;
+  if (
+    record !== undefined &&
+    finalMessage !== undefined &&
+    result.exitCode === 0 &&
+    !result.timedOut &&
+    !result.overflowed &&
+    options.validateFinalMessage
+  ) {
+    try {
+      options.validateFinalMessage(finalMessage);
+    } catch {
+      invalidFinalMessage = true;
+    }
+  }
   await assertDirectoryIdentity(runIdentity, 'prepared run directory');
   await assertDirectoryIdentity(sessionsIdentity, 'sessions directory');
   await persistRoleResult(
@@ -373,6 +390,8 @@ async function runRole(
   if (finalMessage === undefined) {
     throw new Error(`${role} Codex output did not contain a final message`);
   }
+  if (invalidFinalMessage)
+    throw new Error(`${role} Codex final message failed validation`);
   return record;
 }
 
@@ -854,16 +873,15 @@ function addSecretScalar(raw: string, secrets: Set<string>): void {
   if (candidate.length >= 4) secrets.add(candidate);
 }
 
-async function assertCredentialFilesUnchanged(
+export async function assertCredentialFilesUnchanged(
   root: string,
   before: ReadonlyMap<string, string>,
 ): Promise<void> {
+  const after = (await discoverWorkspaceCredentials(root)).files;
+  if (after.size !== before.size)
+    throw new Error('implementation changed protected credential state');
   for (const [relative, expectedHash] of before) {
-    const contents = await readRealFile(
-      path.join(root, relative),
-      'ignored credential file',
-    );
-    if (createHash('sha256').update(contents).digest('hex') !== expectedHash) {
+    if (after.get(relative) !== expectedHash) {
       throw new Error('implementation changed protected credential state');
     }
   }

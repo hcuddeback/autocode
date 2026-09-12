@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   writeFile,
 } from 'node:fs/promises';
@@ -19,7 +20,11 @@ import { runProjectWorkflow, parseReview } from './workflow.js';
 
 const execFileAsync = promisify(execFile);
 
-async function fixture(mode = 'success', policyKind = 'local') {
+async function fixture(
+  mode = 'success',
+  policyKind = 'local',
+  credentials: string[] = [],
+) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'autocode-workflow-'));
   const repository = path.join(directory, 'repository');
   const root = path.join(directory, 'worktree');
@@ -56,10 +61,21 @@ async function fixture(mode = 'success', policyKind = 'local') {
   await git(repository, ['config', 'user.email', 'fixture@example.invalid']);
   await git(repository, ['config', 'user.name', 'Fixture']);
   await initializeProject(repository);
+  await writeFile(
+    path.join(repository, '.gitignore'),
+    `${await readFile(path.join(repository, '.gitignore'), 'utf8')}.env*\n*credentials*\n`,
+  );
   await git(repository, ['add', '.']);
   await git(repository, ['commit', '-m', 'fixture']);
   await git(repository, ['worktree', 'add', '-b', 'feat/AC-001', root]);
   await initializeProject(root);
+  if (credentials.length)
+    await writeFile(
+      path.join(root, '.env'),
+      credentials
+        .map((secret, index) => `FIXTURE_VALUE_${index}=${secret}`)
+        .join('\n'),
+    );
   const config = JSON.parse(
     JSON.stringify({
       version: 1,
@@ -142,6 +158,15 @@ if (role === 'implementation') fs.writeFileSync('result.txt', mode === 'fix' || 
 if (role === 'fix') fs.writeFileSync('result.txt', mode === 'never' ? 'broken' : 'good');
 let final = role === 'planning' ? 'GENERATED_PLAN_MARKER: write result.txt then verify its content.' : 'Implemented only the fixture result.';
 if (role === 'review') final = mode === 'malformed' ? 'Looks fine' : JSON.stringify(fs.readFileSync('result.txt','utf8') === 'needs-review' ? {outcome:'changes-requested',findings:[{id:'result',severity:'high',summary:'result.txt:1 still needs the fixture fix'}]} : {outcome:'passed',findings:[]});
+if (fs.existsSync('.env')) {
+  const values = fs.readFileSync('.env','utf8').split('\\n').map(line=>line.slice(line.indexOf('=')+1)).join(' ');
+  if (role === 'planning') final += '\\nCredential display: ' + values;
+  if (role === 'review' && mode !== 'malformed') {
+    const verdict = JSON.parse(final);
+    for (const finding of verdict.findings) finding.summary += ' Credential display: ' + values;
+    final = JSON.stringify(verdict);
+  }
+}
 console.log(JSON.stringify({type:'thread.started',thread_id:randomUUID()}));
 console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:final}}));
 console.log(JSON.stringify({type:'turn.completed'}));
@@ -741,6 +766,195 @@ test('QA callbacks cannot forge completion receipts or replay poisoned state', a
       'failed',
     );
     assert.equal(scenarios, 1);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('credential collisions preserve receipt types, raw review controls and resume', async () => {
+  const secret = 'sensitive-fixture-secret-0123456789';
+  const f = await fixture('review-fix', 'local', [
+    'true',
+    'null',
+    'passed',
+    'changes-requested',
+    'outcome',
+    'high',
+    'result',
+    secret,
+  ]);
+  try {
+    const result = await runProjectWorkflow(f.root, f.options);
+    assert.equal(result.outcome, 'completed');
+    for (const name of await readdir(result.runDirectory)) {
+      if (name.endsWith('.json'))
+        JSON.parse(
+          await readFile(path.join(result.runDirectory, name), 'utf8'),
+        );
+    }
+    const verify = JSON.parse(
+      await readFile(path.join(result.runDirectory, 'verify-0.json'), 'utf8'),
+    );
+    assert.equal(verify.evidence.passed, true);
+    assert.equal(verify.evidence.checks[0].protectedStateUnchanged, true);
+    const review = JSON.parse(
+      await readFile(path.join(result.runDirectory, 'review-0.json'), 'utf8'),
+    );
+    assert.equal(review.evidence.outcome, 'changes-requested');
+    assert.equal(review.evidence.findings[0].severity, 'high');
+    assert.match(review.evidence.findings[0].id, /^redacted-[a-f0-9]+$/);
+    assert.equal(review.evidence.findings[0].summary.includes(secret), false);
+    assert.equal(review.evidence.findings[0].summary.includes('passed'), false);
+    const planning = JSON.parse(
+      await readFile(path.join(result.runDirectory, 'planning.json'), 'utf8'),
+    );
+    assert.equal(planning.evidence.plan.includes(secret), false);
+    const display = await readFile(
+      path.join(
+        f.root,
+        '.autocode',
+        'runs',
+        (await readdir(path.join(f.root, '.autocode', 'runs')))[0]!,
+        'workflow-review-1',
+        'review',
+        'final.txt',
+      ),
+      'utf8',
+    );
+    assert.match(display, /<redacted>/);
+    const passedReview = JSON.parse(
+      await readFile(path.join(result.runDirectory, 'review-1.json'), 'utf8'),
+    );
+    assert.equal(passedReview.evidence.outcome, 'passed');
+    const calls = await f.calls();
+    assert.deepEqual(calls, [
+      'planning',
+      'implementation',
+      'review',
+      'fix',
+      'review',
+    ]);
+    assert.equal(
+      (await runProjectWorkflow(f.root, { ...f.options, resumeOnly: true }))
+        .outcome,
+      'completed',
+    );
+    assert.deepEqual(await f.calls(), calls);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('QA detects ignored credential modification, deletion and additions', async (t) => {
+  for (const change of ['unchanged', 'modify', 'delete', 'add', 'add-only']) {
+    await t.test(change, async () => {
+      const secret = 'sensitive-fixture-secret-0123456789';
+      const f = await fixture(
+        'success',
+        'local',
+        change === 'add-only' ? [] : [secret, 'passed', 'true'],
+      );
+      try {
+        const policyPath = path.join(f.root, '.autocode', 'workflow.json');
+        const policy = JSON.parse(await readFile(policyPath, 'utf8'));
+        policy.qa = {
+          kind: 'required',
+          reason: 'Observe the fixture result through a runtime scenario.',
+          scenarios: [
+            {
+              name: 'result',
+              description: 'Read the implemented fixture result.',
+            },
+          ],
+        };
+        await writeFile(policyPath, JSON.stringify(policy));
+        let scenarios = 0;
+        const options = {
+          ...f.options,
+          qa: {
+            async run() {
+              scenarios++;
+              if (change === 'modify')
+                await writeFile(
+                  path.join(f.root, '.env'),
+                  'FIXTURE_VALUE=changed-sensitive-fixture-secret',
+                );
+              if (change === 'delete') await rm(path.join(f.root, '.env'));
+              if (change === 'add' || change === 'add-only')
+                await writeFile(
+                  path.join(f.root, '.env.new'),
+                  'FIXTURE_VALUE=new-sensitive-fixture-secret',
+                );
+              return {
+                kind: 'passed',
+                reason: `Observed expected result with passed true ${secret}.`,
+              };
+            },
+          },
+        };
+        const result = await runProjectWorkflow(f.root, options);
+        assert.equal(
+          result.outcome,
+          change === 'unchanged' ? 'completed' : 'failed',
+        );
+        if (change !== 'unchanged')
+          assert.match(
+            result.state.reason,
+            /QA changed protected credential state/,
+          );
+        else {
+          const qa = JSON.parse(
+            await readFile(path.join(result.runDirectory, 'qa.json'), 'utf8'),
+          );
+          assert.equal(qa.evidence.outcome, 'passed');
+          assert.equal(qa.evidence.scenarios[0].reason.includes(secret), false);
+          assert.equal(
+            qa.evidence.scenarios[0].reason.includes('passed'),
+            false,
+          );
+        }
+        if (change === 'unchanged')
+          assert.equal(
+            (await runProjectWorkflow(f.root, { ...options, resumeOnly: true }))
+              .outcome,
+            'completed',
+          );
+        else
+          await assert.rejects(
+            () => runProjectWorkflow(f.root, { ...options, resumeOnly: true }),
+            /stale/,
+          );
+        assert.equal(scenarios, 1);
+      } finally {
+        await f.cleanup();
+      }
+    });
+  }
+});
+
+test('ignored credential changes invalidate paused QA evidence before resume', async () => {
+  const f = await fixture('success', 'local', [
+    'sensitive-fixture-secret-0123456789',
+  ]);
+  try {
+    assert.equal(
+      (
+        await runProjectWorkflow(f.root, {
+          ...f.options,
+          durable: { pauseAfterPhase: 'qa' },
+        })
+      ).outcome,
+      'paused',
+    );
+    await writeFile(
+      path.join(f.root, '.env'),
+      'FIXTURE_VALUE=changed-sensitive-fixture-secret',
+    );
+    await assert.rejects(
+      () => runProjectWorkflow(f.root, { ...f.options, resumeOnly: true }),
+      /stale after workspace changes/,
+    );
+    assert.deepEqual(await f.calls(), ['planning', 'implementation', 'review']);
   } finally {
     await f.cleanup();
   }

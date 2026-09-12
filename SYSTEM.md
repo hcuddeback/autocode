@@ -16,26 +16,26 @@
 
 ## Evidence level
 
-| Claim                          | Evidence                                              | Confidence                                                                        |
-| ------------------------------ | ----------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Documentation baseline exists  | Repository files and internal-link validation         | High                                                                              |
-| CLI is usable                  | Build, initialization, and selection tests            | High                                                                              |
-| Task selection is implemented  | Ready/blocked/malformed/completed fixture tests       | High                                                                              |
-| JIT planning is implemented    | Commit/task binding and artifact safety tests         | High                                                                              |
-| Codex session roles exist      | Fake-Codex subprocess and failure-path tests          | High                                                                              |
-| Verification evidence exists   | Deterministic subprocess and artifact fixtures        | High                                                                              |
-| Bounded fix policy exists      | Deterministic transition and ceiling tests            | High                                                                              |
-| QA applicability policy exists | Deterministic decision and scenario tests             | High                                                                              |
-| PR-review disposition exists   | Deterministic finding/disposition tests               | High                                                                              |
-| Completion gates exist         | Deterministic merge/production gate tests             | High                                                                              |
-| Durable pause/resume exists    | Unit and forced-interruption subprocess tests         | High                                                                              |
-| Durable pacing/retry exists    | Restart, budget, cooldown, and backoff tests          | High                                                                              |
-| Local workflow is integrated   | AC-012 phase fixtures, including process interruption | Full suite after review corrections: 201 passed, four platform skips, no failures |
+| Claim                          | Evidence                                              | Confidence                                                                           |
+| ------------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Documentation baseline exists  | Repository files and internal-link validation         | High                                                                                 |
+| CLI is usable                  | Build, initialization, and selection tests            | High                                                                                 |
+| Task selection is implemented  | Ready/blocked/malformed/completed fixture tests       | High                                                                                 |
+| JIT planning is implemented    | Commit/task binding and artifact safety tests         | High                                                                                 |
+| Codex session roles exist      | Fake-Codex subprocess and failure-path tests          | High                                                                                 |
+| Verification evidence exists   | Deterministic subprocess and artifact fixtures        | High                                                                                 |
+| Bounded fix policy exists      | Deterministic transition and ceiling tests            | High                                                                                 |
+| QA applicability policy exists | Deterministic decision and scenario tests             | High                                                                                 |
+| PR-review disposition exists   | Deterministic finding/disposition tests               | High                                                                                 |
+| Completion gates exist         | Deterministic merge/production gate tests             | High                                                                                 |
+| Durable pause/resume exists    | Unit and forced-interruption subprocess tests         | High                                                                                 |
+| Durable pacing/retry exists    | Restart, budget, cooldown, and backoff tests          | High                                                                                 |
+| Local workflow is integrated   | AC-012 phase fixtures, including process interruption | Full suite after PR review corrections: 209 passed, four platform skips, no failures |
 
 ## Known gaps and blockers
 
 - CI, required CLI QA adapters/QA-fix rounds, remote lifecycle adapters, and task completion updates are absent. Native Codex continuation is unused; fresh scoped roles provide the documented fallback.
-- PR #13 merged as `63e8a49`. AC-012 is on `feat/AC-012-integrated-workflow` in its isolated worktree; full/static verification, final affected-workflow tests, and CLI fixture QA pass. The owner accepts this chat as the independent review, and both findings are resolved. Required PR/merge gates remain pending; the task is in review.
+- PR #13 merged as `63e8a49`. AC-012 is on `feat/AC-012-integrated-workflow` in its isolated worktree. PR #14's three Codex findings are corrected: typed receipt redaction, raw review validation before display redaction, and ignored credential protection/freshness. Fresh full suite: 209 passed, four platform skips, zero failures; formatting, lint, typecheck, clean build, built CLI help and built CLI run/resume pass. The owner accepts this chat as independent review. Fresh exact-head remote review and human merge authorization remain pending; the task is in review. Older worktree-only receipt fingerprints require a new run.
 - The owner accepts the current chat as AC-012 independent review and authorizes commit, push, and PR creation without a separate manual review (D-005). Exact-head remote PR review and human merge authorization remain merge gates.
 - macOS subprocess execution fails closed; supported-platform acceptance remains open.
 - License has not been selected and added.
