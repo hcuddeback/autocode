@@ -817,6 +817,194 @@ test('restart preserves the original retry timestamp and attempt count', async (
   assert.equal(Object.isFrozen(resumed.state.retryPolicy), true);
 });
 
+test('rejects shortened backoff in an event ahead of the snapshot', async () => {
+  const root = await fixtureProject();
+  const runDefinition = pacedDefinition('corrupt-backoff', {
+    initialBackoffMs: 1_000,
+    maxBackoffMs: 1_000,
+  });
+  await assert.rejects(
+    runDurableRun(
+      root,
+      runDefinition,
+      {
+        async execute() {
+          return { kind: 'retryable', reason: 'retry later' };
+        },
+        async reconcile() {
+          throw new Error('unexpected');
+        },
+      },
+      {
+        clock: () => 1_000,
+        async onCheckpoint(checkpoint, state) {
+          if (
+            checkpoint === 'after-event-appended' &&
+            state.status === 'waiting'
+          )
+            throw new Error('interrupted retry snapshot');
+        },
+      },
+    ),
+    /interrupted retry snapshot/,
+  );
+  const directory = path.join(
+    root,
+    '.autocode',
+    'runs',
+    'durable-corrupt-backoff',
+  );
+  const events = await eventLines(directory);
+  events.at(-1)!.nextAttemptAt = new Date(1_000).toISOString();
+  await writeFile(
+    path.join(directory, 'events.jsonl'),
+    `${events.map((event) => JSON.stringify(event)).join('\n')}\n`,
+  );
+  const calls: string[] = [];
+  await assert.rejects(
+    runDurableRun(root, runDefinition, appliedCallbacks(calls), {
+      clock: () => 1_000,
+    }),
+    /violates retry policy/,
+  );
+  assert.deepEqual(calls, []);
+});
+
+test('fails before invocation when checkpoint persistence crosses the deadline', async () => {
+  const root = await fixtureProject();
+  let now = 1_000;
+  const calls: string[] = [];
+  const runDefinition = pacedDefinition('late-invocation', {
+    maxElapsedMs: 100,
+  });
+  const result = await runDurableRun(
+    root,
+    runDefinition,
+    appliedCallbacks(calls),
+    {
+      clock: () => now,
+      async onCheckpoint(checkpoint, state) {
+        if (
+          checkpoint === 'after-state-published' &&
+          state.phases[0]?.status === 'in-flight'
+        )
+          now = 1_100;
+      },
+    },
+  );
+  assert.equal(result.outcome, 'failed');
+  assert.deepEqual(calls, []);
+  assert.equal(
+    (await runDurableRun(root, runDefinition, appliedCallbacks(calls))).outcome,
+    'failed',
+  );
+  assert.deepEqual(calls, []);
+});
+
+test('records late applied effects and fails across completion interruption and reconciliation', async () => {
+  for (const recovery of [
+    'none',
+    'completion-event',
+    'reconciliation',
+  ] as const) {
+    const root = await fixtureProject();
+    const runDefinition = pacedDefinition(`late-applied-${recovery}`, {
+      maxElapsedMs: 100,
+    });
+    let now = 1_000;
+    let calls = 0;
+    let reconciliations = 0;
+    const callbacks = {
+      async execute() {
+        calls += 1;
+        now = 1_100;
+        return { kind: 'applied', reason: 'effect confirmed applied' } as const;
+      },
+      async reconcile() {
+        reconciliations += 1;
+        return {
+          kind: 'applied',
+          reason: 'effect confirmed on resume',
+        } as const;
+      },
+    };
+    const options = {
+      clock: () => now,
+      async onCheckpoint(
+        checkpoint: string,
+        state: { phases: readonly { status: string }[] },
+      ) {
+        if (
+          (recovery === 'completion-event' &&
+            checkpoint === 'after-event-appended' &&
+            state.phases[0]?.status === 'completed') ||
+          (recovery === 'reconciliation' &&
+            checkpoint === 'after-effect-applied')
+        )
+          throw new Error('completion interrupted');
+      },
+    };
+    let result;
+    if (recovery === 'none')
+      result = await runDurableRun(root, runDefinition, callbacks, options);
+    else {
+      await assert.rejects(
+        runDurableRun(root, runDefinition, callbacks, options),
+        /completion interrupted/,
+      );
+      result = await runDurableRun(root, runDefinition, callbacks, {
+        clock: () => now,
+      });
+    }
+    assert.equal(result.outcome, 'failed');
+    assert.equal(result.state.phases[0]?.status, 'completed');
+    assert.equal(calls, 1);
+    assert.equal(reconciliations, recovery === 'reconciliation' ? 1 : 0);
+    assert.equal(
+      (await runDurableRun(root, runDefinition, callbacks)).outcome,
+      'failed',
+    );
+    assert.equal(calls, 1);
+  }
+});
+
+test('completion clock races persist failure and remain resumable', async () => {
+  const root = await fixtureProject();
+  const runDefinition = pacedDefinition('completion-deadline-race', {
+    maxElapsedMs: 100,
+  });
+  let completed = false;
+  let completionClockReads = 0;
+  const calls: string[] = [];
+  const result = await runDurableRun(
+    root,
+    runDefinition,
+    appliedCallbacks(calls),
+    {
+      clock: () =>
+        completed ? (++completionClockReads === 1 ? 1_099 : 1_100) : 1_000,
+      async onCheckpoint(checkpoint, state) {
+        if (
+          checkpoint === 'after-state-published' &&
+          state.phases[0]?.status === 'completed'
+        )
+          completed = true;
+      },
+    },
+  );
+  assert.equal(result.outcome, 'failed');
+  assert.equal(result.state.phases[0]?.status, 'completed');
+  assert.deepEqual(
+    (await eventLines(result.runDirectory)).map((event) => event.type),
+    ['run-created', 'effect-started', 'effect-completed', 'run-failed'],
+  );
+  assert.equal(
+    (await runDurableRun(root, runDefinition, appliedCallbacks(calls))).outcome,
+    'failed',
+  );
+  assert.deepEqual(calls, ['effect']);
+});
+
 test('clock deadline races fail durably before an attempt event is appended', async () => {
   const root = await fixtureProject();
   const times = [1_000, 1_000, 1_100];

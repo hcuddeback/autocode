@@ -137,6 +137,7 @@
 - Confirmed-not-applied reconciliation schedules a new counted attempt with the original stable effect identity; ambiguous effects remain blocked without retry.
 - Exhausted attempt or elapsed-time budgets persist a terminal failed result. Invalid policies, retry delays, clocks, waits, snapshots, and hostile values fail closed.
 - Snapshot schema version 2 records pacing state and can upgrade compatible AC-010 version 1 snapshots by replaying their durable event history without repeating effects.
+- AC-011 review fixes validate the exponential-backoff lower bound during event replay and recheck the elapsed ceiling immediately before adapter invocation and at safe completion boundaries. Late confirmed effects remain checkpointed as applied while the run fails, including after interrupted completion and reconciliation. Completion-event clock races persist failure without corrupting resumable history. Independent read-only Codex review passes; the full suite passes outside the restricted sandbox (173 passed, four platform-specific skips), while sandboxed runs encounter unrelated Windows initialization-lock EPERM/EBUSY failures.
 
 ## Next task
 

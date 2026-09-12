@@ -266,6 +266,25 @@ export async function runDurableRun(
     }
 
     while (true) {
+      const budgetTime = Math.max(
+        readClock(options),
+        Date.parse(state.updatedAt),
+      );
+      if (
+        budgetTime >= elapsedDeadline(state, definition.retryPolicy) &&
+        !state.phases.some((candidate) => candidate.status === 'in-flight')
+      ) {
+        state = await transition(
+          paths,
+          definition,
+          state,
+          { type: 'run-failed', reason: 'run elapsed-time ceiling exhausted' },
+          options,
+          false,
+          budgetTime,
+        );
+        return finish(paths, state);
+      }
       if (
         options.pauseAfterPhase !== undefined &&
         phaseById(state, options.pauseAfterPhase).status === 'completed' &&
@@ -426,6 +445,24 @@ async function executeEffect(
 ): Promise<DurableRunState> {
   const context = effectContext(definition.runId, phase, resuming);
   const callbackSecrets = await refreshWorkspaceSecrets(paths.root, secrets);
+  const invocationTime = Math.max(
+    readClock(options),
+    Date.parse(state.updatedAt),
+  );
+  if (invocationTime >= elapsedDeadline(state, definition.retryPolicy)) {
+    return transition(
+      paths,
+      definition,
+      state,
+      {
+        type: 'run-failed',
+        reason: 'run elapsed-time ceiling exhausted before effect invocation',
+      },
+      options,
+      false,
+      invocationTime,
+    );
+  }
   let candidate: unknown;
   try {
     candidate = await callbacks.execute.call(
@@ -780,11 +817,18 @@ async function transition(
   creating = false,
   eventTime?: number,
 ): Promise<DurableRunState> {
+  const now = eventTime ?? readClock(options);
+  const safeInput: EventInput =
+    input.type === 'run-completed' &&
+    Math.max(now, Date.parse(state.updatedAt)) >=
+      elapsedDeadline(state, definition.retryPolicy)
+      ? { type: 'run-failed', reason: 'run elapsed-time ceiling exhausted' }
+      : input;
   const event = createEvent(
     definition,
     state.eventSequence + 1,
-    input,
-    eventTime ?? readClock(options),
+    safeInput,
+    now,
   );
   await appendEvent(paths, event, creating);
   const next = applyEvent(creating ? undefined : state, event, definition);
@@ -904,6 +948,9 @@ function applyEvent(
       phase.status !== 'in-flight' ||
       phase.attemptsUsed >= definition.retryPolicy.maxAttempts ||
       nextAttempt < Date.parse(event.at) ||
+      nextAttempt <
+        Date.parse(event.at) +
+          retryBackoff(phase.attemptsUsed, definition.retryPolicy) ||
       (nextEffectAt !== null && nextAttempt < Date.parse(nextEffectAt)) ||
       nextAttempt >= elapsedDeadline(current, definition.retryPolicy)
     ) {
@@ -938,17 +985,17 @@ function applyEvent(
     }
     status = 'blocked';
   } else if (event.type === 'run-failed') {
-    if (
-      (status !== 'running' && status !== 'waiting') ||
-      phases.every((phase) => phase.status === 'completed')
-    ) {
-      throw new Error('run may fail only while work remains');
+    if (status !== 'running' && status !== 'waiting') {
+      throw new Error('run may fail only while running or waiting');
     }
     status = 'failed';
   } else {
     if (
       status !== 'running' ||
-      phases.some((phase) => phase.status !== 'completed')
+      phases.some((phase) => phase.status !== 'completed') ||
+      (event.version === 2 &&
+        Math.max(Date.parse(event.at), Date.parse(current.updatedAt)) >=
+          elapsedDeadline(current, definition.retryPolicy))
     ) {
       throw new Error('run may complete only after every phase completes');
     }
