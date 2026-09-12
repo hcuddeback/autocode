@@ -2,7 +2,7 @@
 
 **Last verified:** 2026-09-11
 
-**Stage:** AC-010 durable pause/resume implemented on its feature branch
+**Stage:** AC-011 durable pacing and retry policy implemented on its feature branch
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -12,7 +12,7 @@
 
 - The clean public repository exists.
 - The product, architecture, workflow, security, release, and task contracts are documented.
-- A strict TypeScript foundation initializes local state, selects dependency-ready tasks, prepares commit-bound planning artifacts, invokes scoped role-separated Codex sessions, runs configured deterministic checks with retained evidence, applies reusable review/QA/fix policies, enforces configured completion gates, and executes bounded ordered effect phases through durable pause/resume checkpoints with reconciliation.
+- A strict TypeScript foundation initializes local state, selects dependency-ready tasks, prepares commit-bound planning artifacts, invokes scoped role-separated Codex sessions, runs configured deterministic checks with retained evidence, applies reusable review/QA/fix policies, enforces configured completion gates, and executes bounded ordered effect phases through durable pause/resume checkpoints, reconciliation, and persisted pacing/retry budgets.
 
 ## Evidence level
 
@@ -29,11 +29,12 @@
 | PR-review disposition exists   | Deterministic finding/disposition tests         | High                                       |
 | Completion gates exist         | Deterministic merge/production gate tests       | High                                       |
 | Durable pause/resume exists    | Unit and forced-interruption subprocess tests   | High                                       |
+| Durable pacing/retry exists    | Restart, budget, cooldown, and backoff tests    | High                                       |
 | End-to-end workflow is wired   | Individual boundaries only                      | High confidence that it is not implemented |
 
 ## Known gaps and blockers
 
-- CI, integrated workflow phase wiring, Codex session continuation, and durable pacing/retry budgets are absent.
+- CI, integrated workflow phase wiring, and Codex session continuation are absent.
 - License has not been selected and added.
 
 ## Current milestone
@@ -128,9 +129,19 @@
 - A child-process integration test writes an effect marker and terminates before completion is checkpointed; resume reclaims the dead local lock, reconciles the marker, and does not repeat the write.
 - Deterministic tests also cover event-before-snapshot recovery, empty initial event-log recovery, interruption during lock release, reused process identifiers, symlinked lock rejection, pause-checkpoint recovery, definition drift, bounded credential redaction/rejection, Git ignore and tracking drift, corrupt state, concurrent ownership, path traversal, hostile definitions/results, partial event tails, and deep immutability.
 
+## AC-011 evidence
+
+- Durable definitions accept a bounded attempt ceiling, elapsed-time ceiling, minimum effect interval, exponential backoff, and backoff cap; retryable adapter results may add a bounded retry-after delay.
+- Every adapter invocation is preceded by a durable attempt-start event. Retry decisions store an absolute next-attempt timestamp before waiting, while the elapsed budget remains anchored to the original persisted run creation time.
+- Restart tests prove a partially elapsed wait is resumed only for its remainder and that attempts already consumed cannot be reset or exceed their ceiling.
+- Confirmed-not-applied reconciliation schedules a new counted attempt with the original stable effect identity; ambiguous effects remain blocked without retry.
+- Exhausted attempt or elapsed-time budgets persist a terminal failed result. Invalid policies, retry delays, clocks, waits, snapshots, and hostile values fail closed.
+- Snapshot schema version 2 records pacing state and can upgrade compatible AC-010 version 1 snapshots by replaying their durable event history without repeating effects.
+- AC-011 review fixes validate the exponential-backoff lower bound during event replay and recheck the elapsed ceiling immediately before adapter invocation and at safe completion boundaries. Late confirmed effects remain checkpointed as applied while the run fails, including after interrupted completion and reconciliation. Completion-event clock races persist failure without corrupting resumable history. Independent read-only Codex review passes; the full suite passes outside the restricted sandbox (173 passed, four platform-specific skips), while sandboxed runs encounter unrelated Windows initialization-lock EPERM/EBUSY failures.
+
 ## Next task
 
-Complete AC-010 review and PR gates, then select AC-011 for durable pacing, waits, and retry policy.
+Complete AC-011 PR gates, then reassess the remaining MVP integration gap against current evidence.
 
 ## Recently completed
 

@@ -21,9 +21,23 @@ const MAX_TEXT_BYTES = 4096;
 const MAX_STATE_BYTES = 1024 * 1024;
 const MAX_EVENTS_BYTES = 8 * 1024 * 1024;
 const MAX_PROCESS_IDENTITY_BYTES = 512;
+const MAX_ATTEMPTS = 20;
+const MAX_DELAY_MS = 24 * 60 * 60 * 1000;
+const MAX_ELAPSED_MS = 30 * MAX_DELAY_MS;
+const MAX_BACKOFF_MULTIPLIER = 10;
+const MAX_TIMESTAMP_MS = 8_640_000_000_000_000;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const RUN_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const LOCK_DIRECTORY = 'run.lock';
 const LOCK_OWNER_FILE = 'owner.json';
+const DEFAULT_RETRY_POLICY: Readonly<DurableRetryPolicy> = Object.freeze({
+  maxAttempts: 3,
+  maxElapsedMs: MAX_DELAY_MS,
+  minimumIntervalMs: 0,
+  initialBackoffMs: 0,
+  backoffMultiplier: 2,
+  maxBackoffMs: 0,
+});
 let ownProcessIdentityPromise: Promise<string | undefined> | undefined;
 
 export interface DurablePhaseDefinition {
@@ -34,6 +48,16 @@ export interface DurablePhaseDefinition {
 export interface DurableRunDefinition {
   readonly runId: string;
   readonly phases: readonly DurablePhaseDefinition[];
+  readonly retryPolicy?: DurableRetryPolicy;
+}
+
+export interface DurableRetryPolicy {
+  readonly maxAttempts: number;
+  readonly maxElapsedMs: number;
+  readonly minimumIntervalMs: number;
+  readonly initialBackoffMs: number;
+  readonly backoffMultiplier: number;
+  readonly maxBackoffMs: number;
 }
 
 export interface DurableEffectContext {
@@ -41,13 +65,17 @@ export interface DurableEffectContext {
   readonly phaseId: string;
   readonly sequence: number;
   readonly effectId: string;
+  readonly attempt: number;
   readonly resuming: boolean;
 }
 
-export interface DurableEffectResult {
-  readonly kind: 'applied';
-  readonly reason: string;
-}
+export type DurableEffectResult =
+  | { readonly kind: 'applied'; readonly reason: string }
+  | {
+      readonly kind: 'retryable';
+      readonly reason: string;
+      readonly retryAfterMs?: number;
+    };
 
 export interface DurableReconciliationResult {
   readonly kind: 'applied' | 'not-applied' | 'ambiguous';
@@ -74,30 +102,37 @@ export interface DurableRunOptions {
     checkpoint: DurableRunCheckpoint,
     state: Readonly<DurableRunState>,
   ) => Promise<void>;
+  readonly clock?: () => number;
+  readonly wait?: (milliseconds: number) => Promise<void>;
 }
 
 export interface DurablePhaseState extends DurablePhaseDefinition {
   readonly sequence: number;
   readonly effectId: string;
-  readonly status: 'pending' | 'in-flight' | 'completed';
+  readonly status: 'pending' | 'waiting' | 'in-flight' | 'completed';
+  readonly attemptsUsed: number;
+  readonly nextAttemptAt: string | null;
   readonly reason: string | null;
 }
 
 export interface DurableRunState {
-  readonly version: 1;
+  readonly version: 2;
   readonly runId: string;
   readonly definitionSha256: string;
-  readonly status: 'running' | 'paused' | 'blocked' | 'completed';
+  readonly status:
+    'running' | 'waiting' | 'paused' | 'blocked' | 'failed' | 'completed';
   readonly reason: string;
   readonly eventSequence: number;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly nextEffectAt: string | null;
+  readonly retryPolicy: Readonly<DurableRetryPolicy>;
   readonly phases: readonly Readonly<DurablePhaseState>[];
 }
 
 export interface DurableRunResult {
   readonly runDirectory: string;
-  readonly outcome: 'paused' | 'blocked' | 'completed';
+  readonly outcome: 'paused' | 'blocked' | 'failed' | 'completed';
   readonly state: Readonly<DurableRunState>;
 }
 
@@ -105,13 +140,15 @@ type DurableEvent =
   | BaseEvent<'run-created'>
   | BaseEvent<'run-resumed'>
   | PhaseEvent<'effect-started'>
+  | RetryScheduledEvent
   | PhaseEvent<'effect-completed'>
   | BaseEvent<'run-paused'>
   | BaseEvent<'run-blocked'>
+  | BaseEvent<'run-failed'>
   | BaseEvent<'run-completed'>;
 
 interface BaseEvent<T extends string> {
-  readonly version: 1;
+  readonly version: 1 | 2;
   readonly sequence: number;
   readonly runId: string;
   readonly definitionSha256: string;
@@ -125,6 +162,10 @@ interface PhaseEvent<T extends string> extends BaseEvent<T> {
   readonly effectId: string;
 }
 
+interface RetryScheduledEvent extends PhaseEvent<'effect-retry-scheduled'> {
+  readonly nextAttemptAt: string;
+}
+
 type EventInput =
   | {
       readonly type:
@@ -132,6 +173,7 @@ type EventInput =
         | 'run-resumed'
         | 'run-paused'
         | 'run-blocked'
+        | 'run-failed'
         | 'run-completed';
       readonly reason: string;
     }
@@ -140,12 +182,21 @@ type EventInput =
       readonly reason: string;
       readonly phaseId: string;
       readonly effectId: string;
+    }
+  | {
+      readonly type: 'effect-retry-scheduled';
+      readonly reason: string;
+      readonly phaseId: string;
+      readonly effectId: string;
+      readonly nextAttemptAt: string;
     };
 
 interface NormalizedDefinition {
   readonly runId: string;
   readonly definitionSha256: string;
   readonly phases: readonly Readonly<DurablePhaseDefinition>[];
+  readonly retryPolicy: Readonly<DurableRetryPolicy>;
+  readonly hasExplicitRetryPolicy: boolean;
 }
 
 interface NormalizedCallbacks {
@@ -157,6 +208,8 @@ interface NormalizedCallbacks {
 interface NormalizedOptions {
   readonly pauseAfterPhase?: string;
   readonly onCheckpoint?: DurableRunOptions['onCheckpoint'];
+  readonly clock: () => number;
+  readonly wait: (milliseconds: number) => Promise<void>;
 }
 
 interface RunPaths {
@@ -193,7 +246,8 @@ export async function runDurableRun(
   const release = await acquireLock(paths);
   try {
     let state = await loadOrCreateRun(paths, definition, options);
-    if (state.status === 'completed') return finish(paths, state);
+    if (state.status === 'completed' || state.status === 'failed')
+      return finish(paths, state);
     if (
       state.status === 'paused' &&
       options.pauseAfterPhase !== undefined &&
@@ -212,6 +266,25 @@ export async function runDurableRun(
     }
 
     while (true) {
+      const budgetTime = Math.max(
+        readClock(options),
+        Date.parse(state.updatedAt),
+      );
+      if (
+        budgetTime >= elapsedDeadline(state, definition.retryPolicy) &&
+        !state.phases.some((candidate) => candidate.status === 'in-flight')
+      ) {
+        state = await transition(
+          paths,
+          definition,
+          state,
+          { type: 'run-failed', reason: 'run elapsed-time ceiling exhausted' },
+          options,
+          false,
+          budgetTime,
+        );
+        return finish(paths, state);
+      }
       if (
         options.pauseAfterPhase !== undefined &&
         phaseById(state, options.pauseAfterPhase).status === 'completed' &&
@@ -271,18 +344,48 @@ export async function runDurableRun(
             options,
           );
         } else {
-          state = await executeEffect(
+          state = await scheduleRetry(
             paths,
             definition,
             state,
             phase,
-            callbacks,
             options,
-            workspaceSecrets,
-            true,
+            reconciliation.reason,
           );
         }
       } else {
+        const eligibleAt =
+          phase.status === 'waiting' ? phase.nextAttemptAt : state.nextEffectAt;
+        if (eligibleAt !== null) {
+          const waited = await waitUntilEligible(
+            paths,
+            definition,
+            state,
+            eligibleAt,
+            options,
+          );
+          if (waited.status === 'failed') return finish(paths, waited);
+          state = waited;
+        }
+        const attemptAt = readClock(options);
+        if (eligibleAt !== null && attemptAt < Date.parse(eligibleAt)) {
+          continue;
+        }
+        if (attemptAt >= elapsedDeadline(state, definition.retryPolicy)) {
+          state = await transition(
+            paths,
+            definition,
+            state,
+            {
+              type: 'run-failed',
+              reason: 'run elapsed-time ceiling exhausted',
+            },
+            options,
+            false,
+            attemptAt,
+          );
+          return finish(paths, state);
+        }
         state = await transition(
           paths,
           definition,
@@ -294,6 +397,8 @@ export async function runDurableRun(
             reason: `effect intent persisted for phase ${phase.id}`,
           },
           options,
+          false,
+          attemptAt,
         );
         state = await executeEffect(
           paths,
@@ -303,11 +408,16 @@ export async function runDurableRun(
           callbacks,
           options,
           workspaceSecrets,
-          false,
+          phase.status === 'waiting',
         );
       }
 
-      if (options.pauseAfterPhase === phase.id) {
+      if (state.status === 'failed') return finish(paths, state);
+
+      if (
+        options.pauseAfterPhase === phase.id &&
+        phaseById(state, phase.id).status === 'completed'
+      ) {
         state = await transition(
           paths,
           definition,
@@ -335,6 +445,24 @@ async function executeEffect(
 ): Promise<DurableRunState> {
   const context = effectContext(definition.runId, phase, resuming);
   const callbackSecrets = await refreshWorkspaceSecrets(paths.root, secrets);
+  const invocationTime = Math.max(
+    readClock(options),
+    Date.parse(state.updatedAt),
+  );
+  if (invocationTime >= elapsedDeadline(state, definition.retryPolicy)) {
+    return transition(
+      paths,
+      definition,
+      state,
+      {
+        type: 'run-failed',
+        reason: 'run elapsed-time ceiling exhausted before effect invocation',
+      },
+      options,
+      false,
+      invocationTime,
+    );
+  }
   let candidate: unknown;
   try {
     candidate = await callbacks.execute.call(
@@ -354,6 +482,17 @@ async function executeEffect(
   if (result === undefined) {
     throw new Error(
       `effect adapter returned an invalid result for phase ${phase.id}; reconciliation is required before resume`,
+    );
+  }
+  if (result.kind === 'retryable') {
+    return scheduleRetry(
+      paths,
+      definition,
+      state,
+      phase,
+      options,
+      result.reason,
+      result.retryAfterMs,
     );
   }
   await options.onCheckpoint?.('after-effect-applied', freezeState(state));
@@ -387,6 +526,142 @@ async function completeEffect(
     },
     options,
   );
+}
+
+async function scheduleRetry(
+  paths: RunPaths,
+  definition: NormalizedDefinition,
+  state: DurableRunState,
+  phase: DurablePhaseState,
+  options: NormalizedOptions,
+  reason: string,
+  retryAfterMs = 0,
+): Promise<DurableRunState> {
+  if (phase.attemptsUsed >= definition.retryPolicy.maxAttempts) {
+    return transition(
+      paths,
+      definition,
+      state,
+      {
+        type: 'run-failed',
+        reason: `attempt ceiling exhausted for phase ${phase.id} after ${phase.attemptsUsed} attempts`,
+      },
+      options,
+    );
+  }
+  const now = readClock(options);
+  const deadline = elapsedDeadline(state, definition.retryPolicy);
+  if (now >= deadline) {
+    return transition(
+      paths,
+      definition,
+      state,
+      { type: 'run-failed', reason: 'run elapsed-time ceiling exhausted' },
+      options,
+    );
+  }
+  const backoff = retryBackoff(phase.attemptsUsed, definition.retryPolicy);
+  const nextAttempt = Math.max(
+    now + Math.max(backoff, retryAfterMs),
+    state.nextEffectAt === null ? 0 : Date.parse(state.nextEffectAt),
+  );
+  if (!Number.isSafeInteger(nextAttempt) || nextAttempt >= deadline) {
+    return transition(
+      paths,
+      definition,
+      state,
+      {
+        type: 'run-failed',
+        reason: 'run elapsed-time ceiling prevents another attempt',
+      },
+      options,
+    );
+  }
+  return transition(
+    paths,
+    definition,
+    state,
+    {
+      type: 'effect-retry-scheduled',
+      phaseId: phase.id,
+      effectId: phase.effectId,
+      reason,
+      nextAttemptAt: new Date(nextAttempt).toISOString(),
+    },
+    options,
+    false,
+    now,
+  );
+}
+
+async function waitUntilEligible(
+  paths: RunPaths,
+  definition: NormalizedDefinition,
+  state: DurableRunState,
+  eligibleAt: string,
+  options: NormalizedOptions,
+): Promise<DurableRunState> {
+  const target = Date.parse(eligibleAt);
+  const deadline = elapsedDeadline(state, definition.retryPolicy);
+  if (target >= deadline) {
+    return transition(
+      paths,
+      definition,
+      state,
+      {
+        type: 'run-failed',
+        reason: 'run elapsed-time ceiling prevents the scheduled attempt',
+      },
+      options,
+    );
+  }
+  while (true) {
+    const before = readClock(options);
+    if (before >= target) return state;
+    if (before >= deadline) {
+      return transition(
+        paths,
+        definition,
+        state,
+        { type: 'run-failed', reason: 'run elapsed-time ceiling exhausted' },
+        options,
+      );
+    }
+    const milliseconds = Math.min(
+      Math.min(target, deadline) - before,
+      MAX_TIMER_DELAY_MS,
+    );
+    try {
+      await options.wait(milliseconds);
+    } catch {
+      throw new Error('durable pacing wait failed');
+    }
+    if (readClock(options) <= before) {
+      throw new Error('durable pacing wait returned without clock progress');
+    }
+  }
+}
+
+function elapsedDeadline(
+  state: DurableRunState,
+  policy: DurableRetryPolicy,
+): number {
+  const value = Date.parse(state.createdAt) + policy.maxElapsedMs;
+  if (!Number.isSafeInteger(value))
+    throw new Error('durable run elapsed-time deadline is invalid');
+  return value;
+}
+
+function retryBackoff(
+  attemptsUsed: number,
+  policy: DurableRetryPolicy,
+): number {
+  if (policy.initialBackoffMs === 0) return 0;
+  let delay = policy.initialBackoffMs;
+  for (let attempt = 1; attempt < attemptsUsed; attempt += 1) {
+    delay = Math.min(delay * policy.backoffMultiplier, policy.maxBackoffMs);
+  }
+  return Math.min(delay, policy.maxBackoffMs);
 }
 
 async function invokeReconcile(
@@ -437,6 +712,7 @@ function effectContext(
     phaseId: phase.id,
     sequence: phase.sequence,
     effectId: phase.effectId,
+    attempt: phase.attemptsUsed,
     resuming,
   });
 }
@@ -454,7 +730,7 @@ async function loadOrCreateRun(
 ): Promise<DurableRunState> {
   const loaded = await loadRun(paths, definition);
   if (loaded !== undefined) return loaded;
-  const createdAt = new Date().toISOString();
+  const createdAt = new Date(readClock(options)).toISOString();
   const initial = initialState(definition, createdAt);
   return transition(
     paths,
@@ -476,6 +752,10 @@ async function loadRun(
     MAX_STATE_BYTES,
     'run snapshot',
   );
+  const snapshotVersion =
+    snapshotValue === undefined
+      ? undefined
+      : dataValue(mapping(snapshotValue, 'run snapshot'), 'version');
   if (eventRead.events.length === 0) {
     if (snapshotValue !== undefined)
       throw new Error('run snapshot exists without durable events');
@@ -495,7 +775,13 @@ async function loadRun(
   }
   if (replayed === undefined) throw new Error('run event log is empty');
   if (snapshotValue !== undefined) {
-    const snapshot = normalizeState(snapshotValue, definition);
+    if (
+      snapshotVersion === 1 &&
+      eventRead.events.some((event) => event.version !== 1)
+    ) {
+      throw new Error('legacy run snapshot requires a version 1 event history');
+    }
+    const snapshot = normalizeState(snapshotValue, definition, snapshotPrefix);
     if (
       snapshotPrefix === undefined ||
       JSON.stringify(snapshot) !== JSON.stringify(snapshotPrefix)
@@ -514,7 +800,8 @@ async function loadRun(
   }
   if (
     snapshotValue === undefined ||
-    snapshotSequence !== replayed.eventSequence
+    snapshotSequence !== replayed.eventSequence ||
+    snapshotVersion !== 2
   ) {
     await publishState(paths, replayed);
   }
@@ -528,8 +815,21 @@ async function transition(
   input: EventInput,
   options: NormalizedOptions,
   creating = false,
+  eventTime?: number,
 ): Promise<DurableRunState> {
-  const event = createEvent(definition, state.eventSequence + 1, input);
+  const now = eventTime ?? readClock(options);
+  const safeInput: EventInput =
+    input.type === 'run-completed' &&
+    Math.max(now, Date.parse(state.updatedAt)) >=
+      elapsedDeadline(state, definition.retryPolicy)
+      ? { type: 'run-failed', reason: 'run elapsed-time ceiling exhausted' }
+      : input;
+  const event = createEvent(
+    definition,
+    state.eventSequence + 1,
+    safeInput,
+    now,
+  );
   await appendEvent(paths, event, creating);
   const next = applyEvent(creating ? undefined : state, event, definition);
   await options.onCheckpoint?.('after-event-appended', freezeState(next));
@@ -542,22 +842,33 @@ function createEvent(
   definition: NormalizedDefinition,
   sequence: number,
   input: EventInput,
+  now: number,
 ): DurableEvent {
   const base = {
-    version: 1 as const,
+    version: 2 as const,
     sequence,
     runId: definition.runId,
     definitionSha256: definition.definitionSha256,
     reason: input.reason,
-    at: new Date().toISOString(),
+    at: new Date(now).toISOString(),
   };
-  return input.type === 'effect-started' || input.type === 'effect-completed'
-    ? {
-        ...base,
-        type: input.type,
-        phaseId: input.phaseId,
-        effectId: input.effectId,
-      }
+  return input.type === 'effect-started' ||
+    input.type === 'effect-completed' ||
+    input.type === 'effect-retry-scheduled'
+    ? input.type === 'effect-retry-scheduled'
+      ? {
+          ...base,
+          type: input.type,
+          phaseId: input.phaseId,
+          effectId: input.effectId,
+          nextAttemptAt: input.nextAttemptAt,
+        }
+      : {
+          ...base,
+          type: input.type,
+          phaseId: input.phaseId,
+          effectId: input.effectId,
+        }
     : { ...base, type: input.type };
 }
 
@@ -588,6 +899,7 @@ function applyEvent(
   }
   const phases = current.phases.map((phase) => ({ ...phase }));
   let status = current.status;
+  let nextEffectAt = current.nextEffectAt;
   if (event.type === 'run-created')
     throw new Error('run-created may only be the first event');
   if (event.type === 'run-resumed') {
@@ -595,16 +907,58 @@ function applyEvent(
       throw new Error('only paused or blocked runs can resume');
     status = 'running';
   } else if (event.type === 'effect-started') {
-    if (status !== 'running')
+    if (status !== 'running' && status !== 'waiting')
       throw new Error('effects can start only while a run is running');
     const phase = mutablePhase(phases, event);
     if (
-      phase.status !== 'pending' ||
-      !priorPhasesComplete(phases, phase.sequence)
+      (phase.status !== 'pending' && phase.status !== 'waiting') ||
+      !priorPhasesComplete(phases, phase.sequence) ||
+      phase.attemptsUsed >= definition.retryPolicy.maxAttempts
     ) {
       throw new Error('effect-started violates phase ordering');
     }
+    const eventTime = Date.parse(event.at);
+    const eligibleTime =
+      phase.status === 'waiting'
+        ? Date.parse(phase.nextAttemptAt as string)
+        : nextEffectAt === null
+          ? 0
+          : Date.parse(nextEffectAt);
+    if (
+      event.version === 2 &&
+      (eventTime < eligibleTime ||
+        eventTime >= elapsedDeadline(current, definition.retryPolicy))
+    ) {
+      throw new Error('effect-started violates persisted pacing policy');
+    }
+    status = 'running';
     phase.status = 'in-flight';
+    phase.attemptsUsed += 1;
+    phase.nextAttemptAt = null;
+    phase.reason = event.reason;
+    nextEffectAt = new Date(
+      eventTime + definition.retryPolicy.minimumIntervalMs,
+    ).toISOString();
+  } else if (event.type === 'effect-retry-scheduled') {
+    if (status !== 'running')
+      throw new Error('retry may be scheduled only while a run is running');
+    const phase = mutablePhase(phases, event);
+    const nextAttempt = Date.parse(event.nextAttemptAt);
+    if (
+      phase.status !== 'in-flight' ||
+      phase.attemptsUsed >= definition.retryPolicy.maxAttempts ||
+      nextAttempt < Date.parse(event.at) ||
+      nextAttempt <
+        Date.parse(event.at) +
+          retryBackoff(phase.attemptsUsed, definition.retryPolicy) ||
+      (nextEffectAt !== null && nextAttempt < Date.parse(nextEffectAt)) ||
+      nextAttempt >= elapsedDeadline(current, definition.retryPolicy)
+    ) {
+      throw new Error('effect-retry-scheduled violates retry policy');
+    }
+    status = 'waiting';
+    phase.status = 'waiting';
+    phase.nextAttemptAt = event.nextAttemptAt;
     phase.reason = event.reason;
   } else if (event.type === 'effect-completed') {
     if (status !== 'running')
@@ -616,7 +970,7 @@ function applyEvent(
     phase.reason = event.reason;
   } else if (event.type === 'run-paused') {
     if (
-      status !== 'running' ||
+      (status !== 'running' && status !== 'waiting') ||
       phases.some((phase) => phase.status === 'in-flight')
     ) {
       throw new Error('run may pause only at a safe phase boundary');
@@ -630,10 +984,18 @@ function applyEvent(
       throw new Error('run may block only on an in-flight effect');
     }
     status = 'blocked';
+  } else if (event.type === 'run-failed') {
+    if (status !== 'running' && status !== 'waiting') {
+      throw new Error('run may fail only while running or waiting');
+    }
+    status = 'failed';
   } else {
     if (
       status !== 'running' ||
-      phases.some((phase) => phase.status !== 'completed')
+      phases.some((phase) => phase.status !== 'completed') ||
+      (event.version === 2 &&
+        Math.max(Date.parse(event.at), Date.parse(current.updatedAt)) >=
+          elapsedDeadline(current, definition.retryPolicy))
     ) {
       throw new Error('run may complete only after every phase completes');
     }
@@ -645,6 +1007,7 @@ function applyEvent(
     reason: event.reason,
     eventSequence: event.sequence,
     updatedAt: event.at,
+    nextEffectAt,
     phases,
   };
 }
@@ -674,7 +1037,7 @@ function initialState(
   createdAt: string,
 ): DurableRunState {
   return {
-    version: 1,
+    version: 2,
     runId: definition.runId,
     definitionSha256: definition.definitionSha256,
     status: 'running',
@@ -682,6 +1045,8 @@ function initialState(
     eventSequence: 0,
     createdAt,
     updatedAt: createdAt,
+    nextEffectAt: null,
+    retryPolicy: definition.retryPolicy,
     phases: definition.phases.map((phase, index) => ({
       sequence: index + 1,
       id: phase.id,
@@ -692,6 +1057,8 @@ function initialState(
         )
         .digest('hex'),
       status: 'pending',
+      attemptsUsed: 0,
+      nextAttemptAt: null,
       reason: null,
     })),
   };
@@ -772,6 +1139,7 @@ async function readEvents(
     ? contents.slice(0, contents.lastIndexOf('\n') + 1)
     : contents;
   const events: DurableEvent[] = [];
+  let sawVersion2 = false;
   for (const line of completeText.split('\n')) {
     if (line === '') continue;
     let value: unknown;
@@ -780,7 +1148,12 @@ async function readEvents(
     } catch {
       throw new Error('run event log contains invalid JSON');
     }
-    events.push(normalizeEvent(value, events.length + 1, definition));
+    const event = normalizeEvent(value, events.length + 1, definition);
+    if (event.version === 1 && sawVersion2) {
+      throw new Error('version 1 durable events must form a legacy prefix');
+    }
+    if (event.version === 2) sawVersion2 = true;
+    events.push(event);
   }
   return {
     events,
@@ -797,7 +1170,11 @@ function normalizeEvent(
 ): DurableEvent {
   const record = mapping(value, 'durable event');
   const type = dataValue(record, 'type');
-  const phaseType = type === 'effect-started' || type === 'effect-completed';
+  const version = dataValue(record, 'version');
+  const phaseType =
+    type === 'effect-started' ||
+    type === 'effect-retry-scheduled' ||
+    type === 'effect-completed';
   rejectUnknownKeys(
     record,
     new Set([
@@ -809,6 +1186,7 @@ function normalizeEvent(
       'reason',
       'at',
       ...(phaseType ? ['phaseId', 'effectId'] : []),
+      ...(type === 'effect-retry-scheduled' ? ['nextAttemptAt'] : []),
     ]),
     'durable event',
   );
@@ -819,19 +1197,27 @@ function normalizeEvent(
     throw new Error('durable event does not match the current run definition');
   }
   if (
-    dataValue(record, 'version') !== 1 ||
+    (version !== 1 && version !== 2) ||
     dataValue(record, 'sequence') !== expectedSequence ||
     ![
       'run-created',
       'run-resumed',
       'effect-started',
+      'effect-retry-scheduled',
       'effect-completed',
       'run-paused',
       'run-blocked',
+      'run-failed',
       'run-completed',
     ].includes(String(type))
   ) {
     throw new Error('durable event identity is invalid');
+  }
+  if (
+    version === 1 &&
+    (type === 'effect-retry-scheduled' || type === 'run-failed')
+  ) {
+    throw new Error('durable event type requires version 2');
   }
   const reason = boundedText(
     dataValue(record, 'reason'),
@@ -839,7 +1225,7 @@ function normalizeEvent(
   );
   const at = timestamp(dataValue(record, 'at'), 'durable event timestamp');
   const base = {
-    version: 1 as const,
+    version: version as 1 | 2,
     sequence: expectedSequence,
     runId: definition.runId,
     definitionSha256: definition.definitionSha256,
@@ -847,7 +1233,7 @@ function normalizeEvent(
     at,
   };
   if (phaseType) {
-    return {
+    const phase = {
       ...base,
       type,
       phaseId: identifier(
@@ -856,12 +1242,22 @@ function normalizeEvent(
       ),
       effectId: digest(dataValue(record, 'effectId'), 'durable event effectId'),
     };
+    return type === 'effect-retry-scheduled'
+      ? {
+          ...phase,
+          type,
+          nextAttemptAt: timestamp(
+            dataValue(record, 'nextAttemptAt'),
+            'durable event nextAttemptAt',
+          ),
+        }
+      : (phase as PhaseEvent<'effect-started' | 'effect-completed'>);
   }
   return {
     ...base,
     type: type as Exclude<
       DurableEvent['type'],
-      'effect-started' | 'effect-completed'
+      'effect-started' | 'effect-retry-scheduled' | 'effect-completed'
     >,
   };
 }
@@ -869,8 +1265,12 @@ function normalizeEvent(
 function normalizeState(
   value: unknown,
   definition: NormalizedDefinition,
+  expectedPrefix: DurableRunState | undefined,
 ): DurableRunState {
   const record = mapping(value, 'run snapshot');
+  if (dataValue(record, 'version') === 1) {
+    return normalizeLegacyState(record, definition, expectedPrefix);
+  }
   rejectUnknownKeys(
     record,
     new Set([
@@ -882,6 +1282,8 @@ function normalizeState(
       'eventSequence',
       'createdAt',
       'updatedAt',
+      'nextEffectAt',
+      'retryPolicy',
       'phases',
     ]),
     'run snapshot',
@@ -889,10 +1291,17 @@ function normalizeState(
   const status = dataValue(record, 'status');
   const eventSequence = dataValue(record, 'eventSequence');
   if (
-    dataValue(record, 'version') !== 1 ||
+    dataValue(record, 'version') !== 2 ||
     dataValue(record, 'runId') !== definition.runId ||
     dataValue(record, 'definitionSha256') !== definition.definitionSha256 ||
-    !['running', 'paused', 'blocked', 'completed'].includes(String(status)) ||
+    ![
+      'running',
+      'waiting',
+      'paused',
+      'blocked',
+      'failed',
+      'completed',
+    ].includes(String(status)) ||
     !Number.isSafeInteger(eventSequence) ||
     (eventSequence as number) < 1
   )
@@ -907,8 +1316,16 @@ function normalizeState(
   const phases = phaseValues.map((candidate, index) =>
     normalizePhaseState(candidate, definition, index),
   );
+  const policy = normalizeRetryPolicy(
+    dataValue(record, 'retryPolicy'),
+    'run snapshot retryPolicy',
+  );
+  if (JSON.stringify(policy) !== JSON.stringify(definition.retryPolicy)) {
+    throw new Error('run snapshot retry policy does not match the definition');
+  }
+  const nextEffectValue = dataValue(record, 'nextEffectAt');
   return {
-    version: 1,
+    version: 2,
     runId: definition.runId,
     definitionSha256: definition.definitionSha256,
     status: status as DurableRunState['status'],
@@ -922,20 +1339,96 @@ function normalizeState(
       dataValue(record, 'updatedAt'),
       'run snapshot updatedAt',
     ),
+    nextEffectAt:
+      nextEffectValue === null
+        ? null
+        : timestamp(nextEffectValue, 'run snapshot nextEffectAt'),
+    retryPolicy: policy,
     phases,
   };
 }
 
-function normalizePhaseState(
+function normalizeLegacyState(
+  record: Record<string, unknown>,
+  definition: NormalizedDefinition,
+  expectedPrefix: DurableRunState | undefined,
+): DurableRunState {
+  if (definition.hasExplicitRetryPolicy || expectedPrefix === undefined) {
+    throw new Error('legacy run snapshot is incompatible with retry policy');
+  }
+  rejectUnknownKeys(
+    record,
+    new Set([
+      'version',
+      'runId',
+      'definitionSha256',
+      'status',
+      'reason',
+      'eventSequence',
+      'createdAt',
+      'updatedAt',
+      'phases',
+    ]),
+    'legacy run snapshot',
+  );
+  const status = dataValue(record, 'status');
+  const eventSequence = dataValue(record, 'eventSequence');
+  if (
+    dataValue(record, 'runId') !== definition.runId ||
+    dataValue(record, 'definitionSha256') !== definition.definitionSha256 ||
+    !['running', 'paused', 'blocked', 'completed'].includes(String(status)) ||
+    !Number.isSafeInteger(eventSequence) ||
+    (eventSequence as number) < 1
+  ) {
+    throw new Error('legacy run snapshot identity is invalid');
+  }
+  const phaseValues = arrayValues(dataValue(record, 'phases'), MAX_PHASES);
+  if (
+    phaseValues === undefined ||
+    phaseValues.length !== definition.phases.length
+  ) {
+    throw new Error('legacy run snapshot phases do not match the definition');
+  }
+  const phases = phaseValues.map((candidate, index) =>
+    normalizeLegacyPhaseState(
+      candidate,
+      definition,
+      index,
+      expectedPrefix.phases[index]!,
+    ),
+  );
+  return {
+    version: 2,
+    runId: definition.runId,
+    definitionSha256: definition.definitionSha256,
+    status: status as DurableRunState['status'],
+    reason: boundedText(dataValue(record, 'reason'), 'run snapshot reason'),
+    eventSequence: eventSequence as number,
+    createdAt: timestamp(
+      dataValue(record, 'createdAt'),
+      'run snapshot createdAt',
+    ),
+    updatedAt: timestamp(
+      dataValue(record, 'updatedAt'),
+      'run snapshot updatedAt',
+    ),
+    nextEffectAt: expectedPrefix.nextEffectAt,
+    retryPolicy: definition.retryPolicy,
+    phases,
+  };
+}
+
+function normalizeLegacyPhaseState(
   value: unknown,
   definition: NormalizedDefinition,
   index: number,
+  expectedPrefix: DurablePhaseState,
 ): DurablePhaseState {
-  const record = mapping(value, `run snapshot phases[${index}]`);
+  const record = mapping(value, `legacy run snapshot phases[${index}]`);
   rejectUnknownKeys(
     record,
     new Set(['sequence', 'id', 'description', 'effectId', 'status', 'reason']),
-    `run snapshot phases[${index}]`,
+    `legacy run snapshot phases[${index}]`,
   );
   const expected = initialState(definition, new Date(0).toISOString()).phases[
     index
@@ -949,11 +1442,71 @@ function normalizePhaseState(
     dataValue(record, 'effectId') !== expected.effectId ||
     !['pending', 'in-flight', 'completed'].includes(String(status)) ||
     (reason !== null && !isBoundedText(reason))
+  ) {
+    throw new Error(`legacy run snapshot phases[${index}] is invalid`);
+  }
+  return {
+    ...expectedPrefix,
+    status: status as DurablePhaseState['status'],
+    reason: reason as string | null,
+  };
+}
+
+function normalizePhaseState(
+  value: unknown,
+  definition: NormalizedDefinition,
+  index: number,
+): DurablePhaseState {
+  const record = mapping(value, `run snapshot phases[${index}]`);
+  rejectUnknownKeys(
+    record,
+    new Set([
+      'sequence',
+      'id',
+      'description',
+      'effectId',
+      'status',
+      'attemptsUsed',
+      'nextAttemptAt',
+      'reason',
+    ]),
+    `run snapshot phases[${index}]`,
+  );
+  const expected = initialState(definition, new Date(0).toISOString()).phases[
+    index
+  ]!;
+  const status = dataValue(record, 'status');
+  const reason = dataValue(record, 'reason');
+  const attemptsUsed = dataValue(record, 'attemptsUsed');
+  const nextAttemptValue = dataValue(record, 'nextAttemptAt');
+  if (
+    dataValue(record, 'sequence') !== index + 1 ||
+    dataValue(record, 'id') !== expected.id ||
+    dataValue(record, 'description') !== expected.description ||
+    dataValue(record, 'effectId') !== expected.effectId ||
+    !['pending', 'waiting', 'in-flight', 'completed'].includes(
+      String(status),
+    ) ||
+    !Number.isSafeInteger(attemptsUsed) ||
+    (attemptsUsed as number) < 0 ||
+    (attemptsUsed as number) > definition.retryPolicy.maxAttempts ||
+    (status === 'pending' && attemptsUsed !== 0) ||
+    (status !== 'pending' && (attemptsUsed as number) < 1) ||
+    (status === 'waiting') !== (nextAttemptValue !== null) ||
+    (reason !== null && !isBoundedText(reason))
   )
     throw new Error(`run snapshot phases[${index}] is invalid`);
   return {
     ...expected,
     status: status as DurablePhaseState['status'],
+    attemptsUsed: attemptsUsed as number,
+    nextAttemptAt:
+      nextAttemptValue === null
+        ? null
+        : timestamp(
+            nextAttemptValue,
+            `run snapshot phases[${index}].nextAttemptAt`,
+          ),
     reason: reason as string | null,
   };
 }
@@ -971,7 +1524,7 @@ function normalizeDefinition(value: unknown): NormalizedDefinition {
   const record = mapping(value, 'durable run definition');
   rejectUnknownKeys(
     record,
-    new Set(['runId', 'phases']),
+    new Set(['runId', 'phases', 'retryPolicy']),
     'durable run definition',
   );
   const runId = identifier(dataValue(record, 'runId'), 'durable run id');
@@ -999,14 +1552,88 @@ function normalizeDefinition(value: unknown): NormalizedDefinition {
   if (new Set(phases.map((phase) => phase.id)).size !== phases.length) {
     throw new Error('durable phase ids must be unique');
   }
+  const policyValue = dataValue(record, 'retryPolicy');
+  const retryPolicy =
+    policyValue === undefined
+      ? DEFAULT_RETRY_POLICY
+      : normalizeRetryPolicy(policyValue, 'durable retryPolicy');
+  const digestInput =
+    policyValue === undefined
+      ? { runId, phases }
+      : { runId, phases, retryPolicy };
   const definitionSha256 = createHash('sha256')
-    .update(JSON.stringify({ runId, phases }))
+    .update(JSON.stringify(digestInput))
     .digest('hex');
   return Object.freeze({
     runId,
     definitionSha256,
     phases: Object.freeze(phases),
+    retryPolicy,
+    hasExplicitRetryPolicy: policyValue !== undefined,
   });
+}
+
+function normalizeRetryPolicy(
+  value: unknown,
+  field: string,
+): Readonly<DurableRetryPolicy> {
+  const record = mapping(value, field);
+  rejectUnknownKeys(
+    record,
+    new Set([
+      'maxAttempts',
+      'maxElapsedMs',
+      'minimumIntervalMs',
+      'initialBackoffMs',
+      'backoffMultiplier',
+      'maxBackoffMs',
+    ]),
+    field,
+  );
+  const policy = {
+    maxAttempts: boundedInteger(
+      dataValue(record, 'maxAttempts'),
+      1,
+      MAX_ATTEMPTS,
+      `${field}.maxAttempts`,
+    ),
+    maxElapsedMs: boundedInteger(
+      dataValue(record, 'maxElapsedMs'),
+      1,
+      MAX_ELAPSED_MS,
+      `${field}.maxElapsedMs`,
+    ),
+    minimumIntervalMs: boundedInteger(
+      dataValue(record, 'minimumIntervalMs'),
+      0,
+      MAX_DELAY_MS,
+      `${field}.minimumIntervalMs`,
+    ),
+    initialBackoffMs: boundedInteger(
+      dataValue(record, 'initialBackoffMs'),
+      0,
+      MAX_DELAY_MS,
+      `${field}.initialBackoffMs`,
+    ),
+    backoffMultiplier: boundedInteger(
+      dataValue(record, 'backoffMultiplier'),
+      1,
+      MAX_BACKOFF_MULTIPLIER,
+      `${field}.backoffMultiplier`,
+    ),
+    maxBackoffMs: boundedInteger(
+      dataValue(record, 'maxBackoffMs'),
+      0,
+      MAX_DELAY_MS,
+      `${field}.maxBackoffMs`,
+    ),
+  };
+  if (policy.maxBackoffMs < policy.initialBackoffMs) {
+    throw new Error(
+      `${field}.maxBackoffMs must not be less than initialBackoffMs`,
+    );
+  }
+  return Object.freeze(policy);
 }
 
 function normalizeCallbacks(value: unknown): NormalizedCallbacks {
@@ -1037,11 +1664,13 @@ function normalizeOptions(
   const record = mapping(value, 'durable run options');
   rejectUnknownKeys(
     record,
-    new Set(['pauseAfterPhase', 'onCheckpoint']),
+    new Set(['pauseAfterPhase', 'onCheckpoint', 'clock', 'wait']),
     'durable run options',
   );
   const pause = dataValue(record, 'pauseAfterPhase');
   const hook = dataValue(record, 'onCheckpoint');
+  const clock = dataValue(record, 'clock');
+  const wait = dataValue(record, 'wait');
   if (
     pause !== undefined &&
     (typeof pause !== 'string' ||
@@ -1052,20 +1681,87 @@ function normalizeOptions(
   if (hook !== undefined && typeof hook !== 'function') {
     throw new Error('onCheckpoint must be a function');
   }
+  if (clock !== undefined && typeof clock !== 'function') {
+    throw new Error('clock must be a function');
+  }
+  if (wait !== undefined && typeof wait !== 'function') {
+    throw new Error('wait must be a function');
+  }
   return Object.freeze({
     ...(pause === undefined ? {} : { pauseAfterPhase: pause }),
     ...(hook === undefined
       ? {}
       : { onCheckpoint: hook as DurableRunOptions['onCheckpoint'] }),
+    clock: (clock as (() => number) | undefined) ?? Date.now,
+    wait:
+      (wait as ((milliseconds: number) => Promise<void>) | undefined) ??
+      defaultWait,
   });
+}
+
+async function defaultWait(milliseconds: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function readClock(options: NormalizedOptions): number {
+  let value: unknown;
+  try {
+    value = options.clock();
+  } catch {
+    throw new Error('durable pacing clock failed');
+  }
+  if (
+    !Number.isSafeInteger(value) ||
+    (value as number) < 0 ||
+    (value as number) > MAX_TIMESTAMP_MS - MAX_ELAPSED_MS
+  ) {
+    throw new Error('durable pacing clock returned an invalid timestamp');
+  }
+  return value as number;
 }
 
 function normalizeEffectResult(
   value: unknown,
   secrets: readonly string[],
 ): DurableEffectResult | undefined {
-  return normalizeAdapterResult(value, new Set(['applied']), secrets) as
-    DurableEffectResult | undefined;
+  try {
+    const record = mapping(value, 'adapter result');
+    rejectUnknownKeys(
+      record,
+      new Set(['kind', 'reason', 'retryAfterMs']),
+      'adapter result',
+    );
+    const kind = dataValue(record, 'kind');
+    const reason = dataValue(record, 'reason');
+    const retryAfter = dataValue(record, 'retryAfterMs');
+    if (
+      (kind !== 'applied' && kind !== 'retryable') ||
+      !isBoundedText(reason) ||
+      (kind === 'applied' && retryAfter !== undefined)
+    ) {
+      return undefined;
+    }
+    const redactedReason = redactSecrets(reason, secrets);
+    if (!isBoundedText(redactedReason)) return undefined;
+    if (kind === 'applied')
+      return Object.freeze({ kind, reason: redactedReason });
+    return Object.freeze({
+      kind,
+      reason: redactedReason,
+      ...(retryAfter === undefined
+        ? {}
+        : {
+            retryAfterMs: boundedInteger(
+              retryAfter,
+              0,
+              MAX_DELAY_MS,
+              'adapter result retryAfterMs',
+            ),
+          }),
+    });
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeReconciliationResult(
@@ -1598,7 +2294,11 @@ function finish(
 
 function freezeState(state: DurableRunState): Readonly<DurableRunState> {
   const phases = state.phases.map((phase) => Object.freeze({ ...phase }));
-  return Object.freeze({ ...state, phases: Object.freeze(phases) });
+  return Object.freeze({
+    ...state,
+    retryPolicy: Object.freeze({ ...state.retryPolicy }),
+    phases: Object.freeze(phases),
+  });
 }
 
 function phaseById(state: DurableRunState, id: string): DurablePhaseState {
@@ -1690,6 +2390,24 @@ function digest(value: unknown, field: string): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value))
     throw new Error(`${field} is invalid`);
   return value;
+}
+
+function boundedInteger(
+  value: unknown,
+  minimum: number,
+  maximum: number,
+  field: string,
+): number {
+  if (
+    !Number.isSafeInteger(value) ||
+    (value as number) < minimum ||
+    (value as number) > maximum
+  ) {
+    throw new Error(
+      `${field} must be an integer from ${minimum} through ${maximum}`,
+    );
+  }
+  return value as number;
 }
 
 function boundedText(value: unknown, field: string): string {
