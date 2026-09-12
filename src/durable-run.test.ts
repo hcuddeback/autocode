@@ -412,8 +412,13 @@ test('reclaims a stale lock after its owner PID is reused', async () => {
   assert.equal(result.outcome, 'completed');
 });
 
-test('stale reclamation preserves a replacement owner and excludes a third invocation', async () => {
-  for (const empty of [false, true]) {
+test('stale reclamation preserves and releases a displaced owner despite a third invocation', async () => {
+  for (const [empty, obstructed] of [
+    [false, false],
+    [true, false],
+    [false, true],
+    [true, true],
+  ]) {
     const root = await fixtureProject();
     const runDefinition = singlePhaseDefinition(
       empty ? 'empty-reclaim-race' : 'reclaim-race',
@@ -453,6 +458,15 @@ test('stale reclamation preserves a replacement owner and excludes a third invoc
     const validationGate = new Promise<void>((resolve) => {
       resumeValidation = resolve;
     });
+    let contenderReleasing!: () => void;
+    const contenderRelease = new Promise<void>((resolve) => {
+      contenderReleasing = resolve;
+    });
+    let finishContender!: () => void;
+    const contenderGate = new Promise<void>((resolve) => {
+      finishContender = resolve;
+    });
+    let holdContender = false;
     let firstRename = true;
     const nativeRename = fsPromises.rename;
     mock.method(
@@ -462,6 +476,15 @@ test('stale reclamation preserves a replacement owner and excludes a third invoc
         source: Parameters<typeof nativeRename>[0],
         target: Parameters<typeof nativeRename>[1],
       ) => {
+        if (
+          holdContender &&
+          source === lockDirectory &&
+          String(target).includes('.stale-')
+        ) {
+          holdContender = false;
+          contenderReleasing();
+          await contenderGate;
+        }
         if (
           source === lockDirectory &&
           String(target).includes('.stale-') &&
@@ -511,18 +534,38 @@ test('stale reclamation preserves a replacement owner and excludes a third invoc
     );
     resumeReclaimer();
     await quarantine;
-    await assert.rejects(
+    holdContender = obstructed === true;
+    const third = assert.rejects(
       runDurableRun(root, runDefinition, appliedCallbacks(attempts)),
       /already locked by a quarantined owner/,
     );
+    if (obstructed) await contenderRelease;
+    else await third;
     resumeValidation();
     await first;
-    assert.equal(
-      await readFile(path.join(lockDirectory, 'owner.json'), 'utf8'),
-      replacementOwner,
+    const canonicalOwner = await readFile(
+      path.join(lockDirectory, 'owner.json'),
+      'utf8',
     );
+    if (obstructed) assert.notEqual(canonicalOwner, replacementOwner);
+    else assert.equal(canonicalOwner, replacementOwner);
     finishEffect();
     assert.equal((await second).outcome, 'completed');
+    if (obstructed) {
+      // Releasing B while C still owns the canonical path removes only B's
+      // quarantine. C's owner remains intact until its own release proceeds.
+      assert.equal(
+        await readFile(path.join(lockDirectory, 'owner.json'), 'utf8'),
+        canonicalOwner,
+      );
+      finishContender();
+      await third;
+    }
+    assert.equal(
+      (await runDurableRun(root, runDefinition, appliedCallbacks(attempts)))
+        .outcome,
+      'completed',
+    );
     assert.deepEqual(attempts, ['second']);
     mock.restoreAll();
     syncBuiltinESMExports();
