@@ -583,6 +583,7 @@ export async function runProjectWorkflow(
       async reconcile(phase, context) {
         const own = await receipt(phase.id);
         if (
+          phase.id !== 'qa' &&
           own &&
           own.workspace === (await currentWorkspace()) &&
           own.result.kind === 'applied'
@@ -619,7 +620,9 @@ export async function runProjectWorkflow(
         return {
           kind: 'ambiguous',
           reason:
-            'interrupted or blocked phase lacks successful current evidence; operator reconciliation is required',
+            phase.id === 'qa'
+              ? 'QA callback completion cannot be established from a mutable receipt; operator reconciliation is required'
+              : 'interrupted or blocked phase lacks successful current evidence; operator reconciliation is required',
         };
       },
     },

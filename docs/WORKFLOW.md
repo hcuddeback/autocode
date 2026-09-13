@@ -81,6 +81,8 @@ Pure internal changes may record QA as not applicable when deterministic tests c
 
 ## Pause, resume, and pacing
 
+QA callbacks have a conservative interruption boundary: a mutable receipt cannot establish that callback descendants finished. Resume accepts QA only when its durable phase was already completed, and never reconciles an in-flight QA effect as applied from its receipt. This also applies to interruption after a passing QA receipt is published. Such callbacks require operator reconciliation; supplying an absent adapter remains safe only for the recorded attempt that invoked no callback and produced no QA receipt.
+
 Fresh phase execution requires an absent receipt and evaluates its configured gates; receipt reuse belongs only to reconciliation of an already in-flight effect. A pre-created receipt or publication collision is terminal protected-state tampering. Verification checks ignored credential paths and hashes after every command, and changing those files cannot produce passing evidence.
 
 Local workflow receipts preserve typed control fields and redact free-text payloads before JSON serialization. Independent review parses bounded raw output in memory and retains a validated structured verdict separately from redacted display artifacts. Freshness includes discovered ignored credential paths and content hashes; QA cannot modify, remove, or add these files and retain passing evidence. Receipts from the earlier AC-012 worktree-only fingerprint are conservatively stale under the credential-aware fingerprint and require a new run.

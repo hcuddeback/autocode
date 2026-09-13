@@ -772,6 +772,116 @@ qa:{async run(){await writeFile(${JSON.stringify(effectLog)},'effect-applied');p
   }
 });
 
+test('mutable QA receipts cannot establish callback completion on resume', async (t) => {
+  for (const attack of [
+    'blocked-forged',
+    'interrupted-passed',
+    'late-credentials',
+  ]) {
+    await t.test(attack, async () => {
+      const f = await fixture('success', 'local', [
+        'sensitive-fixture-secret-0123456789',
+      ]);
+      try {
+        const policyPath = path.join(f.root, '.autocode', 'workflow.json');
+        const policy = JSON.parse(await readFile(policyPath, 'utf8'));
+        policy.qa = {
+          kind: 'required',
+          reason: 'Observe the fixture result through a runtime scenario.',
+          scenarios: [
+            {
+              name: 'result',
+              description: 'Read the implemented fixture result.',
+            },
+          ],
+        };
+        await writeFile(policyPath, JSON.stringify(policy));
+        let callbacks = 0;
+        const options = {
+          ...f.options,
+          qa: {
+            async run() {
+              callbacks++;
+              return {
+                kind: attack === 'interrupted-passed' ? 'passed' : 'blocked',
+                reason: 'Recorded fixture QA scenario outcome.',
+              };
+            },
+          },
+          durable: {
+            async onCheckpoint(
+              checkpoint: string,
+              state: { phases: readonly { id: string; status: string }[] },
+            ) {
+              if (
+                attack === 'interrupted-passed' &&
+                checkpoint === 'after-effect-applied' &&
+                state.phases.find((p) => p.status === 'in-flight')?.id === 'qa'
+              )
+                throw new Error('fixture QA checkpoint interruption');
+            },
+          },
+        };
+        if (attack === 'interrupted-passed')
+          await assert.rejects(
+            () => runProjectWorkflow(f.root, options),
+            /fixture QA checkpoint interruption/,
+          );
+        else
+          assert.equal(
+            (await runProjectWorkflow(f.root, options)).outcome,
+            'blocked',
+          );
+        const runs = path.join(f.root, '.autocode', 'runs');
+        const directory = path.join(
+          runs,
+          (await readdir(runs)).find((n) => n.startsWith('durable-workflow-'))!,
+        );
+        const qaPath = path.join(directory, 'qa.json');
+        const receipt = JSON.parse(await readFile(qaPath, 'utf8'));
+        // Reproduce delayed work after the callback and all post-callback checks.
+        receipt.result = { kind: 'applied', reason: 'Forged QA completion.' };
+        receipt.evidence.outcome = 'passed';
+        for (const scenario of receipt.evidence.scenarios)
+          scenario.outcome = 'passed';
+        await writeFile(qaPath, JSON.stringify(receipt));
+        if (attack === 'late-credentials') {
+          await writeFile(
+            path.join(f.root, '.env'),
+            'FIXTURE_VALUE=late-credential-change',
+          );
+          await assert.rejects(
+            () => runProjectWorkflow(f.root, { ...options, resumeOnly: true }),
+            /stale/,
+          );
+        } else {
+          const resumed = await runProjectWorkflow(f.root, {
+            ...options,
+            resumeOnly: true,
+          });
+          assert.equal(resumed.outcome, 'blocked');
+          assert.match(
+            resumed.state.reason,
+            /QA callback completion cannot be established/,
+          );
+          await assert.rejects(
+            () => readFile(path.join(directory, 'completion.json')),
+            { code: 'ENOENT' },
+          );
+        }
+        assert.equal(callbacks, 1);
+        assert.deepEqual(await f.calls(), [
+          'planning',
+          'implementation',
+          'review',
+        ]);
+      } finally {
+        await f.cleanup();
+      }
+    });
+  }
+});
+
 test('late QA receipt injection cannot bypass fresh completion gates', async (t) => {
   for (const payload of ['valid', 'malformed']) {
     await t.test(payload, async () => {
