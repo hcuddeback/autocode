@@ -1017,6 +1017,47 @@ fs.appendFileSync(path.join(dir,'events.jsonl'),forged.map(JSON.stringify).join(
   },
 );
 
+test(
+  'Windows pnpm CMD shim completes configured workflow verification',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const f = await fixture();
+    const previous = process.env.PATH;
+    try {
+      const bin = path.join(f.directory, 'package-bin');
+      await mkdir(bin);
+      const check = path.join(bin, 'check.mjs');
+      await writeFile(
+        check,
+        "import assert from 'node:assert/strict';import fs from 'node:fs';assert.deepEqual(process.argv.slice(2),['run','check']);process.exit(fs.readFileSync('result.txt','utf8')==='good'?0:1);",
+      );
+      await writeFile(
+        path.join(bin, 'pnpm.CMD'),
+        `@echo off\r\n"${process.execPath}" "${check}" %*\r\n`,
+      );
+      process.env.PATH = bin + path.delimiter + previous;
+      const configPath = path.join(f.root, '.autocode', 'config.yaml');
+      const config = parse(await readFile(configPath, 'utf8'));
+      config.verification.commands[0].command = 'pnpm';
+      config.verification.commands[0].args = ['run', 'check'];
+      await writeFile(configPath, stringify(config));
+      const completed = await runProjectWorkflow(f.root, f.options);
+      assert.equal(completed.outcome, 'completed');
+      const calls = await f.calls();
+      assert.equal(
+        (await runProjectWorkflow(f.root, { ...f.options, resumeOnly: true }))
+          .outcome,
+        'completed',
+      );
+      assert.deepEqual(await f.calls(), calls);
+    } finally {
+      if (previous === undefined) delete process.env.PATH;
+      else process.env.PATH = previous;
+      await f.cleanup();
+    }
+  },
+);
+
 test('completion cannot reconcile edited blocked or interrupted passing receipts', async (t) => {
   for (const attack of ['blocked-forged', 'interrupted-passed']) {
     await t.test(attack, async () => {

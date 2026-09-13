@@ -66,7 +66,7 @@ AC-012 adds `workflow.ts` as the local composition boundary. `cli.ts` exposes ru
 
 ## Testing strategy
 
-Runtime subprocess containment currently supports Windows and Linux with an available user systemd manager. Other platforms, including macOS, fail closed for default model/verification execution. Cross-platform PRODUCT acceptance is not yet met; do not advertise broader support based on TypeScript portability.
+Runtime subprocess execution currently supports Windows through Job Object containment. Linux and macOS fail closed before model, QA, verification or workflow-history acceptance; Linux requires verified user-manager isolation. Cross-platform PRODUCT acceptance is not yet met; do not advertise broader support based on TypeScript portability.
 
 - Unit: schemas, readiness, transitions, retry/pacing policy.
 - Integration: subprocesses, worktrees, evidence, recovery, adapters.

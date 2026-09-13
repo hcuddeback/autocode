@@ -89,12 +89,19 @@ export async function runContainedProcess(
     throw new Error('timeout must be a positive integer');
   if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes <= 0)
     throw new Error('output limit must be a positive integer');
+  const batch = /\.(?:cmd|bat)$/i.test(executable);
+  if (batch && arguments_.some((argument) => /[\0\r\n]/.test(argument)))
+    throw new Error('batch arguments cannot contain NUL or line breaks');
+  const verbatimTail = batch
+    ? `/d /s /v:off /c "${escapeCmd(path.normalize(executable))} ${arguments_.map(escapeBatchArgument).join(' ')}"`
+    : undefined;
   const job = await windowsJobScript(
-    executable,
+    batch ? await resolveExecutable('cmd', cwd) : executable,
     arguments_,
     cwd,
     maxOutputBytes,
     input,
+    verbatimTail,
   );
   try {
     const result = await runProcess(
@@ -128,6 +135,29 @@ export async function runContainedProcess(
   }
 }
 
+// Native argv quoting followed by cmd metacharacter escaping. Package-manager
+// batch shims parse their forwarded arguments an additional time.
+// See https://github.com/moxystudio/node-cross-spawn/blob/master/lib/parse.js.
+function escapeCmd(value: string): string {
+  return value.replace(/([()\][%!^"`<>&|;, *?])/g, '^$1');
+}
+
+function escapeBatchArgument(value: string): string {
+  let quoted = '"';
+  let slashes = 0;
+  for (const character of value) {
+    if (character === '\\') {
+      slashes++;
+      continue;
+    }
+    quoted +=
+      '\\'.repeat(character === '"' ? slashes * 2 + 1 : slashes) + character;
+    slashes = 0;
+  }
+  quoted += '\\'.repeat(slashes * 2) + '"';
+  return escapeCmd(escapeCmd(quoted));
+}
+
 export function assertContainedQaAdapter(
   root: string,
   adapter: QaCallbacks,
@@ -144,6 +174,7 @@ async function windowsJobScript(
   cwd: string,
   maxOutputBytes: number,
   input?: string,
+  verbatimTail?: string,
 ): Promise<{ script: string; directory: string }> {
   const payload = Buffer.from(
     JSON.stringify({
@@ -153,9 +184,10 @@ async function windowsJobScript(
       maxOutputBytes,
       parentPid: process.pid,
       inputBase64: Buffer.from(input ?? '', 'utf8').toString('base64'),
+      verbatimTail: verbatimTail ?? null,
     }),
   ).toString('base64');
-  const script = `$ErrorActionPreference = 'Stop'\n[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)\nAdd-Type -TypeDefinition @'\n${WINDOWS_JOB_HOST}\n'@\n$p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}')) | ConvertFrom-Json\nexit [AutoCodeQaJob]::Run($p.command, [string[]]$p.arguments, $p.cwd, [int]$p.maxOutputBytes, [int]$p.parentPid, $p.inputBase64)`;
+  const script = `$ErrorActionPreference = 'Stop'\n[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)\nAdd-Type -TypeDefinition @'\n${WINDOWS_JOB_HOST}\n'@\n$p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}')) | ConvertFrom-Json\nexit [AutoCodeQaJob]::Run($p.command, [string[]]$p.arguments, $p.cwd, [int]$p.maxOutputBytes, [int]$p.parentPid, $p.inputBase64, $p.verbatimTail)`;
   const directory = await mkdtemp(path.join(os.tmpdir(), 'autocode-qa-job-'));
   const scriptPath = path.join(directory, 'host.ps1');
   await writeFile(scriptPath, script, { flag: 'wx' });
@@ -226,7 +258,7 @@ public static class AutoCodeQaJob {
     }
     result.Append('\\',slashes*2); result.Append('"'); return result.ToString();
   }
-  public static int Run(string command,string[] arguments,string cwd,int maxOutputBytes,int parentPid,string inputBase64) {
+  public static int Run(string command,string[] arguments,string cwd,int maxOutputBytes,int parentPid,string inputBase64,string verbatimTail) {
     IntPtr job=IntPtr.Zero,output=IntPtr.Zero,error=IntPtr.Zero,input=IntPtr.Zero,parent=IntPtr.Zero;
     ProcessInfo process=new ProcessInfo();
     string outputPath=Path.GetTempFileName(),errorPath=Path.GetTempFileName(),inputPath=Path.GetTempFileName();
@@ -244,7 +276,9 @@ public static class AutoCodeQaJob {
       Check(output!=new IntPtr(-1) && error!=new IntPtr(-1) && input!=new IntPtr(-1));
       var startup=new StartupInfo(); startup.Size=Marshal.SizeOf(startup); startup.Flags=0x100;
       startup.Input=input; startup.Output=output; startup.Error=error;
-      var line=new StringBuilder(Quote(command)); foreach(string argument in arguments) line.Append(" ").Append(Quote(argument));
+      var line=new StringBuilder(Quote(command));
+      if(!String.IsNullOrEmpty(verbatimTail)) line.Append(" ").Append(verbatimTail);
+      else foreach(string argument in arguments) line.Append(" ").Append(Quote(argument));
       Check(CreateProcess(command,line,IntPtr.Zero,IntPtr.Zero,true,0x08000004,IntPtr.Zero,cwd,ref startup,out process));
       if(!AssignProcessToJobObject(job,process.Process)) { TerminateProcess(process.Process,1); Check(false); }
       Check(ResumeThread(process.Thread)!=0xffffffff);

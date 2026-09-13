@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, mkdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -12,6 +12,74 @@ import {
 import { runProjectWorkflow } from './workflow.js';
 import { runRoleSeparatedCodexSessions } from './codex.js';
 import { runDeterministicVerification } from './verification.js';
+
+test(
+  'Windows batch commands preserve stdin and literal argv inside containment',
+  { skip: process.platform !== 'win32' },
+  async (t) => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'autocode batch&-'));
+    const previous = process.env.AUTOCODE_BATCH_VALUE;
+    process.env.AUTOCODE_BATCH_VALUE = 'must-not-expand';
+    try {
+      const bin = path.join(directory, 'node_modules', '.bin');
+      await mkdir(bin, { recursive: true });
+      const echo = path.join(directory, 'echo.mjs');
+      await writeFile(
+        echo,
+        "let input='';for await(const chunk of process.stdin)input+=chunk;console.log(JSON.stringify({arguments:process.argv.slice(2),input}));",
+      );
+      const arguments_ = [
+        'spaces é',
+        'embedded "quotes"',
+        'trailing\\',
+        '%AUTOCODE_BATCH_VALUE%',
+        '!AUTOCODE_BATCH_VALUE!',
+        'a&b|c^d(e)<f>g;h,i',
+        '" & echo injected > escaped.txt & "',
+        '',
+      ];
+      const input = 'UTF-8 é prompt\n"%&^!"';
+      for (const extension of ['cmd', 'bat'])
+        await t.test(extension, async () => {
+          const batch = path.join(
+            extension === 'cmd' ? bin : directory,
+            `fixture.${extension}`,
+          );
+          await writeFile(
+            batch,
+            `@echo off\r\n"${process.execPath}" "${echo}" %*\r\n`,
+          );
+          const result = await runContainedProcess(
+            batch,
+            arguments_,
+            directory,
+            10_000,
+            100_000,
+            input,
+          );
+          assert.equal(result.exitCode, 0, result.stderr);
+          assert.deepEqual(JSON.parse(result.stdout), {
+            arguments: arguments_,
+            input,
+          });
+          await assert.rejects(
+            () => readFile(path.join(directory, 'escaped.txt')),
+            { code: 'ENOENT' },
+          );
+          for (const argument of ['line\nbreak', 'line\rbreak', '\0'])
+            await assert.rejects(
+              () =>
+                runContainedProcess(batch, [argument], directory, 1000, 1024),
+              /batch arguments cannot contain NUL or line breaks/,
+            );
+        });
+    } finally {
+      if (previous === undefined) delete process.env.AUTOCODE_BATCH_VALUE;
+      else process.env.AUTOCODE_BATCH_VALUE = previous;
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test('unsupported platforms cannot execute processes or accept workflow history', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'autocode-platform-'));
