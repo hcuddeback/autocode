@@ -58,3 +58,11 @@ Record durable choices with meaningful alternatives; do not duplicate task histo
 **Decision:** After deterministic verification and applicable QA pass, agents have standing authority to commit scoped selected-task changes, push their feature branch, and open a PR without another manual review or permission request. Independent critical review remains required for task completion; an owner-accepted review chat can provide that evidence by recording findings and their verified dispositions. No separate external Codex session is mandatory before publication.
 
 **Consequence:** AC-012's two chat-review findings are dispositioned by the protected-state and QA preflight corrections and their regression evidence. Publication may proceed. Configured CI, exact-head Codex PR review when required, and human merge authorization remain merge gates. This decision changes repository contribution policy; it does not add remote adapters to the local workflow CLI or authorize autonomous merging or deployment.
+
+## D-006 — Windows broker isolation
+
+**Context:** Job Objects control descendants but Task Scheduler can launch a helper through a user service outside the job.
+
+**Decision:** Use a unique AppContainer with the fixed internetClient capability for Windows model, QA and verification commands, retaining suspended-start Job Object lifetime containment. Grant worktree access and explicit trusted host resources while keeping `.autocode`, `.git` and common Git metadata read-only. Use allow-only grants; do not rely on package-SID deny rules. Keep helper code and its cleanup manifest outside writable resources and never fall back to an uncontained process. Remove launch-specific permissions and data after termination. Bind receipts to this containment version so legacy Job-only runs require reconciliation.
+
+**Consequence:** A real scheduler regression denies registration and launch of an existing operator-owned task, with a viable trusted-parent control. Ordinary contained fixture work remains available. Current Node/libuv captured-pipe support, cross-volume batch execution, live authenticated Codex compatibility and PRODUCT platform acceptance remain gaps; this decision does not claim full MVP acceptance.

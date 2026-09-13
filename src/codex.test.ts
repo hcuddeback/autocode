@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { writeFileSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -444,6 +445,7 @@ async function sessionFixture(mode: string) {
     `${JSON.stringify({ version: 1, taskId: 'AC-004', taskPath: 'tasks/AC-004.md', taskSha256: createHash('sha256').update(task).digest('hex'), headCommit: head, branch: 'feat/AC-004-codex-sessions' }, null, 2)}\n`,
   );
   const fake = path.join(base, 'fake-codex.mjs');
+  const previousCommit = (await git(worktree, ['rev-parse', 'HEAD^'])).trim();
   await writeFile(fake, fakeCodex());
   return {
     worktree,
@@ -452,6 +454,24 @@ async function sessionFixture(mode: string) {
       command: process.execPath,
       commandPrefixArguments: [fake, mode],
       timeoutMs: 2_000,
+      sandboxWriteDirectories: [base],
+      // Simulate a concurrent operator/legacy writer, which the sandbox cannot impersonate.
+      validateFinalMessage: (message: string) => {
+        if (!message.startsWith('role=implementation')) return;
+        if (mode === 'mutate-preparation')
+          writeFileSync(path.join(runDirectory, 'plan.md'), 'tampered');
+        if (mode === 'mutate-other-state')
+          writeFileSync(
+            path.join(worktree, '.autocode', 'config.yaml'),
+            'changed: true',
+          );
+        if (mode === 'commit') {
+          const gitdir = readFileSync(path.join(worktree, '.git'), 'utf8')
+            .trim()
+            .replace(/^gitdir: /, '');
+          writeFileSync(path.join(gitdir, 'HEAD'), previousCommit + '\n');
+        }
+      },
     },
     cleanup: () => rm(base, { recursive: true, force: true }),
   };
@@ -473,7 +493,7 @@ function selectedTask(): string {
 function fakeCodex(): string {
   return `const mode = process.argv[2];
 import { writeFile } from 'node:fs/promises';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const review = input.includes('independent critical-review role');
@@ -485,10 +505,7 @@ if (!review && mode === 'success-tree') spawn(process.execPath, ['-e', "setTimeo
 if (!review && mode === 'success-detached-tree') spawn(process.execPath, ['-e', "setTimeout(()=>require('node:fs').writeFileSync('escaped.txt','escaped'),1500); setTimeout(()=>{},10000)"], { stdio: 'ignore', detached: true }).unref();
 if (mode === 'overflow') { process.stdout.write('x'.repeat(4096)); await new Promise(resolve => setTimeout(resolve, 10_000)); }
 if (!review) await writeFile('implementation.txt', 'changed');
-if (!review && mode === 'mutate-preparation') { const { readdir } = await import('node:fs/promises'); const [run] = await readdir('.autocode/runs'); await writeFile('.autocode/runs/' + run + '/plan.md', 'tampered'); }
-if (!review && mode === 'mutate-other-state') await writeFile('.autocode/config.yaml', 'changed: true');
 if (!review && mode === 'mutate-credential-state') await writeFile('.env', 'DB_PASSWORD=destroyed\\n');
-if (!review && mode === 'commit') { spawnSync('git', ['add', 'implementation.txt']); spawnSync('git', ['commit', '-m', 'unexpected']); }
 if (mode === 'malformed') { console.log('{bad json'); process.exit(0); }
 const id = review && mode !== 'duplicate' ? '${REVIEW_ID}' : '${IMPLEMENTATION_ID}';
 console.log(JSON.stringify({ type: 'thread.started', thread_id: id }));

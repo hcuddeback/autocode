@@ -49,6 +49,8 @@ export interface CodexSessionOptions {
   commandPrefixArguments?: string[];
   timeoutMs?: number;
   maxOutputBytes?: number;
+  /** Additional directories explicitly authorized by the trusted operator. */
+  sandboxWriteDirectories?: readonly string[];
   /** Internal integrated execution: one fresh role, immutable artifact directory. */
   role?: CodexSessionRecord['role'];
   artifactName?: string;
@@ -345,6 +347,10 @@ async function runRole(
     options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
     prompt,
+    options.sandboxWriteDirectories,
+    (options.commandPrefixArguments ?? []).filter((argument) =>
+      path.isAbsolute(argument),
+    ),
   );
   const completedAt = new Date().toISOString();
   const sessionId = parseSessionId(result.stdout);

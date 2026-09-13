@@ -5,6 +5,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   rm,
   symlink,
@@ -354,9 +355,16 @@ test('verification detects content changes whose porcelain status is unchanged',
   }
 });
 
-test('verification detects a branch change that preserves HEAD', async () => {
+test('verification denies linked Git metadata writes outside its worktree sandbox', async () => {
   const fixture = await createFixture([
-    { name: 'branch_drift', command: 'git', args: ['switch', 'other'] },
+    {
+      name: 'branch_drift',
+      command: 'node',
+      args: [
+        '-e',
+        "const fs=require('node:fs'),path=require('node:path');const gitdir=fs.readFileSync('.git','utf8').trim().replace(/^gitdir: /,'');try{fs.writeFileSync(path.join(gitdir,'HEAD'),'ref: refs/heads/other\\n');}catch(e){console.log(e.code);process.exit(7);}",
+      ],
+    },
   ]);
   try {
     await execFileAsync('git', ['branch', 'other'], { cwd: fixture.worktree });
@@ -375,7 +383,19 @@ test('verification detects a branch change that preserves HEAD', async () => {
         'utf8',
       ),
     ) as { gitIdentityUnchanged: boolean };
-    assert.equal(record.gitIdentityUnchanged, false);
+    assert.equal(record.gitIdentityUnchanged, true);
+    assert.match(
+      await readFile(
+        path.join(
+          fixture.runDirectory,
+          'evidence',
+          'branch_drift',
+          'stdout.txt',
+        ),
+        'utf8',
+      ),
+      /EACCES|EPERM/,
+    );
   } finally {
     await cleanup(fixture);
   }
@@ -385,15 +405,38 @@ test('verification retains evidence when post-check Git inspection fails', async
   const fixture = await createFixture([
     {
       name: 'unborn_head',
-      command: 'git',
-      args: ['switch', '--orphan', 'unborn-head'],
+      command: 'node',
+      args: [
+        '-e',
+        "const fs=require('node:fs');fs.writeFileSync('operator-ready','ready');const timer=setInterval(()=>{if(fs.readFileSync('.git','utf8').includes('missing-repository')){clearInterval(timer);}},20)",
+      ],
     },
   ]);
   try {
-    await assert.rejects(
+    const execution = assert.rejects(
       () => runDeterministicVerification(fixture.worktree),
       /verification failed/,
     );
+    const deadline = Date.now() + 30_000;
+    while (true) {
+      try {
+        await readFile(path.join(fixture.worktree, 'operator-ready'));
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      if (Date.now() > deadline)
+        throw new Error('Verification command did not start');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const handle = await open(path.join(fixture.worktree, '.git'), 'r+');
+    try {
+      await handle.truncate(0);
+      await handle.write('gitdir: missing-repository\n');
+    } finally {
+      await handle.close();
+    }
+    await execution;
     const record = JSON.parse(
       await readFile(
         path.join(
@@ -557,15 +600,37 @@ test('verification retains spawn errors and detects protected-input drift', asyn
       command: 'node',
       args: [
         '-e',
-        "require('fs').appendFileSync('.autocode/config.yaml', '# changed')",
+        "const fs=require('node:fs');fs.writeFileSync('operator-ready','ready');const timer=setInterval(()=>{if(fs.readFileSync('.autocode/config.yaml','utf8').endsWith('# changed'))clearInterval(timer);},20)",
       ],
     },
   ]);
   try {
-    await assert.rejects(
+    const execution = assert.rejects(
       () => runDeterministicVerification(protectedDrift.worktree),
       /verification failed/,
     );
+    const deadline = Date.now() + 30_000;
+    while (true) {
+      try {
+        await readFile(path.join(protectedDrift.worktree, 'operator-ready'));
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      if (Date.now() > deadline)
+        throw new Error('Verification command did not start');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const configPath = path.join(
+      protectedDrift.worktree,
+      '.autocode',
+      'config.yaml',
+    );
+    await writeFile(
+      configPath,
+      (await readFile(configPath, 'utf8')) + '# changed',
+    );
+    await execution;
     const record = JSON.parse(
       await readFile(
         path.join(

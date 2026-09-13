@@ -88,7 +88,7 @@ After filling the prepared plan, run a writable implementation session followed 
 node dist/cli.js sessions path/to/project
 ```
 
-The command atomically reserves its session output, passes scoped prompts through stdin, captures distinct Codex thread IDs, and stores bounded, redacted JSONL, stderr, final-message, and session metadata artifacts below the prepared run. It protects ignored credential files from implementation changes and runs Windows sessions inside kill-on-close Job Objects. Linux and macOS execution fail closed pending accepted containment. It stops on stale preparation, changed Git or protected local state, missing uncommitted implementation changes, existing evidence, timeout, output overflow, malformed events, failed exit, or reused session identity. Session resume, verification, and review-fix loops are not part of this command yet.
+The command atomically reserves its session output, passes scoped prompts through stdin, captures distinct Codex thread IDs, and stores bounded, redacted JSONL, stderr, final-message, and session metadata artifacts below the prepared run. It protects ignored credential files from implementation changes and runs Windows sessions inside AppContainers and kill-on-close Job Objects. Linux and macOS execution fail closed pending accepted containment. It stops on stale preparation, changed Git or protected local state, missing uncommitted implementation changes, existing evidence, timeout, output overflow, malformed events, failed exit, or reused session identity. Session resume, verification, and review-fix loops are not part of this command yet.
 
 Configure deterministic checks in `.autocode/config.yaml` as executable and argument arrays:
 
@@ -113,7 +113,7 @@ Then run them from the prepared task worktree:
 node dist/cli.js verify path/to/project
 ```
 
-`verify` runs native executables without a shell and Windows CMD/BAT shims through a contained cmd.exe interpreter with escaped arguments and stops on the first nonzero exit, timeout, output overflow, Git-identity change, or worktree change. It atomically reserves `.autocode/runs/<run>/evidence/` and retains redacted stdout, stderr, command arguments, exit status, timing, and the exact branch and commit for every attempted check. Windows Job Objects terminate detached descendants before evidence is accepted; Linux and macOS execution fail closed pending accepted containment. NUL and raw line-break arguments are rejected for batch shims. Existing evidence and stale preparation fail closed.
+`verify` runs native executables without a shell and Windows CMD/BAT shims through a contained cmd.exe interpreter with escaped arguments and stops on the first nonzero exit, timeout, output overflow, Git-identity change, or worktree change. It atomically reserves `.autocode/runs/<run>/evidence/` and retains redacted stdout, stderr, command arguments, exit status, timing, and the exact branch and commit for every attempted check. Windows AppContainers deny user-service broker access, and Job Objects terminate detached descendants before evidence is accepted; Linux and macOS execution fail closed pending accepted containment. NUL and raw line-break arguments are rejected for batch shims. Existing evidence and stale preparation fail closed.
 
 Workflow adapters can use `runBoundedFixLoop` from `fix-loop.js` with the validated `fixLoop.maxAttempts` policy. The initial check does not consume an attempt; each applied or attempted fix does. The runner stops on success, blocks immediately on a non-retryable result, and fails closed on ceiling exhaustion, callback errors, or malformed results while returning ordered immutable transitions. The integrated workflow uses finite durable fix/check/review rounds with the same configured ceiling; the reusable in-memory loop remains available to adapters.
 
@@ -163,3 +163,5 @@ Do not expand beyond MVP 1 without updating `docs/PRODUCT.md`, recording a durab
 ## License
 
 License information must be added before the first public release.
+
+Windows command compatibility remains bounded: the verified Node/libuv runtime cannot capture child-process pipes inside AppContainer, so commands requiring that behavior fail closed. Batch commands on another volume and authenticated live Codex compatibility remain unaccepted. The verified CMD fixture does not establish full package-manager compatibility. See docs/SECURITY.md and docs/MVP_AUDIT.md.
