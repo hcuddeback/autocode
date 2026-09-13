@@ -32,6 +32,8 @@ MVP 1 assumes a trusted operator and local machine. Repository content, tasks, i
 
 ## Pre-release checklist
 
+Fresh workflow execution rejects pre-existing phase receipts as terminal tampering; only reconciliation of an already in-flight effect may reuse a validated receipt. Atomic publication also rejects receipt collisions. Every deterministic verification command checks the discovered ignored credential file set and content hashes before accepting evidence, including unsuccessful commands. Credential tampering retains failed check evidence and terminates the workflow before later checks or gates.
+
 Codex protected-state and credential checks run after every role invocation, including subprocess failure or invalid output. Detected tampering takes precedence over role errors and produces a terminal durable workflow failure without publishing a phase receipt. Resume of that failed run cannot reconcile injected downstream receipts into passing gates.
 
 Workflow receipts redact free-text payload values before serialization, preserving JSON types, validated gate controls, and freshness metadata. Review verdicts are validated from bounded raw model output in memory before redacted display artifacts are written; display text is never used as gate authority. QA protects the discovered ignored credential file set and content hashes, including additions and deletions. Credential fingerprints also bind workflow freshness, so changing ignored credentials invalidates prior evidence on resume.

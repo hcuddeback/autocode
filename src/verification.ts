@@ -17,6 +17,7 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { parse as parseYaml } from 'yaml';
 import {
+  assertCredentialFilesUnchanged,
   assertDirectoryUnchanged,
   discoverWorkspaceCredentials,
   redactSecrets,
@@ -279,7 +280,12 @@ export async function runDeterministicVerification(
           ignoredStateEntries,
         );
         return true;
-      })) === true && (await filesUnchanged(protectedFiles));
+      })) === true &&
+      (await filesUnchanged(protectedFiles)) &&
+      (await safeInspection(async () => {
+        await assertCredentialFilesUnchanged(root, credentials.files);
+        return true;
+      })) === true;
     stateTampered = !protectedStateUnchanged;
     const record: VerificationCheckRecord = {
       version: 1,

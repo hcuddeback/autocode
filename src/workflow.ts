@@ -37,6 +37,11 @@ import {
 
 const execFileAsync = promisify(execFile);
 const MAX_FILE_BYTES = 1024 * 1024;
+class WorkflowReceiptTamperingError extends Error {
+  constructor() {
+    super('protected workflow receipt already exists during fresh execution');
+  }
+}
 const PAYLOAD_TEXT_FIELDS = new Set([
   'reason',
   'summary',
@@ -267,8 +272,15 @@ export async function runProjectWorkflow(
       await handle.close();
     }
     await safePath(root, receiptDirectory, true);
-    await link(temporary, destination);
-    await unlink(temporary);
+    try {
+      await link(temporary, destination);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST')
+        throw new WorkflowReceiptTamperingError();
+      throw error;
+    } finally {
+      await unlink(temporary);
+    }
   }
 
   async function roundPassed(round: number): Promise<boolean> {
@@ -313,14 +325,20 @@ export async function runProjectWorkflow(
     {
       async execute(phase, context) {
         try {
+          // Only reconciliation may reuse a receipt for an already in-flight effect.
+          if (
+            (await optionalRead(
+              root,
+              `${receiptDirectory}/${phase.id}.json`,
+            )) !== undefined
+          )
+            throw new WorkflowReceiptTamperingError();
           const previous = await latest();
           if (previous && previous.workspace !== (await currentWorkspace()))
             return {
               kind: 'blocked',
               reason: 'workspace changed; evidence requires a new run',
             };
-          const own = await receipt(phase.id);
-          if (own) return own.result;
           let result: DurableEffectResult = {
             kind: 'applied',
             reason: `${phase.id} evidence retained`,
@@ -554,7 +572,10 @@ export async function runProjectWorkflow(
           await save(phase.id, result, evidence ?? { reason: result.reason });
           return result;
         } catch (error) {
-          if (error instanceof CodexStateTamperingError)
+          if (
+            error instanceof CodexStateTamperingError ||
+            error instanceof WorkflowReceiptTamperingError
+          )
             return { kind: 'failed', reason: error.message };
           throw error;
         }

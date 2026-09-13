@@ -772,6 +772,178 @@ qa:{async run(){await writeFile(${JSON.stringify(effectLog)},'effect-applied');p
   }
 });
 
+test('late QA receipt injection cannot bypass fresh completion gates', async (t) => {
+  for (const payload of ['valid', 'malformed']) {
+    await t.test(payload, async () => {
+      const f = await fixture('success', 'remote');
+      try {
+        const policyPath = path.join(f.root, '.autocode', 'workflow.json');
+        const policy = JSON.parse(await readFile(policyPath, 'utf8'));
+        policy.qa = {
+          kind: 'required',
+          reason: 'Observe the fixture result through a runtime scenario.',
+          scenarios: [
+            {
+              name: 'result',
+              description: 'Read the implemented fixture result.',
+            },
+          ],
+        };
+        await writeFile(policyPath, JSON.stringify(policy));
+        let injected = false;
+        const options = {
+          ...f.options,
+          qa: {
+            async run() {
+              return {
+                kind: 'passed',
+                reason: 'Observed the expected fixture result.',
+              };
+            },
+          },
+          durable: {
+            async onCheckpoint(
+              checkpoint: string,
+              state: { phases: readonly { id: string; status: string }[] },
+            ) {
+              if (
+                checkpoint !== 'after-effect-applied' ||
+                state.phases.find((p) => p.status === 'in-flight')?.id !== 'qa'
+              )
+                return;
+              // Reproduce delayed adapter work after its state check and receipt publication.
+              const runs = path.join(f.root, '.autocode', 'runs');
+              const directory = path.join(
+                runs,
+                (await readdir(runs)).find((n) =>
+                  n.startsWith('durable-workflow-'),
+                )!,
+              );
+              const receipt = JSON.parse(
+                await readFile(path.join(directory, 'qa.json'), 'utf8'),
+              );
+              receipt.phaseId = 'completion';
+              await writeFile(
+                path.join(directory, 'completion.json'),
+                payload === 'valid' ? JSON.stringify(receipt) : '{invalid',
+              );
+              injected = true;
+            },
+          },
+        };
+        const result = await runProjectWorkflow(f.root, options);
+        assert.equal(injected, true);
+        assert.equal(result.outcome, 'failed');
+        assert.match(
+          result.state.reason,
+          /receipt already exists during fresh execution/,
+        );
+        if (payload === 'malformed')
+          await assert.rejects(
+            () =>
+              runProjectWorkflow(f.root, { ...f.options, resumeOnly: true }),
+            /JSON|Unexpected/,
+          );
+        else {
+          const resumed = await runProjectWorkflow(f.root, {
+            ...f.options,
+            resumeOnly: true,
+          });
+          assert.equal(resumed.outcome, 'failed');
+          assert.equal(resumed.state.eventSequence, result.state.eventSequence);
+        }
+        assert.deepEqual(await f.calls(), [
+          'planning',
+          'implementation',
+          'review',
+        ]);
+      } finally {
+        await f.cleanup();
+      }
+    });
+  }
+});
+
+test('verification protects ignored credentials before accepting command evidence', async (t) => {
+  for (const change of [
+    'unchanged',
+    'modify',
+    'delete',
+    'add',
+    'add-only',
+    'modify-failed',
+  ]) {
+    await t.test(change, async () => {
+      const f = await fixture(
+        'success',
+        'local',
+        change === 'add-only' ? [] : ['sensitive-fixture-secret-0123456789'],
+      );
+      try {
+        const configPath = path.join(f.root, '.autocode', 'config.yaml');
+        const config = parse(await readFile(configPath, 'utf8'));
+        config.verification.commands[0].args = [
+          '-e',
+          `const fs = require('node:fs');
+const change = ${JSON.stringify(change)};
+if (change.startsWith('modify')) fs.writeFileSync('.env', 'FIXTURE_VALUE=changed-secret');
+if (change === 'delete') fs.unlinkSync('.env');
+if (change === 'add' || change === 'add-only') fs.writeFileSync('.env.new', 'FIXTURE_VALUE=added-secret');
+process.exit(change === 'modify-failed' ? 1 : 0);`,
+        ];
+        // A second command must never run after credential tampering.
+        config.verification.commands.push({
+          name: 'later',
+          command: 'node',
+          args: [
+            '-e',
+            "require('node:fs').writeFileSync('later-check.txt','ran')",
+          ],
+        });
+        if (change === 'unchanged') config.verification.commands.pop();
+        await writeFile(configPath, stringify(config));
+        const result = await runProjectWorkflow(f.root, f.options);
+        assert.equal(
+          result.outcome,
+          change === 'unchanged' ? 'completed' : 'failed',
+        );
+        if (change !== 'unchanged') {
+          assert.match(result.state.reason, /protected AutoCode state changed/);
+          await assert.rejects(
+            () => readFile(path.join(f.root, 'later-check.txt')),
+            { code: 'ENOENT' },
+          );
+          assert.deepEqual(await f.calls(), ['planning', 'implementation']);
+          const head = await git(f.root, ['rev-parse', 'HEAD']);
+          const summary = JSON.parse(
+            await readFile(
+              path.join(
+                f.root,
+                '.autocode',
+                'runs',
+                `AC-001-${head.slice(0, 12)}`,
+                'workflow-verify-0',
+                'summary.json',
+              ),
+              'utf8',
+            ),
+          );
+          assert.equal(summary.passed, false);
+          assert.equal(summary.checks.length, 1);
+          assert.equal(summary.checks[0].protectedStateUnchanged, false);
+          await assert.rejects(
+            () =>
+              runProjectWorkflow(f.root, { ...f.options, resumeOnly: true }),
+            /stale/,
+          );
+        }
+      } finally {
+        await f.cleanup();
+      }
+    });
+  }
+});
+
 test('QA callbacks cannot forge completion receipts or replay poisoned state', async () => {
   const f = await fixture();
   try {
