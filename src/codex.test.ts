@@ -458,6 +458,8 @@ async function sessionFixture(mode: string) {
       // Simulate a concurrent operator/legacy writer, which the sandbox cannot impersonate.
       validateFinalMessage: (message: string) => {
         if (!message.startsWith('role=implementation')) return;
+        if (mode === 'mutate-credential-state')
+          writeFileSync(path.join(worktree, '.env'), 'DB_PASSWORD=destroyed\n');
         if (mode === 'mutate-preparation')
           writeFileSync(path.join(runDirectory, 'plan.md'), 'tampered');
         if (mode === 'mutate-other-state')
@@ -505,7 +507,6 @@ if (!review && mode === 'success-tree') spawn(process.execPath, ['-e', "setTimeo
 if (!review && mode === 'success-detached-tree') spawn(process.execPath, ['-e', "setTimeout(()=>require('node:fs').writeFileSync('escaped.txt','escaped'),1500); setTimeout(()=>{},10000)"], { stdio: 'ignore', detached: true }).unref();
 if (mode === 'overflow') { process.stdout.write('x'.repeat(4096)); await new Promise(resolve => setTimeout(resolve, 10_000)); }
 if (!review) await writeFile('implementation.txt', 'changed');
-if (!review && mode === 'mutate-credential-state') await writeFile('.env', 'DB_PASSWORD=destroyed\\n');
 if (mode === 'malformed') { console.log('{bad json'); process.exit(0); }
 const id = review && mode !== 'duplicate' ? '${REVIEW_ID}' : '${IMPLEMENTATION_ID}';
 console.log(JSON.stringify({ type: 'thread.started', thread_id: id }));

@@ -165,3 +165,5 @@ Do not expand beyond MVP 1 without updating `docs/PRODUCT.md`, recording a durab
 License information must be added before the first public release.
 
 Windows command compatibility remains bounded: the verified Node/libuv runtime cannot capture child-process pipes inside AppContainer, so commands requiring that behavior fail closed. Batch commands on another volume and authenticated live Codex compatibility remain unaccepted. The verified CMD fixture does not establish full package-manager compatibility. See docs/SECURITY.md and docs/MVP_AUDIT.md.
+
+Windows sandbox commands cannot read discovered ignored credential files and receive a minimal environment that omits operator tokens. Profile/home variables point to the private sandbox. Explicit credential-reference authentication remains unaccepted; existing CLI authentication is not implicitly inherited.

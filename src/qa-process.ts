@@ -8,7 +8,10 @@ import {
   stat,
   realpath,
   readFile,
+  readdir,
+  lstat,
 } from 'node:fs/promises';
+import { discoverWorkspaceCredentials } from './codex.js';
 import { WINDOWS_SANDBOX } from './windows-sandbox.js';
 import { randomUUID } from 'node:crypto';
 import { resolveExecutable, runProcess } from './verification.js';
@@ -260,6 +263,32 @@ async function windowsJobScript(
       return realpath(resource);
     }),
   );
+  const blockedCredentials: string[] = [];
+  let repository = false;
+  try {
+    await stat(path.join(cwd, '.git'));
+    repository = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  if (repository) {
+    for (const relative of (
+      await discoverWorkspaceCredentials(cwd)
+    ).files.keys())
+      blockedCredentials.push(await realpath(path.resolve(cwd, relative)));
+  } else {
+    // Generic non-repository adapters still protect recognizable local secrets.
+    for (const entry of await readdir(cwd))
+      if (
+        /^\.env(?:\.|$)/i.test(entry) ||
+        /(?:secret|credential)/i.test(entry)
+      ) {
+        const candidate = path.join(cwd, entry);
+        if ((await lstat(candidate)).isSymbolicLink())
+          throw new Error('credential paths must not be links');
+        blockedCredentials.push(await realpath(candidate));
+      }
+  }
   const protectedResources = [
     path.join(cwd, '.autocode'),
     path.join(cwd, '.git'),
@@ -317,13 +346,15 @@ async function windowsJobScript(
         path.dirname(command),
         ...readFiles,
         ...protectedResources,
+        ...blockedCredentials,
       ],
       cleaned,
       ioDirectory: directory,
       protectedResources,
+      blockedCredentials,
     }),
   ).toString('base64');
-  const script = `param([switch]$Cleanup)\n$ErrorActionPreference = 'Stop'\n[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)\nAdd-Type -TypeDefinition @'\n${WINDOWS_JOB_HOST}\n${WINDOWS_SANDBOX}\n'@\n$p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}')) | ConvertFrom-Json\nif ($Cleanup) { [AutoCodeSandbox]::Cleanup($p.profile,[string[]]$p.cleanupTargets,$p.ioDirectory); exit 0 }\n$result=[AutoCodeQaJob]::Run($p.command, [string[]]$p.arguments, $p.cwd, [int]$p.maxOutputBytes, [int]$p.parentPid, $p.inputBase64, $p.verbatimTail, [string[]]$p.readFiles, [string[]]$p.writeDirectories, $p.runtime, $p.profile,$p.ioDirectory,[string[]]$p.protectedResources)\n[IO.File]::WriteAllText($p.cleaned,'cleaned')\nexit $result`;
+  const script = `param([switch]$Cleanup)\n$ErrorActionPreference = 'Stop'\n[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)\nAdd-Type -TypeDefinition @'\n${WINDOWS_JOB_HOST}\n${WINDOWS_SANDBOX}\n'@\n$p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}')) | ConvertFrom-Json\nif ($Cleanup) { [AutoCodeSandbox]::Cleanup($p.profile,[string[]]$p.cleanupTargets,$p.ioDirectory); exit 0 }\n$result=[AutoCodeQaJob]::Run($p.command, [string[]]$p.arguments, $p.cwd, [int]$p.maxOutputBytes, [int]$p.parentPid, $p.inputBase64, $p.verbatimTail, [string[]]$p.readFiles, [string[]]$p.writeDirectories, $p.runtime, $p.profile,$p.ioDirectory,[string[]]$p.protectedResources,[string[]]$p.blockedCredentials)\n[IO.File]::WriteAllText($p.cleaned,'cleaned')\nexit $result`;
   const scriptPath = path.join(directory, 'host.ps1');
   await writeFile(scriptPath, script, { flag: 'wx' });
   return { script: scriptPath, directory, cleaned };
@@ -395,7 +426,7 @@ public static class AutoCodeQaJob {
     }
     result.Append('\\',slashes*2); result.Append('"'); return result.ToString();
   }
-  public static int Run(string command,string[] arguments,string cwd,int maxOutputBytes,int parentPid,string inputBase64,string verbatimTail,string[] readFiles,string[] writeDirectories,string runtime,string profile,string ioDirectory,string[] protectedResources) {
+  public static int Run(string command,string[] arguments,string cwd,int maxOutputBytes,int parentPid,string inputBase64,string verbatimTail,string[] readFiles,string[] writeDirectories,string runtime,string profile,string ioDirectory,string[] protectedResources,string[] blockedCredentials) {
     IntPtr job=IntPtr.Zero,output=IntPtr.Zero,error=IntPtr.Zero,input=IntPtr.Zero,parent=IntPtr.Zero;
     ProcessInfo process=new ProcessInfo();
     AutoCodeSandbox sandbox=null;
@@ -412,14 +443,14 @@ public static class AutoCodeQaJob {
       File.WriteAllBytes(inputPath,Convert.FromBase64String(inputBase64));
       input=CreateFile(inputPath,0x80000000,3,ref security,3,0x80,IntPtr.Zero);
       Check(output!=new IntPtr(-1) && error!=new IntPtr(-1) && input!=new IntPtr(-1));
-      sandbox=new AutoCodeSandbox(profile,cwd,command,runtime,readFiles,writeDirectories,protectedResources,ioDirectory);
+      sandbox=new AutoCodeSandbox(profile,cwd,command,runtime,readFiles,writeDirectories,protectedResources,ioDirectory,blockedCredentials);
       command=sandbox.Command;
       var startup=new AutoCodeSandbox.StartupEx(); startup.Info.Size=Marshal.SizeOf(startup); startup.Info.Flags=0x100;
       startup.Info.Input=input; startup.Info.Output=output; startup.Info.Error=error; startup.Attributes=sandbox.Attributes;
       var line=new StringBuilder(Quote(command));
       if(!String.IsNullOrEmpty(verbatimTail)) line.Append(" ").Append(verbatimTail);
       else foreach(string argument in arguments) line.Append(" ").Append(Quote(argument));
-      Check(CreateProcess(command,line,IntPtr.Zero,IntPtr.Zero,true,0x08080004,IntPtr.Zero,cwd,ref startup,out process));
+      Check(CreateProcess(command,line,IntPtr.Zero,IntPtr.Zero,true,0x08080404,sandbox.EnvironmentBlock,cwd,ref startup,out process));
       if(!AssignProcessToJobObject(job,process.Process)) { TerminateProcess(process.Process,1); Check(false); }
       Check(ResumeThread(process.Thread)!=0xffffffff);
       uint wait;

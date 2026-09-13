@@ -161,8 +161,9 @@ if (role === 'implementation') fs.writeFileSync('result.txt', mode === 'fix' || 
 if (role === 'fix') fs.writeFileSync('result.txt', mode === 'never' ? 'broken' : 'good');
 let final = role === 'planning' ? 'GENERATED_PLAN_MARKER: write result.txt then verify its content.' : 'Implemented only the fixture result.';
 if (role === 'review') final = mode === 'malformed' ? 'Looks fine' : JSON.stringify(fs.readFileSync('result.txt','utf8') === 'needs-review' ? {outcome:'changes-requested',findings:[{id:'result',severity:'high',summary:'result.txt:1 still needs the fixture fix'}]} : {outcome:'passed',findings:[]});
-if (fs.existsSync('.env')) {
-  const values = fs.readFileSync('.env','utf8').split('\\n').map(line=>line.slice(line.indexOf('=')+1)).join(' ');
+// Known synthetic output tests redaction independently of credential-file access.
+if (${JSON.stringify(credentials)}.length) {
+  const values = ${JSON.stringify(credentials)}.join(' ');
   if (role === 'planning') final += '\\nCredential display: ' + values;
   if (role === 'review' && mode !== 'malformed') {
     const verdict = JSON.parse(final);
@@ -291,7 +292,7 @@ test('integrated workflow plans, implements, verifies, reviews and completes wit
   }
 });
 
-test('resume rejects receipts created before AppContainer containment', async () => {
+test('resume rejects legacy process containment receipts', async () => {
   const f = await fixture();
   try {
     const result = await runProjectWorkflow(f.root, f.options);
@@ -299,55 +300,61 @@ test('resume rejects receipts created before AppContainer containment', async ()
     const hash = (text: string) =>
       createHash('sha256').update(text).digest('hex');
     const head = await git(f.root, ['rev-parse', 'HEAD']);
-    const legacy = hash(
-      JSON.stringify({
-        head,
-        branch: await git(f.root, ['branch', '--show-current']),
-        task: hash(
-          await readFile(path.join(f.root, 'tasks', 'AC-001.md'), 'utf8'),
-        ),
-        config: hash(
-          await readFile(path.join(f.root, '.autocode', 'config.yaml'), 'utf8'),
-        ),
-        policy: hash(
-          await readFile(
-            path.join(f.root, '.autocode', 'workflow.json'),
-            'utf8',
+    const legacyInput = {
+      head,
+      branch: await git(f.root, ['branch', '--show-current']),
+      task: hash(
+        await readFile(path.join(f.root, 'tasks', 'AC-001.md'), 'utf8'),
+      ),
+      config: hash(
+        await readFile(path.join(f.root, '.autocode', 'config.yaml'), 'utf8'),
+      ),
+      policy: hash(
+        await readFile(path.join(f.root, '.autocode', 'workflow.json'), 'utf8'),
+      ),
+      plan: hash(
+        await readFile(
+          path.join(
+            f.root,
+            '.autocode',
+            'runs',
+            `AC-001-${head.slice(0, 12)}`,
+            'plan.md',
           ),
+          'utf8',
         ),
-        plan: hash(
-          await readFile(
-            path.join(
-              f.root,
-              '.autocode',
-              'runs',
-              `AC-001-${head.slice(0, 12)}`,
-              'plan.md',
-            ),
-            'utf8',
-          ),
-        ),
-      }),
-    );
+      ),
+    };
     const receiptPath = path.join(result.runDirectory, 'planning.json');
     const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
-    assert.notEqual(receipt.binding, legacy);
-    receipt.binding = legacy;
-    await writeFile(receiptPath, JSON.stringify(receipt));
+    const currentBinding = receipt.binding;
     const calls = await f.calls();
     const history = await readFile(
       path.join(result.runDirectory, 'events.jsonl'),
       'utf8',
     );
-    await assert.rejects(
-      () => runProjectWorkflow(f.root, { ...f.options, resumeOnly: true }),
-      /invalid workflow receipt/,
-    );
-    assert.deepEqual(await f.calls(), calls);
-    assert.equal(
-      await readFile(path.join(result.runDirectory, 'events.jsonl'), 'utf8'),
-      history,
-    );
+    for (const legacy of [
+      hash(JSON.stringify(legacyInput)),
+      hash(
+        JSON.stringify({
+          processContainment: 'windows-appcontainer-job-v1',
+          ...legacyInput,
+        }),
+      ),
+    ]) {
+      assert.notEqual(currentBinding, legacy);
+      receipt.binding = legacy;
+      await writeFile(receiptPath, JSON.stringify(receipt));
+      await assert.rejects(
+        () => runProjectWorkflow(f.root, { ...f.options, resumeOnly: true }),
+        /invalid workflow receipt/,
+      );
+      assert.deepEqual(await f.calls(), calls);
+      assert.equal(
+        await readFile(path.join(result.runDirectory, 'events.jsonl'), 'utf8'),
+        history,
+      );
+    }
   } finally {
     await f.cleanup();
   }
@@ -1615,14 +1622,12 @@ test('verification protects ignored credentials before accepting command evidenc
       try {
         const configPath = path.join(f.root, '.autocode', 'config.yaml');
         const config = parse(await readFile(configPath, 'utf8'));
+        const signal = path.join(f.root, 'node_modules', 'operator-ready');
         config.verification.commands[0].args = [
           '-e',
-          `const fs = require('node:fs');
-const change = ${JSON.stringify(change)};
-if (change.startsWith('modify')) fs.writeFileSync('.env', 'FIXTURE_VALUE=changed-secret');
-if (change === 'delete') fs.unlinkSync('.env');
-if (change === 'add' || change === 'add-only') fs.writeFileSync('.env.new', 'FIXTURE_VALUE=added-secret');
-process.exit(change === 'modify-failed' ? 1 : 0);`,
+          change === 'unchanged'
+            ? 'process.exit(0)'
+            : `const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(signal)},'ready');const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(signal + '.applied')})){clearInterval(timer);process.exit(${change === 'modify-failed' ? 1 : 0});}},20);`,
         ];
         // A second command must never run after credential tampering.
         config.verification.commands.push({
@@ -1635,7 +1640,24 @@ process.exit(change === 'modify-failed' ? 1 : 0);`,
         });
         if (change === 'unchanged') config.verification.commands.pop();
         await writeFile(configPath, stringify(config));
-        const result = await runProjectWorkflow(f.root, f.options);
+        const execute = () => runProjectWorkflow(f.root, f.options);
+        const result =
+          change === 'unchanged'
+            ? await execute()
+            : await withOperatorMutation(signal, execute, async () => {
+                if (change.startsWith('modify'))
+                  await writeFile(
+                    path.join(f.root, '.env'),
+                    'FIXTURE_VALUE=changed-secret',
+                  );
+                if (change === 'delete') await rm(path.join(f.root, '.env'));
+                if (change === 'add' || change === 'add-only')
+                  await writeFile(
+                    path.join(f.root, '.env.new'),
+                    'FIXTURE_VALUE=added-secret',
+                  );
+              });
+
         assert.equal(
           result.outcome,
           change === 'unchanged' ? 'completed' : 'failed',
@@ -1852,12 +1874,44 @@ test('QA detects ignored credential modification, deletion and additions', async
           ],
         };
         await writeFile(policyPath, JSON.stringify(policy));
+        const signal = path.join(
+          f.directory,
+          'operator-signals',
+          'credential-ready',
+        );
         const options = {
           ...f.options,
           qa: containedFixtureQa(
             f,
             {
               async run() {
+                if (change !== 'unchanged') {
+                  await writeFile(signal, 'ready');
+                  while (true) {
+                    try {
+                      await readFile(signal + '.applied');
+                      break;
+                    } catch (error) {
+                      if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+                        throw error;
+                    }
+                    await new Promise((resolve) => setTimeout(resolve, 20));
+                  }
+                }
+                return {
+                  kind: 'passed',
+                  reason: `Observed expected result with passed true ${secret}.`,
+                };
+              },
+            }.run,
+            { change, secret, signal },
+          ),
+        };
+        const execute = () => runProjectWorkflow(f.root, options);
+        const result =
+          change === 'unchanged'
+            ? await execute()
+            : await withOperatorMutation(signal, execute, async () => {
                 if (change === 'modify')
                   await writeFile(
                     path.join(f.root, '.env'),
@@ -1869,16 +1923,8 @@ test('QA detects ignored credential modification, deletion and additions', async
                     path.join(f.root, '.env.new'),
                     'FIXTURE_VALUE=new-sensitive-fixture-secret',
                   );
-                return {
-                  kind: 'passed',
-                  reason: `Observed expected result with passed true ${secret}.`,
-                };
-              },
-            }.run,
-            { change, secret },
-          ),
-        };
-        const result = await runProjectWorkflow(f.root, options);
+              });
+
         assert.equal(
           result.outcome,
           change === 'unchanged' ? 'completed' : 'failed',

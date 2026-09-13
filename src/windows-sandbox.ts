@@ -22,9 +22,10 @@ public sealed class AutoCodeSandbox : IDisposable {
   IntPtr sid, internet, capabilities, capabilityArray;
   SecurityIdentifier identity;
   public IntPtr Attributes;
+  public IntPtr EnvironmentBlock;
   public string Command;
   static void Check(bool value) { if(!value) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()); }
-  public AutoCodeSandbox(string profile,string cwd,string command,string runtime,string[] readFiles,string[] writeDirectories,string[] protectedResources,string ioDirectory) {
+  public AutoCodeSandbox(string profile,string cwd,string command,string runtime,string[] readFiles,string[] writeDirectories,string[] protectedResources,string ioDirectory,string[] blockedCredentials) {
     name=profile; manifest=Path.Combine(ioDirectory,"acl-targets");
     try {
       Marshal.ThrowExceptionForHR(CreateAppContainerProfile(name,name,"AutoCode isolated command",IntPtr.Zero,0,out sid));
@@ -45,7 +46,8 @@ public sealed class AutoCodeSandbox : IDisposable {
         }
       }
       foreach(string file in readFiles) Grant(file,false,Directory.Exists(file));
-      foreach(string resource in protectedResources) ProtectMetadata(resource);
+      foreach(string resource in protectedResources) ProtectMetadata(resource,true);
+      foreach(string credential in blockedCredentials) ProtectMetadata(credential,false);
       // Package-manager shims need an AppContainer-readable Node installation.
       string runtimeBin=Path.Combine(cache,"runtime"); Directory.CreateDirectory(runtimeBin);
       string node=Path.Combine(runtimeBin,Path.GetFileName(runtime)); File.Copy(runtime,node,false);
@@ -53,6 +55,14 @@ public sealed class AutoCodeSandbox : IDisposable {
       Environment.SetEnvironmentVariable("PATH",runtimeBin+";"+Environment.GetEnvironmentVariable("PATH"));
       Environment.SetEnvironmentVariable("NODE_OPTIONS","--preserve-symlinks --preserve-symlinks-main");
       Environment.SetEnvironmentVariable("TEMP",cache); Environment.SetEnvironmentVariable("TMP",cache);
+      // Never inherit the operator's token/provider/proxy/home environment.
+      var environment=new System.Collections.Generic.SortedDictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+      foreach(string key in new string[]{"SystemRoot","WINDIR","COMSPEC","PATH","PATHEXT","OS","NUMBER_OF_PROCESSORS","PROCESSOR_ARCHITECTURE","AUTOCODE_NODE","NODE_OPTIONS","TEMP","TMP"}) {
+        string value=Environment.GetEnvironmentVariable(key); if(value!=null) environment[key]=value;
+      }
+      environment["USERPROFILE"]=cache; environment["APPDATA"]=cache; environment["LOCALAPPDATA"]=cache; environment["HOME"]=cache;
+      var environmentText=new StringBuilder(); foreach(var entry in environment) environmentText.Append(entry.Key).Append('=').Append(entry.Value).Append('\0');
+      environmentText.Append('\0'); EnvironmentBlock=Marshal.StringToHGlobalUni(environmentText.ToString());
       Check(ConvertStringSidToSid("S-1-15-3-1",out internet)); // internetClient only; no broker-management capabilities.
       capabilityArray=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(SidAttributes)));
       Marshal.StructureToPtr(new SidAttributes { Sid=internet,Attributes=4 },capabilityArray,false);
@@ -72,11 +82,11 @@ public sealed class AutoCodeSandbox : IDisposable {
     else { var acl=File.GetAccessControl(target); acl.AddAccessRule(rule); File.SetAccessControl(target,acl); }
     grants.Add(target); File.AppendAllText(manifest,target+Environment.NewLine);
   }
-  void ProtectMetadata(string target) {
+  void ProtectMetadata(string target,bool readable) {
     bool directory=Directory.Exists(target); if(!directory && !File.Exists(target)) return;
     FileSystemSecurity acl=directory ? (FileSystemSecurity)Directory.GetAccessControl(target) : File.GetAccessControl(target);
     // Save inheritance state outside sandbox writes before changing the boundary.
-    string record=target+"\t"+Convert.ToBase64String(acl.GetSecurityDescriptorBinaryForm());
+    string record=target+"\t"+Convert.ToBase64String(acl.GetSecurityDescriptorBinaryForm())+"\t"+(readable ? "read" : "blocked");
     File.AppendAllText(Path.Combine(Path.GetDirectoryName(manifest),"acl-boundaries"),record+Environment.NewLine);
     boundaries.Add(record);
     acl.SetAccessRuleProtection(true,true);
@@ -85,13 +95,13 @@ public sealed class AutoCodeSandbox : IDisposable {
     var descriptor=new RawSecurityDescriptor(acl.GetSecurityDescriptorBinaryForm(),0);
     for(int index=descriptor.DiscretionaryAcl.Count-1;index>=0;index--) {
       var known=descriptor.DiscretionaryAcl[index] as KnownAce;
-      if(known!=null && known.SecurityIdentifier.Equals(identity)) descriptor.DiscretionaryAcl.RemoveAce(index);
+      if(known!=null && (known.SecurityIdentifier.Equals(identity) || (!readable && known.SecurityIdentifier.Value.StartsWith("S-1-15-",StringComparison.Ordinal)))) descriptor.DiscretionaryAcl.RemoveAce(index);
       else descriptor.DiscretionaryAcl[index].AceFlags &= ~AceFlags.Inherited;
     }
     byte[] boundaryBytes=new byte[descriptor.BinaryLength]; descriptor.GetBinaryForm(boundaryBytes,0);
     acl.SetSecurityDescriptorBinaryForm(boundaryBytes,AccessControlSections.Access);
     var inheritance=directory ? InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit : InheritanceFlags.None;
-    acl.AddAccessRule(new FileSystemAccessRule(identity,FileSystemRights.ReadAndExecute,inheritance,PropagationFlags.None,AccessControlType.Allow));
+    if(readable) acl.AddAccessRule(new FileSystemAccessRule(identity,FileSystemRights.ReadAndExecute,inheritance,PropagationFlags.None,AccessControlType.Allow));
     if(directory) Directory.SetAccessControl(target,(DirectorySecurity)acl); else File.SetAccessControl(target,(FileSecurity)acl);
     grants.Add(target); File.AppendAllText(manifest,target+Environment.NewLine);
   }
@@ -110,6 +120,10 @@ public sealed class AutoCodeSandbox : IDisposable {
       }
       current.SetAccessRuleProtection(false,false);
     }
+    if(fields.Length>2 && fields[2]=="blocked") foreach(FileSystemAccessRule rule in original.GetAccessRules(true,false,typeof(SecurityIdentifier))) {
+      var sid=rule.IdentityReference as SecurityIdentifier;
+      if(sid!=null && !sid.Equals(identity) && sid.Value.StartsWith("S-1-15-",StringComparison.Ordinal)) current.AddAccessRule(rule);
+    }
     if(directory) Directory.SetAccessControl(target,(DirectorySecurity)current); else File.SetAccessControl(target,(FileSecurity)current);
   }
   public void Dispose() {
@@ -125,6 +139,7 @@ public sealed class AutoCodeSandbox : IDisposable {
     if(Attributes!=IntPtr.Zero) { DeleteProcThreadAttributeList(Attributes); Marshal.FreeHGlobal(Attributes); Attributes=IntPtr.Zero; }
     if(capabilities!=IntPtr.Zero) { Marshal.FreeHGlobal(capabilities); capabilities=IntPtr.Zero; }
     if(capabilityArray!=IntPtr.Zero) { Marshal.FreeHGlobal(capabilityArray); capabilityArray=IntPtr.Zero; }
+    if(EnvironmentBlock!=IntPtr.Zero) { Marshal.FreeHGlobal(EnvironmentBlock); EnvironmentBlock=IntPtr.Zero; }
     if(internet!=IntPtr.Zero) { LocalFree(internet); internet=IntPtr.Zero; }
     if(sid!=IntPtr.Zero) {
       RemoveProfile(name);

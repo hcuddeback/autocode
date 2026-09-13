@@ -14,6 +14,21 @@ import { runProjectWorkflow } from './workflow.js';
 import { runRoleSeparatedCodexSessions } from './codex.js';
 import { runDeterministicVerification } from './verification.js';
 
+async function snapshotWindowsAcl(paths: string[]): Promise<string> {
+  const encoded = Buffer.from(JSON.stringify(paths)).toString('base64');
+  const { stdout } = await promisify(execFile)(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}')) | ConvertFrom-Json | ForEach-Object { $acl=if([IO.Directory]::Exists($_)){[IO.Directory]::GetAccessControl($_)}else{[IO.File]::GetAccessControl($_)};$acl.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]7) } | ConvertTo-Json -Compress`,
+    ],
+    { windowsHide: true },
+  );
+  return stdout.trim();
+}
+
 test(
   'Windows sandbox rejects a helper inside an authorized writable directory',
   { skip: process.platform !== 'win32' },
@@ -41,34 +56,26 @@ test(
     );
     try {
       await mkdir(path.join(directory, '.autocode'));
-      await mkdir(path.join(directory, '.git'));
+      await promisify(execFile)('git', ['init', '-b', 'main'], {
+        cwd: directory,
+        windowsHide: true,
+      });
       await writeFile(
         path.join(directory, '.autocode', 'events.jsonl'),
         'trusted',
       );
-      await writeFile(path.join(directory, '.git', 'HEAD'), 'trusted');
-      const aclPaths = Buffer.from(
-        JSON.stringify([
+      await writeFile(
+        path.join(directory, '.git', 'HEAD'),
+        'ref: refs/heads/main\n',
+      );
+      const snapshotAcl = () =>
+        snapshotWindowsAcl([
           directory,
           path.join(directory, '.autocode'),
           path.join(directory, '.git'),
           path.join(directory, '.autocode', 'events.jsonl'),
           path.join(directory, '.git', 'HEAD'),
-        ]),
-      ).toString('base64');
-      const snapshotAcl = async () =>
-        (
-          await promisify(execFile)(
-            'powershell.exe',
-            [
-              '-NoProfile',
-              '-NonInteractive',
-              '-Command',
-              `[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${aclPaths}')) | ConvertFrom-Json | ForEach-Object { (Get-Acl -LiteralPath $_).Sddl } | ConvertTo-Json -Compress`,
-            ],
-            { windowsHide: true },
-          )
-        ).stdout.trim();
+        ]);
       const originalAcl = await snapshotAcl();
       const result = await runContainedProcess(
         process.execPath,
@@ -99,7 +106,7 @@ fs.writeFileSync('result.txt','initial');fs.writeFileSync('result.txt',fs.readFi
       );
       assert.equal(
         await readFile(path.join(directory, '.git', 'HEAD'), 'utf8'),
-        'trusted',
+        'ref: refs/heads/main\n',
       );
       assert.equal(
         await readFile(path.join(directory, 'result.txt'), 'utf8'),
@@ -110,6 +117,97 @@ fs.writeFileSync('result.txt','initial');fs.writeFileSync('result.txt',fs.readFi
         { code: 'ENOENT' },
       );
     } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'Windows sandbox blocks credential files and inherited operator tokens',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), 'autocode-private-'),
+    );
+    const keys = [
+      'GITHUB_TOKEN',
+      'AWS_SECRET_ACCESS_KEY',
+      'OPENAI_API_KEY',
+      'AUTOCODE_PRIVATE_UNKNOWN',
+    ];
+    const previous = keys.map((key) => process.env[key]);
+    try {
+      await promisify(execFile)('git', ['init', '-b', 'main'], {
+        cwd: directory,
+        windowsHide: true,
+      });
+      await writeFile(
+        path.join(directory, '.gitignore'),
+        '.env*\n*credentials*\n',
+      );
+      await mkdir(path.join(directory, 'nested'));
+      const credentialPaths = [
+        '.env',
+        '.credentials.json',
+        'nested/service.credentials.json',
+      ];
+      for (const credential of credentialPaths)
+        await writeFile(
+          path.join(directory, credential),
+          credential === '.env'
+            ? 'PRIVATE_VALUE=operator-private'
+            : '{"private":"operator-private"}',
+        );
+      const envPath = Buffer.from(path.join(directory, '.env')).toString(
+        'base64',
+      );
+      await promisify(execFile)(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `$target=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${envPath}'));$acl=[IO.File]::GetAccessControl($target);$rule=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-15-2-1'),'Read','Allow');$acl.AddAccessRule($rule);[IO.File]::SetAccessControl($target,$acl)`,
+        ],
+        { windowsHide: true },
+      );
+      const paths = credentialPaths.map((credential) =>
+        path.join(directory, credential),
+      );
+      const originalAcl = await snapshotWindowsAcl(paths);
+      for (const key of keys)
+        process.env[key] = 'operator-token-never-inherited';
+      const run = await runContainedProcess(
+        process.execPath,
+        [
+          '-e',
+          `const fs=require('node:fs');for(const credential of ${JSON.stringify(credentialPaths)}){try{fs.readFileSync(credential);process.exit(9)}catch(error){if(!['EACCES','EPERM'].includes(error.code))throw error}}for(const key of ${JSON.stringify(keys)})if(process.env[key]!==undefined)process.exit(8);if(!process.env.SystemRoot||!process.env.PATH||!process.env.AUTOCODE_NODE)process.exit(7);fs.writeFileSync('ordinary.txt','good');console.log('private-boundary-passed');`,
+        ],
+        directory,
+        10_000,
+        10_000,
+      );
+      assert.equal(run.exitCode, 0, run.stderr);
+      assert.equal(
+        await snapshotWindowsAcl(paths),
+        originalAcl,
+        'credential ACLs must be restored exactly',
+      );
+      assert.match(run.stdout, /private-boundary-passed/);
+      for (const credential of credentialPaths)
+        assert.match(
+          await readFile(path.join(directory, credential), 'utf8'),
+          /operator-private/,
+        );
+      assert.equal(
+        await readFile(path.join(directory, 'ordinary.txt'), 'utf8'),
+        'good',
+      );
+    } finally {
+      keys.forEach((key, index) => {
+        if (previous[index] === undefined) delete process.env[key];
+        else process.env[key] = previous[index];
+      });
       await rm(directory, { recursive: true, force: true });
     }
   },
