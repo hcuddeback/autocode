@@ -32,6 +32,8 @@ MVP 1 assumes a trusted operator and local machine. Repository content, tasks, i
 
 ## Pre-release checklist
 
+Completion cannot be reconciled as applied from a mutable receipt; an interrupted or blocked completion requires operator reconciliation, including interruption after publication of passing evidence. All supplied nested QA, PR-exception and completion policy sections are schema-validated before preparation or model effects. Missing sections remain explicit workflow blockers; malformed supplied sections fail preflight without creating a bound run.
+
 In-process QA callbacks may schedule work beyond their returned promise; AutoCode cannot establish descendant completion from the mutable QA receipt. QA receipt-only reconciliation therefore always remains ambiguous, even for an apparently passing receipt. A durable completed QA phase remains reusable; an interrupted or blocked callback requires operator reconciliation and is never automatically repeated. Attempt-bound missing-adapter recovery is available only when no QA receipt exists and no callback ran. Credential changes after QA returns invalidate workspace freshness on resume.
 
 Fresh workflow execution rejects pre-existing phase receipts as terminal tampering; only reconciliation of an already in-flight effect may reuse a validated receipt. Atomic publication also rejects receipt collisions. Every deterministic verification command checks the discovered ignored credential file set and content hashes before accepting evidence, including unsuccessful commands. Credential tampering retains failed check evidence and terminates the workflow before later checks or gates.

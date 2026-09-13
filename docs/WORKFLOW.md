@@ -81,6 +81,8 @@ Pure internal changes may record QA as not applicable when deterministic tests c
 
 ## Pause, resume, and pacing
 
+Completion follows the same conservative receipt boundary as QA: only a durably completed phase advances, and receipt-only reconciliation cannot turn blocked or interrupted gate evaluation into success. Supplied workflow policy sections are fully validated before effects begin, so operators can correct malformed policy before any run binding or model work exists.
+
 QA callbacks have a conservative interruption boundary: a mutable receipt cannot establish that callback descendants finished. Resume accepts QA only when its durable phase was already completed, and never reconciles an in-flight QA effect as applied from its receipt. This also applies to interruption after a passing QA receipt is published. Such callbacks require operator reconciliation; supplying an absent adapter remains safe only for the recorded attempt that invoked no callback and produced no QA receipt.
 
 Fresh phase execution requires an absent receipt and evaluates its configured gates; receipt reuse belongs only to reconciliation of an already in-flight effect. A pre-created receipt or publication collision is terminal protected-state tampering. Verification checks ignored credential paths and hashes after every command, and changing those files cannot produce passing evidence.

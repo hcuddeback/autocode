@@ -66,7 +66,7 @@ export async function runQaPhase(
   decision: unknown,
   callbacks?: QaCallbacks,
 ): Promise<Readonly<QaEvidence>> {
-  const validated = validateDecision(decision);
+  const validated = validateQaDecision(decision);
   if (validated.kind === 'not-applicable') {
     if (callbacks !== undefined) {
       throw new Error('QA callbacks are not allowed when QA is not applicable');
@@ -154,7 +154,7 @@ export async function runQaPhase(
   return finish('passed', validated.reason, evidence);
 }
 
-function validateDecision(value: unknown): QaDecision {
+export function validateQaDecision(value: unknown): QaDecision {
   const record = mapping(value, 'QA decision');
   if (record.kind === 'not-applicable') {
     rejectUnknownKeys(record, new Set(['kind', 'reason']), 'QA decision');

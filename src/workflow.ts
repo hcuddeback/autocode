@@ -29,7 +29,12 @@ import {
   type DurableEffectResult,
   type DurableRunResult,
 } from './durable-run.js';
-import { runQaPhase, type QaCallbacks, type QaDecision } from './qa.js';
+import {
+  runQaPhase,
+  validateQaDecision,
+  type QaCallbacks,
+  type QaDecision,
+} from './qa.js';
 import {
   evaluateCompletionGates,
   type CompletionGateInput,
@@ -584,6 +589,7 @@ export async function runProjectWorkflow(
         const own = await receipt(phase.id);
         if (
           phase.id !== 'qa' &&
+          phase.id !== 'completion' &&
           own &&
           own.workspace === (await currentWorkspace()) &&
           own.result.kind === 'applied'
@@ -622,7 +628,9 @@ export async function runProjectWorkflow(
           reason:
             phase.id === 'qa'
               ? 'QA callback completion cannot be established from a mutable receipt; operator reconciliation is required'
-              : 'interrupted or blocked phase lacks successful current evidence; operator reconciliation is required',
+              : phase.id === 'completion'
+                ? 'completion gate results cannot be established from a mutable receipt; operator reconciliation is required'
+                : 'interrupted or blocked phase lacks successful current evidence; operator reconciliation is required',
         };
       },
     },
@@ -644,12 +652,19 @@ function parsePolicy(text: string | undefined): WorkflowPolicy {
   )
     throw new Error('invalid operator workflow policy');
   if (
-    value.pullRequest &&
-    (value.pullRequest.kind !== 'not-applicable' ||
+    Object.hasOwn(value, 'pullRequest') &&
+    (!value.pullRequest ||
+      Object.keys(value.pullRequest).some(
+        (key) => !['kind', 'reason'].includes(key),
+      ) ||
+      value.pullRequest.kind !== 'not-applicable' ||
       typeof value.pullRequest.reason !== 'string' ||
       Buffer.byteLength(value.pullRequest.reason.trim()) < 16)
   )
     throw new Error('PR exception requires a substantive operator reason');
+  if (Object.hasOwn(value, 'qa')) value.qa = validateQaDecision(value.qa);
+  if (Object.hasOwn(value, 'completion'))
+    evaluateCompletionGates(value.completion);
   return value;
 }
 

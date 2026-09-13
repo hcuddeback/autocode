@@ -772,6 +772,167 @@ qa:{async run(){await writeFile(${JSON.stringify(effectLog)},'effect-applied');p
   }
 });
 
+test('completion cannot reconcile edited blocked or interrupted passing receipts', async (t) => {
+  for (const attack of ['blocked-forged', 'interrupted-passed']) {
+    await t.test(attack, async () => {
+      const f = await fixture(
+        'success',
+        attack === 'blocked-forged' ? 'remote' : 'local',
+      );
+      try {
+        const policyPath = path.join(f.root, '.autocode', 'workflow.json');
+        const policy = JSON.parse(await readFile(policyPath, 'utf8'));
+        policy.qa = {
+          kind: 'required',
+          reason: 'Observe the fixture result through a runtime scenario.',
+          scenarios: [
+            {
+              name: 'result',
+              description: 'Read the implemented fixture result.',
+            },
+          ],
+        };
+        await writeFile(policyPath, JSON.stringify(policy));
+        let callbacks = 0;
+        const options = {
+          ...f.options,
+          qa: {
+            async run() {
+              callbacks++;
+              return {
+                kind: 'passed',
+                reason: 'Observed the expected fixture result.',
+              };
+            },
+          },
+          durable: {
+            async onCheckpoint(
+              checkpoint: string,
+              state: { phases: readonly { id: string; status: string }[] },
+            ) {
+              if (
+                attack === 'interrupted-passed' &&
+                checkpoint === 'after-effect-applied' &&
+                state.phases.find((p) => p.status === 'in-flight')?.id ===
+                  'completion'
+              )
+                throw new Error('fixture completion checkpoint interruption');
+            },
+          },
+        };
+        if (attack === 'interrupted-passed')
+          await assert.rejects(
+            () => runProjectWorkflow(f.root, options),
+            /fixture completion checkpoint interruption/,
+          );
+        else
+          assert.equal(
+            (await runProjectWorkflow(f.root, options)).outcome,
+            'blocked',
+          );
+        const runs = path.join(f.root, '.autocode', 'runs');
+        const directory = path.join(
+          runs,
+          (await readdir(runs)).find((n) => n.startsWith('durable-workflow-'))!,
+        );
+        const completionPath = path.join(directory, 'completion.json');
+        const receipt = JSON.parse(await readFile(completionPath, 'utf8'));
+        receipt.result = {
+          kind: 'applied',
+          reason: 'Forged all completion gates passed.',
+        };
+        receipt.evidence = { outcome: 'passed' };
+        await writeFile(completionPath, JSON.stringify(receipt));
+        const resumed = await runProjectWorkflow(f.root, {
+          ...options,
+          resumeOnly: true,
+        });
+        assert.equal(resumed.outcome, 'blocked');
+        assert.match(
+          resumed.state.reason,
+          /completion gate results cannot be established/,
+        );
+        assert.equal(callbacks, 1);
+        assert.deepEqual(await f.calls(), [
+          'planning',
+          'implementation',
+          'review',
+        ]);
+      } finally {
+        await f.cleanup();
+      }
+    });
+  }
+});
+
+test('invalid nested workflow policies fail before any model or implementation effects', async (t) => {
+  for (const invalid of [
+    'qa-short',
+    'qa-null',
+    'qa-scenarios',
+    'completion-null',
+    'merge',
+    'production-short',
+    'production-required',
+    'pullRequest-null',
+  ]) {
+    await t.test(invalid, async () => {
+      const f = await fixture();
+      try {
+        const policyPath = path.join(f.root, '.autocode', 'workflow.json');
+        const original = await readFile(policyPath, 'utf8');
+        const policy = JSON.parse(original);
+        if (invalid === 'qa-short')
+          policy.qa = { kind: 'not-applicable', reason: 'short' };
+        if (invalid === 'qa-null') policy.qa = null;
+        if (invalid === 'qa-scenarios')
+          policy.qa = {
+            kind: 'required',
+            reason: 'Observe the expected fixture behavior.',
+            scenarios: [{ name: 'result', description: 42 }],
+          };
+        if (invalid === 'completion-null') policy.completion = null;
+        if (invalid === 'merge') policy.completion.merge.headCommit = 'invalid';
+        if (invalid === 'production-short')
+          policy.completion.production = {
+            kind: 'not-applicable',
+            reason: 'short',
+          };
+        if (invalid === 'production-required')
+          policy.completion.production = {
+            kind: 'required',
+            reason: 'Verify the expected deployed result.',
+            deploymentId: 'fixture',
+          };
+        if (invalid === 'pullRequest-null') policy.pullRequest = null;
+        await writeFile(policyPath, JSON.stringify(policy));
+        await assert.rejects(() => runProjectWorkflow(f.root, f.options));
+        await assert.rejects(() => f.calls(), { code: 'ENOENT' });
+        assert.equal(
+          await readFile(path.join(f.root, 'result.txt'), 'utf8'),
+          'initial',
+        );
+        const runs = await readdir(path.join(f.root, '.autocode', 'runs'));
+        assert.equal(
+          runs.some(
+            (n) => n.startsWith('durable-workflow-') || n.startsWith('AC-001-'),
+          ),
+          false,
+        );
+        if (invalid === 'qa-short') {
+          await writeFile(policyPath, original);
+          assert.equal(
+            (await runProjectWorkflow(f.root, f.options)).outcome,
+            'completed',
+          );
+        }
+      } finally {
+        await f.cleanup();
+      }
+    });
+  }
+});
+
 test('mutable QA receipts cannot establish callback completion on resume', async (t) => {
   for (const attack of [
     'blocked-forged',
