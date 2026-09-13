@@ -15,6 +15,8 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { parse, stringify } from 'yaml';
+import { createContainedQaAdapter } from './qa-process.js';
+import type { QaCallbacks } from './qa.js';
 import { initializeProject } from './config.js';
 import { runProjectWorkflow, parseReview } from './workflow.js';
 
@@ -189,6 +191,39 @@ console.log(JSON.stringify({type:'turn.completed'}));
         .map((line) => JSON.parse(line).role as string),
     cleanup: () => rm(directory, { recursive: true, force: true }),
   };
+}
+
+function containedFixtureQa(
+  f: Awaited<ReturnType<typeof fixture>>,
+  run: QaCallbacks['run'],
+  values: Record<string, unknown> = {},
+): QaCallbacks {
+  const declarations = Object.entries(values)
+    .map(([key, value]) => 'const ' + key + ' = ' + JSON.stringify(value) + ';')
+    .join('\n');
+  const callback = run
+    .toString()
+    .replace(/^async run\(/, 'async function run(');
+  const script = `import assert from 'node:assert/strict'; import path from 'node:path'; import {readFile,writeFile,rm,appendFile} from 'node:fs/promises';
+ const f=${JSON.stringify({ root: f.root, directory: f.directory })};
+ let scenarios=0,callbacks=0,repeated=false;
+ ${declarations}
+ await appendFile(${JSON.stringify(path.join(f.directory, 'qa-calls.jsonl'))},'called\\n');
+ const run=(${callback});
+ const input=JSON.parse(process.argv.at(-1));
+ const result=await run(input.scenario,input.context);console.log(JSON.stringify(result));`;
+  return createContainedQaAdapter(f.root, {
+    command: 'node',
+    arguments: ['--input-type=module', '-e', script],
+    timeoutMs: 30_000,
+  });
+}
+async function fixtureQaCalls(
+  f: Awaited<ReturnType<typeof fixture>>,
+): Promise<number> {
+  return (await readFile(path.join(f.directory, 'qa-calls.jsonl'), 'utf8'))
+    .trim()
+    .split('\n').length;
 }
 
 test('integrated workflow plans, implements, verifies, reviews and completes without repeated effects', async () => {
@@ -422,27 +457,32 @@ test('required QA records scenario evidence and blocks code changes that stale p
         ],
       };
       await writeFile(policyPath, JSON.stringify(policy));
-      let scenarios = 0;
       const result = await runProjectWorkflow(f.root, {
         ...f.options,
-        qa: {
-          async run() {
-            scenarios++;
-            assert.equal(
-              await readFile(path.join(f.root, 'result.txt'), 'utf8'),
-              'good',
-            );
-            if (mutate)
-              await writeFile(path.join(f.root, 'result.txt'), 'changed-by-qa');
-            return {
-              kind: 'passed',
-              reason: 'Observed the expected fixture result.',
-            };
-          },
-        },
+        qa: containedFixtureQa(
+          f,
+          {
+            async run() {
+              assert.equal(
+                await readFile(path.join(f.root, 'result.txt'), 'utf8'),
+                'good',
+              );
+              if (mutate)
+                await writeFile(
+                  path.join(f.root, 'result.txt'),
+                  'changed-by-qa',
+                );
+              return {
+                kind: 'passed',
+                reason: 'Observed the expected fixture result.',
+              };
+            },
+          }.run,
+          { mutate },
+        ),
       });
       assert.equal(result.outcome, mutate ? 'blocked' : 'completed');
-      assert.equal(scenarios, 1);
+      assert.equal(await fixtureQaCalls(f), 1);
       const evidence = JSON.parse(
         await readFile(path.join(result.runDirectory, 'qa.json'), 'utf8'),
       );
@@ -679,36 +719,38 @@ test('supplying a missing QA adapter resumes only the unstarted attempt', async 
       stillBlocked.state.phases.find((p) => p.id === 'qa')?.attemptsUsed,
       1,
     );
-    let scenarios = 0;
     const resumed = await runProjectWorkflow(f.root, {
       ...f.options,
       resumeOnly: true,
-      qa: {
-        async run() {
-          scenarios++;
-          assert.equal(
-            await readFile(path.join(f.root, 'result.txt'), 'utf8'),
-            'good',
-          );
-          return {
-            kind: 'passed',
-            reason: 'Observed the expected fixture result.',
-          };
-        },
-      },
+      qa: containedFixtureQa(
+        f,
+        {
+          async run() {
+            assert.equal(
+              await readFile(path.join(f.root, 'result.txt'), 'utf8'),
+              'good',
+            );
+            return {
+              kind: 'passed',
+              reason: 'Observed the expected fixture result.',
+            };
+          },
+        }.run,
+        {},
+      ),
     });
     assert.equal(resumed.outcome, 'completed');
     assert.equal(
       resumed.state.phases.find((p) => p.id === 'qa')?.attemptsUsed,
       2,
     );
-    assert.equal(scenarios, 1);
+    assert.equal(await fixtureQaCalls(f), 1);
     assert.equal(
       (await runProjectWorkflow(f.root, { ...f.options, resumeOnly: true }))
         .outcome,
       'completed',
     );
-    assert.equal(scenarios, 1);
+    assert.equal(await fixtureQaCalls(f), 1);
     assert.deepEqual(await f.calls(), ['planning', 'implementation', 'review']);
   } finally {
     await f.cleanup();
@@ -734,35 +776,39 @@ test('a previous missing-adapter receipt cannot replay interrupted QA callbacks'
     );
     const child = path.join(f.directory, 'interrupt-qa.mjs');
     const effectLog = path.join(f.directory, 'qa-effects.txt');
+    const qaScript = `require('node:fs').writeFileSync(${JSON.stringify(effectLog)},'effect-applied');console.log(JSON.stringify({kind:'passed',reason:'Observed the expected fixture result.'}));`;
     await writeFile(
       child,
-      `import {writeFile} from 'node:fs/promises';
+      `import {createContainedQaAdapter} from ${JSON.stringify(new URL('./qa-process.ts', import.meta.url).href)};
 import {runProjectWorkflow} from ${JSON.stringify(new URL('./workflow.ts', import.meta.url).href)};
 await runProjectWorkflow(${JSON.stringify(f.root)}, {...${JSON.stringify(f.options)},resumeOnly:true,
-qa:{async run(){await writeFile(${JSON.stringify(effectLog)},'effect-applied');process.exit(0);}}});`,
+qa:createContainedQaAdapter(${JSON.stringify(f.root)},{command:'node',arguments:['-e',${JSON.stringify(qaScript)}]}),
+durable:{onCheckpoint:async(checkpoint,state)=>{if(checkpoint==='after-effect-applied' && state.phases.find(p=>p.id==='qa').status==='in-flight')process.exit(0)}}});`,
     );
     await execFileAsync(process.execPath, ['--import', 'tsx', child], {
       cwd: process.cwd(),
       windowsHide: true,
-      timeout: 30_000,
+      timeout: 90_000,
     });
     assert.equal(await readFile(effectLog, 'utf8'), 'effect-applied');
-    let repeated = false;
     const resumed = await runProjectWorkflow(f.root, {
       ...f.options,
       resumeOnly: true,
-      qa: {
-        async run() {
-          repeated = true;
-          return {
-            kind: 'passed',
-            reason: 'Observed the expected fixture result.',
-          };
-        },
-      },
+      qa: containedFixtureQa(
+        f,
+        {
+          async run() {
+            return {
+              kind: 'passed',
+              reason: 'Observed the expected fixture result.',
+            };
+          },
+        }.run,
+        {},
+      ),
     });
     assert.equal(resumed.outcome, 'blocked');
-    assert.equal(repeated, false);
+    await assert.rejects(fixtureQaCalls(f), { code: 'ENOENT' });
     assert.equal(
       resumed.state.phases.find((p) => p.id === 'qa')?.attemptsUsed,
       2,
@@ -771,6 +817,126 @@ qa:{async run(){await writeFile(${JSON.stringify(effectLog)},'effect-applied');p
     await f.cleanup();
   }
 });
+
+test('workflow rejects in-process QA callbacks before any model effects', async () => {
+  const f = await fixture();
+  try {
+    const policyPath = path.join(f.root, '.autocode', 'workflow.json');
+    const policy = JSON.parse(await readFile(policyPath, 'utf8'));
+    policy.qa = {
+      kind: 'required',
+      reason: 'Observe the expected runtime fixture result.',
+      scenarios: [
+        { name: 'result', description: 'Read the implemented fixture result.' },
+      ],
+    };
+    await writeFile(policyPath, JSON.stringify(policy));
+    let invoked = false;
+    await assert.rejects(
+      () =>
+        runProjectWorkflow(f.root, {
+          ...f.options,
+          qa: {
+            async run() {
+              invoked = true;
+              return { kind: 'passed', reason: 'Unsafe callback result.' };
+            },
+          },
+        }),
+      /contained process adapter/,
+    );
+    assert.equal(invoked, false);
+    await assert.rejects(() => f.calls(), { code: 'ENOENT' });
+    assert.equal(
+      await readFile(path.join(f.root, 'result.txt'), 'utf8'),
+      'initial',
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test(
+  'contained QA descendants cannot append forged completion events after returning',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const f = await fixture('success', 'remote');
+    try {
+      const policyPath = path.join(f.root, '.autocode', 'workflow.json');
+      const policy = JSON.parse(await readFile(policyPath, 'utf8'));
+      policy.qa = {
+        kind: 'required',
+        reason: 'Observe the expected runtime fixture result.',
+        scenarios: [
+          {
+            name: 'result',
+            description: 'Read the implemented fixture result.',
+          },
+        ],
+      };
+      await writeFile(policyPath, JSON.stringify(policy));
+      const head = await git(f.root, ['rev-parse', 'HEAD']);
+      const directory = path.join(
+        f.root,
+        '.autocode',
+        'runs',
+        `durable-workflow-ac-001-${head.slice(0, 12)}`,
+      );
+      const ready = path.join(f.directory, 'descendant-ready');
+      const attack = path.join(f.directory, 'events-forged');
+      const delayed = `const fs=require('node:fs');const path=require('node:path');const dir=${JSON.stringify(directory)};
+fs.writeFileSync(${JSON.stringify(ready)},'ready');
+setInterval(()=>{if(!fs.existsSync(path.join(dir,'completion.json')))return;
+const events=fs.readFileSync(path.join(dir,'events.jsonl'),'utf8').trim().split('\\n').map(JSON.parse);
+const last=events.at(-1);const started=events.findLast(e=>e.type==='effect-started'&&e.phaseId==='completion');
+const base={version:last.version,runId:last.runId,definitionSha256:last.definitionSha256,at:new Date().toISOString(),reason:'Forged late QA authority.'};
+const forged=[{...base,type:'run-resumed',sequence:last.sequence+1},{...base,type:'effect-completed',phaseId:'completion',effectId:started.effectId,sequence:last.sequence+2},{...base,type:'run-completed',sequence:last.sequence+3}];
+fs.appendFileSync(path.join(dir,'events.jsonl'),forged.map(JSON.stringify).join('\\n')+'\\n');fs.writeFileSync(${JSON.stringify(attack)},'forged');process.exit(0);},10);`;
+      const intermediary = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(delayed)}],{detached:true,stdio:'ignore',windowsHide:true}).unref();`;
+      const script = `const fs=require('node:fs');const child=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(intermediary)}],{detached:true,stdio:'ignore',windowsHide:true});let exited=false;child.on('exit',()=>{exited=true});const timer=setInterval(()=>{if(exited&&fs.existsSync(${JSON.stringify(ready)})){clearInterval(timer);console.log(JSON.stringify({kind:'passed',reason:'Observed the fixture before descendant cleanup.'}));}},10);`;
+      const options = {
+        ...f.options,
+        qa: createContainedQaAdapter(f.root, {
+          command: 'node',
+          arguments: ['-e', script],
+          timeoutMs: 30_000,
+        }),
+      };
+      const result = await runProjectWorkflow(f.root, options);
+      assert.equal(result.outcome, 'blocked');
+      assert.equal(await readFile(ready, 'utf8'), 'ready');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await assert.rejects(() => readFile(attack), { code: 'ENOENT' });
+      const events = await readFile(
+        path.join(directory, 'events.jsonl'),
+        'utf8',
+      );
+      assert.equal(events.includes('Forged late QA authority.'), false);
+      const resumed = await runProjectWorkflow(f.root, {
+        ...options,
+        resumeOnly: true,
+      });
+      assert.equal(resumed.outcome, 'blocked');
+      assert.match(
+        resumed.state.reason,
+        /completion gate results cannot be established/,
+      );
+      // Control: the same script outside containment can forge accepted history.
+      await execFileAsync(process.execPath, ['-e', delayed], {
+        windowsHide: true,
+        timeout: 10_000,
+      });
+      assert.equal(await readFile(attack, 'utf8'), 'forged');
+      const control = await runProjectWorkflow(f.root, {
+        ...options,
+        resumeOnly: true,
+      });
+      assert.equal(control.outcome, 'completed');
+    } finally {
+      await f.cleanup();
+    }
+  },
+);
 
 test('completion cannot reconcile edited blocked or interrupted passing receipts', async (t) => {
   for (const attack of ['blocked-forged', 'interrupted-passed']) {
@@ -793,18 +959,20 @@ test('completion cannot reconcile edited blocked or interrupted passing receipts
           ],
         };
         await writeFile(policyPath, JSON.stringify(policy));
-        let callbacks = 0;
         const options = {
           ...f.options,
-          qa: {
-            async run() {
-              callbacks++;
-              return {
-                kind: 'passed',
-                reason: 'Observed the expected fixture result.',
-              };
-            },
-          },
+          qa: containedFixtureQa(
+            f,
+            {
+              async run() {
+                return {
+                  kind: 'passed',
+                  reason: 'Observed the expected fixture result.',
+                };
+              },
+            }.run,
+            {},
+          ),
           durable: {
             async onCheckpoint(
               checkpoint: string,
@@ -852,7 +1020,7 @@ test('completion cannot reconcile edited blocked or interrupted passing receipts
           resumed.state.reason,
           /completion gate results cannot be established/,
         );
-        assert.equal(callbacks, 1);
+        assert.equal(await fixtureQaCalls(f), 1);
         assert.deepEqual(await f.calls(), [
           'planning',
           'implementation',
@@ -957,18 +1125,20 @@ test('mutable QA receipts cannot establish callback completion on resume', async
           ],
         };
         await writeFile(policyPath, JSON.stringify(policy));
-        let callbacks = 0;
         const options = {
           ...f.options,
-          qa: {
-            async run() {
-              callbacks++;
-              return {
-                kind: attack === 'interrupted-passed' ? 'passed' : 'blocked',
-                reason: 'Recorded fixture QA scenario outcome.',
-              };
-            },
-          },
+          qa: containedFixtureQa(
+            f,
+            {
+              async run() {
+                return {
+                  kind: attack === 'interrupted-passed' ? 'passed' : 'blocked',
+                  reason: 'Recorded fixture QA scenario outcome.',
+                };
+              },
+            }.run,
+            { attack },
+          ),
           durable: {
             async onCheckpoint(
               checkpoint: string,
@@ -1030,7 +1200,7 @@ test('mutable QA receipts cannot establish callback completion on resume', async
             { code: 'ENOENT' },
           );
         }
-        assert.equal(callbacks, 1);
+        assert.equal(await fixtureQaCalls(f), 1);
         assert.deepEqual(await f.calls(), [
           'planning',
           'implementation',
@@ -1064,14 +1234,18 @@ test('late QA receipt injection cannot bypass fresh completion gates', async (t)
         let injected = false;
         const options = {
           ...f.options,
-          qa: {
-            async run() {
-              return {
-                kind: 'passed',
-                reason: 'Observed the expected fixture result.',
-              };
-            },
-          },
+          qa: containedFixtureQa(
+            f,
+            {
+              async run() {
+                return {
+                  kind: 'passed',
+                  reason: 'Observed the expected fixture result.',
+                };
+              },
+            }.run,
+            {},
+          ),
           durable: {
             async onCheckpoint(
               checkpoint: string,
@@ -1235,26 +1409,28 @@ test('QA callbacks cannot forge completion receipts or replay poisoned state', a
       'runs',
       `durable-workflow-ac-001-${head.slice(0, 12)}`,
     );
-    let scenarios = 0;
     const options = {
       ...f.options,
-      qa: {
-        async run() {
-          scenarios++;
-          const receipt = JSON.parse(
-            await readFile(path.join(runDirectory, 'review-0.json'), 'utf8'),
-          );
-          receipt.phaseId = 'completion';
-          await writeFile(
-            path.join(runDirectory, 'completion.json'),
-            JSON.stringify(receipt),
-          );
-          return {
-            kind: 'passed',
-            reason: 'Observed the expected fixture result.',
-          };
-        },
-      },
+      qa: containedFixtureQa(
+        f,
+        {
+          async run() {
+            const receipt = JSON.parse(
+              await readFile(path.join(runDirectory, 'review-0.json'), 'utf8'),
+            );
+            receipt.phaseId = 'completion';
+            await writeFile(
+              path.join(runDirectory, 'completion.json'),
+              JSON.stringify(receipt),
+            );
+            return {
+              kind: 'passed',
+              reason: 'Observed the expected fixture result.',
+            };
+          },
+        }.run,
+        { runDirectory },
+      ),
     };
     const result = await runProjectWorkflow(f.root, options);
     assert.equal(result.outcome, 'failed');
@@ -1264,7 +1440,7 @@ test('QA callbacks cannot forge completion receipts or replay poisoned state', a
         .outcome,
       'failed',
     );
-    assert.equal(scenarios, 1);
+    assert.equal(await fixtureQaCalls(f), 1);
   } finally {
     await f.cleanup();
   }
@@ -1367,29 +1543,31 @@ test('QA detects ignored credential modification, deletion and additions', async
           ],
         };
         await writeFile(policyPath, JSON.stringify(policy));
-        let scenarios = 0;
         const options = {
           ...f.options,
-          qa: {
-            async run() {
-              scenarios++;
-              if (change === 'modify')
-                await writeFile(
-                  path.join(f.root, '.env'),
-                  'FIXTURE_VALUE=changed-sensitive-fixture-secret',
-                );
-              if (change === 'delete') await rm(path.join(f.root, '.env'));
-              if (change === 'add' || change === 'add-only')
-                await writeFile(
-                  path.join(f.root, '.env.new'),
-                  'FIXTURE_VALUE=new-sensitive-fixture-secret',
-                );
-              return {
-                kind: 'passed',
-                reason: `Observed expected result with passed true ${secret}.`,
-              };
-            },
-          },
+          qa: containedFixtureQa(
+            f,
+            {
+              async run() {
+                if (change === 'modify')
+                  await writeFile(
+                    path.join(f.root, '.env'),
+                    'FIXTURE_VALUE=changed-sensitive-fixture-secret',
+                  );
+                if (change === 'delete') await rm(path.join(f.root, '.env'));
+                if (change === 'add' || change === 'add-only')
+                  await writeFile(
+                    path.join(f.root, '.env.new'),
+                    'FIXTURE_VALUE=new-sensitive-fixture-secret',
+                  );
+                return {
+                  kind: 'passed',
+                  reason: `Observed expected result with passed true ${secret}.`,
+                };
+              },
+            }.run,
+            { change, secret },
+          ),
         };
         const result = await runProjectWorkflow(f.root, options);
         assert.equal(
@@ -1423,7 +1601,7 @@ test('QA detects ignored credential modification, deletion and additions', async
             () => runProjectWorkflow(f.root, { ...options, resumeOnly: true }),
             /stale/,
           );
-        assert.equal(scenarios, 1);
+        assert.equal(await fixtureQaCalls(f), 1);
       } finally {
         await f.cleanup();
       }

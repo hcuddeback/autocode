@@ -39,6 +39,7 @@ import {
   evaluateCompletionGates,
   type CompletionGateInput,
 } from './completion-gates.js';
+import { assertContainedQaAdapter } from './qa-process.js';
 
 const execFileAsync = promisify(execFile);
 const MAX_FILE_BYTES = 1024 * 1024;
@@ -71,6 +72,7 @@ export interface WorkflowOptions {
   resumeOnly?: boolean;
   codex?: CodexSessionOptions;
   durable?: DurableRunOptions;
+  /** Must be created by createContainedQaAdapter; plain callbacks fail preflight. */
   qa?: QaCallbacks;
 }
 
@@ -134,6 +136,8 @@ export async function runProjectWorkflow(
     throw new Error('workflow requires configured deterministic checks');
   const policyText = await optionalRead(root, '.autocode/workflow.json');
   const policy = parsePolicy(policyText);
+  if (policy.qa?.kind === 'required' && options.qa)
+    assertContainedQaAdapter(root, options.qa);
   const taskPolicy = parse(
     /^---\r?\n([\s\S]*?)\r?\n---/.exec(task.contents)![1]!,
   );

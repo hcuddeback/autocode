@@ -364,7 +364,7 @@ async function safeInspection<T>(
   }
 }
 
-function secureVerificationCommand(
+export function secureVerificationCommand(
   command: string,
   arguments_: string[],
 ): SecuredVerificationCommand {
@@ -490,7 +490,7 @@ function hashGitOutput(
   });
 }
 
-async function resolveExecutable(
+export async function resolveExecutable(
   command: string,
   root: string,
 ): Promise<string> {
@@ -588,13 +588,14 @@ async function persistCheck(
   }
 }
 
-function runProcess(
+export function runProcess(
   command: string,
   arguments_: string[],
   cwd: string,
   timeoutMs: number,
   maxOutputBytes: number,
   systemdUnit?: string,
+  containment?: { windowsJob: boolean; systemctl?: string | undefined },
 ): Promise<ProcessResult> {
   return new Promise((resolve) => {
     const child = spawn(command, arguments_, {
@@ -626,9 +627,12 @@ function runProcess(
     };
     const terminate = () => {
       if (terminationTimer !== undefined) return;
-      terminateTree(child.pid, false, systemdUnit);
+      if (containment?.windowsJob) child.kill('SIGKILL');
+      else terminateTree(child.pid, false, systemdUnit, containment?.systemctl);
       terminationTimer = setTimeout(() => {
-        terminateTree(child.pid, true, systemdUnit);
+        if (containment?.windowsJob) child.kill('SIGKILL');
+        else
+          terminateTree(child.pid, true, systemdUnit, containment?.systemctl);
         finish(-1);
       }, TERMINATION_GRACE_MS);
       terminationTimer.unref();
@@ -654,7 +658,8 @@ function runProcess(
       finish(-1);
     });
     child.on('close', (code) => {
-      if (!timedOut && !overflowed) terminateTree(child.pid, true, systemdUnit);
+      if (!timedOut && !overflowed && !containment?.windowsJob)
+        terminateTree(child.pid, true, systemdUnit, containment?.systemctl);
       finish(code ?? -1);
     });
   });
@@ -664,6 +669,7 @@ function terminateTree(
   pid: number | undefined,
   force: boolean,
   systemdUnit?: string,
+  systemctlCommand = 'systemctl',
 ): void {
   if (pid === undefined) return;
   if (process.platform === 'win32') {
@@ -681,7 +687,7 @@ function terminateTree(
   }
   if (systemdUnit !== undefined) {
     spawnSync(
-      'systemctl',
+      systemctlCommand,
       [
         '--user',
         'kill',
