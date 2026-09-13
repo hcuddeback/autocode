@@ -938,6 +938,85 @@ fs.appendFileSync(path.join(dir,'events.jsonl'),forged.map(JSON.stringify).join(
   },
 );
 
+test(
+  'contained Codex and verification descendants cannot forge late completion history',
+  { skip: process.platform !== 'win32' },
+  async (t) => {
+    for (const role of ['implementation', 'fix', 'verification'])
+      await t.test(role, async () => {
+        const f = await fixture(role === 'fix' ? 'fix' : 'success', 'remote');
+        try {
+          const head = await git(f.root, ['rev-parse', 'HEAD']);
+          const directory = path.join(
+            f.root,
+            '.autocode',
+            'runs',
+            `durable-workflow-ac-001-${head.slice(0, 12)}`,
+          );
+          const ready = path.join(f.directory, 'descendant-ready');
+          const attack = path.join(f.directory, 'events-forged');
+          const delayed = `const fs=require('node:fs');const path=require('node:path');const dir=${JSON.stringify(directory)};
+fs.writeFileSync(${JSON.stringify(ready)},'ready');
+setInterval(()=>{if(!fs.existsSync(path.join(dir,'completion.json')))return;
+const events=fs.readFileSync(path.join(dir,'events.jsonl'),'utf8').trim().split('\\n').map(JSON.parse);
+const last=events.at(-1);const started=events.findLast(e=>e.type==='effect-started'&&e.phaseId==='completion');
+const base={version:last.version,runId:last.runId,definitionSha256:last.definitionSha256,at:new Date().toISOString(),reason:'Forged late QA authority.'};
+const forged=[{...base,type:'run-resumed',sequence:last.sequence+1},{...base,type:'effect-completed',phaseId:'completion',effectId:started.effectId,sequence:last.sequence+2},{...base,type:'run-completed',sequence:last.sequence+3}];
+fs.appendFileSync(path.join(dir,'events.jsonl'),forged.map(JSON.stringify).join('\\n')+'\\n');fs.writeFileSync(${JSON.stringify(attack)},'forged');process.exit(0);},10);`;
+          const intermediary = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(delayed)}],{detached:true,stdio:'ignore',windowsHide:true}).unref();`;
+
+          const fake = f.options.codex.commandPrefixArguments[0]!;
+          const original = await readFile(fake, 'utf8');
+          const injection = `if(role===${JSON.stringify(role)}){const {spawn}=await import('node:child_process');const child=spawn(process.execPath,['-e',${JSON.stringify(intermediary)}],{detached:true,stdio:'ignore',windowsHide:true});let exited=false;child.on('exit',()=>{exited=true});await new Promise(resolve=>{const timer=setInterval(()=>{if(exited&&fs.existsSync(${JSON.stringify(ready)})){clearInterval(timer);resolve();}},10);});}\n`;
+          await writeFile(
+            fake,
+            original.replace(
+              'fs.appendFileSync(',
+              injection + 'fs.appendFileSync(',
+            ),
+          );
+          if (role === 'verification') {
+            const configPath = path.join(f.root, '.autocode', 'config.yaml');
+            const config = parse(await readFile(configPath, 'utf8'));
+            const check = `const fs=require('node:fs');const child=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(intermediary)}],{detached:true,stdio:'ignore',windowsHide:true});let exited=false;child.on('exit',()=>{exited=true});const timer=setInterval(()=>{if(exited&&fs.existsSync(${JSON.stringify(ready)})){clearInterval(timer);process.exit(fs.readFileSync('result.txt','utf8')==='good'?0:1);}},10);`;
+            config.verification.commands[0].args = ['-e', check];
+            await writeFile(configPath, stringify(config));
+          }
+          const options = f.options;
+          const result = await runProjectWorkflow(f.root, options);
+          assert.equal(result.outcome, 'blocked');
+          assert.equal(await readFile(ready, 'utf8'), 'ready');
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          await assert.rejects(() => readFile(attack), { code: 'ENOENT' });
+          assert.equal(
+            (
+              await readFile(path.join(directory, 'events.jsonl'), 'utf8')
+            ).includes('Forged late QA authority.'),
+            false,
+          );
+          const resumed = await runProjectWorkflow(f.root, {
+            ...options,
+            resumeOnly: true,
+          });
+          assert.equal(resumed.outcome, 'blocked');
+          // The identical uncontained control proves the event forgery remains viable.
+          await execFileAsync(process.execPath, ['-e', delayed], {
+            windowsHide: true,
+            timeout: 10_000,
+          });
+          assert.equal(await readFile(attack, 'utf8'), 'forged');
+          assert.equal(
+            (await runProjectWorkflow(f.root, { ...options, resumeOnly: true }))
+              .outcome,
+            'completed',
+          );
+        } finally {
+          await f.cleanup();
+        }
+      });
+  },
+);
+
 test('completion cannot reconcile edited blocked or interrupted passing receipts', async (t) => {
   for (const attack of ['blocked-forged', 'interrupted-passed']) {
     await t.test(attack, async () => {

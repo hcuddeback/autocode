@@ -13,6 +13,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
+import { runContainedProcess } from './qa-process.js';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { parse as parseYaml } from 'yaml';
@@ -65,7 +66,7 @@ export interface VerificationResult {
   checks: VerificationCheckRecord[];
 }
 
-interface ProcessResult {
+export interface ProcessResult {
   stdout: string;
   stderr: string;
   exitCode: number;
@@ -231,14 +232,12 @@ export async function runDeterministicVerification(
     let processResult: ProcessResult;
     try {
       const executable = await resolveExecutable(configured.command, root);
-      const secured = secureVerificationCommand(executable, configured.args);
-      processResult = await runProcess(
-        secured.command,
-        secured.arguments,
+      processResult = await runContainedProcess(
+        executable,
+        configured.args,
         root,
         config.verification.timeoutMs,
         config.verification.maxOutputBytes,
-        secured.systemdUnit,
       );
     } catch (error: unknown) {
       processResult = {
@@ -595,7 +594,11 @@ export function runProcess(
   timeoutMs: number,
   maxOutputBytes: number,
   systemdUnit?: string,
-  containment?: { windowsJob: boolean; systemctl?: string | undefined },
+  containment?: {
+    windowsJob: boolean;
+    systemctl?: string | undefined;
+    input?: string | undefined;
+  },
 ): Promise<ProcessResult> {
   return new Promise((resolve) => {
     const child = spawn(command, arguments_, {
@@ -603,7 +606,11 @@ export function runProcess(
       detached: process.platform !== 'win32',
       shell: false,
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [
+        containment?.input === undefined ? 'ignore' : 'pipe',
+        'pipe',
+        'pipe',
+      ],
     });
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
@@ -651,8 +658,12 @@ export function runProcess(
       if (target === 'stdout') stdout = Buffer.concat([stdout, chunk]);
       else stderr = Buffer.concat([stderr, chunk]);
     };
-    child.stdout.on('data', (chunk: Buffer) => collect('stdout', chunk));
-    child.stderr.on('data', (chunk: Buffer) => collect('stderr', chunk));
+    child.stdout!.on('data', (chunk: Buffer) => collect('stdout', chunk));
+    child.stderr!.on('data', (chunk: Buffer) => collect('stderr', chunk));
+    child.stdin?.on('error', (error: NodeJS.ErrnoException) => {
+      if (error.code !== 'EPIPE') terminate();
+    });
+    child.stdin?.end(containment?.input, 'utf8');
     child.on('error', (error) => {
       stderr = Buffer.from(error.message);
       finish(-1);

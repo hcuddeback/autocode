@@ -16,6 +16,8 @@ import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { selectProjectTask } from './tasks.js';
 import { snapshotWorktree } from './verification.js';
+import { resolveExecutable } from './verification.js';
+import { runContainedProcess } from './qa-process.js';
 
 const MAX_INPUT_BYTES = 1024 * 1024;
 const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
@@ -336,15 +338,27 @@ async function runRole(
   ];
   const startedAt = new Date().toISOString();
   const containment = secureCommand(command, arguments_, options.command);
-  const result = await runProcess(
-    containment.command,
-    containment.arguments,
-    prompt,
-    root,
-    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
-    containment.systemdUnit,
-  );
+  const result =
+    options.role !== undefined || process.platform === 'win32'
+      ? await runContainedProcess(
+          path.isAbsolute(command)
+            ? command
+            : await resolveExecutable(command, root),
+          arguments_,
+          root,
+          options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
+          prompt,
+        )
+      : await runProcess(
+          containment.command,
+          containment.arguments,
+          prompt,
+          root,
+          options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
+          containment.systemdUnit,
+        );
   const completedAt = new Date().toISOString();
   const sessionId = parseSessionId(result.stdout);
   const finalMessage = parseFinalMessage(result.stdout);
