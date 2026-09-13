@@ -1,4 +1,3 @@
-import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   lstat,
@@ -17,13 +16,14 @@ import { parse as parseYaml } from 'yaml';
 import { selectProjectTask } from './tasks.js';
 import { snapshotWorktree } from './verification.js';
 import { resolveExecutable } from './verification.js';
-import { runContainedProcess } from './qa-process.js';
+import {
+  runContainedProcess,
+  assertSecureProcessPlatform,
+} from './qa-process.js';
 
 const MAX_INPUT_BYTES = 1024 * 1024;
 const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
-const TERMINATION_GRACE_MS = 1_000;
-const OMITTED_OUTPUT = '[output omitted: exceeded configured limit]\n';
 const SESSION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -124,6 +124,7 @@ async function runPreparedSessions(
   review?: CodexSessionRecord;
   record?: CodexSessionRecord;
 }> {
+  assertSecureProcessPlatform();
   const artifactName = options.artifactName ?? 'sessions';
   if (!/^[a-z][a-z0-9-]{0,63}$/.test(artifactName))
     throw new Error('invalid session artifact name');
@@ -337,28 +338,14 @@ async function runRole(
     '-',
   ];
   const startedAt = new Date().toISOString();
-  const containment = secureCommand(command, arguments_, options.command);
-  const result =
-    options.role !== undefined || process.platform === 'win32'
-      ? await runContainedProcess(
-          path.isAbsolute(command)
-            ? command
-            : await resolveExecutable(command, root),
-          arguments_,
-          root,
-          options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-          options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
-          prompt,
-        )
-      : await runProcess(
-          containment.command,
-          containment.arguments,
-          prompt,
-          root,
-          options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-          options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
-          containment.systemdUnit,
-        );
+  const result = await runContainedProcess(
+    path.isAbsolute(command) ? command : await resolveExecutable(command, root),
+    arguments_,
+    root,
+    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
+    prompt,
+  );
   const completedAt = new Date().toISOString();
   const sessionId = parseSessionId(result.stdout);
   const finalMessage = parseFinalMessage(result.stdout);
@@ -420,213 +407,6 @@ async function runRole(
   if (invalidFinalMessage)
     throw new Error(`${role} Codex final message failed validation`);
   return record;
-}
-
-function runProcess(
-  command: string,
-  arguments_: string[],
-  input: string,
-  cwd: string,
-  timeoutMs: number,
-  maxOutputBytes: number,
-  systemdUnit?: string,
-): Promise<ProcessResult> {
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
-    throw new Error('timeout must be a positive integer');
-  if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes <= 0)
-    throw new Error('output limit must be a positive integer');
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, arguments_, {
-      cwd,
-      detached: process.platform !== 'win32',
-      shell: false,
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
-    let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
-    let timedOut = false;
-    let overflowed = false;
-    let settled = false;
-    let terminating = false;
-    let closeCode = -1;
-    let fatalError: Error | undefined;
-    let terminationTimer: NodeJS.Timeout | undefined;
-    const finish = (exitCode: number): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (terminationTimer !== undefined) clearTimeout(terminationTimer);
-      child.stdout.destroy();
-      child.stderr.destroy();
-      if (fatalError !== undefined) {
-        reject(fatalError);
-        return;
-      }
-      resolve({
-        stdout: overflowed ? OMITTED_OUTPUT : stdout.toString('utf8'),
-        stderr: overflowed ? OMITTED_OUTPUT : stderr.toString('utf8'),
-        exitCode,
-        timedOut,
-        overflowed,
-      });
-    };
-    const terminate = (): void => {
-      if (terminationTimer !== undefined) return;
-      terminating = true;
-      if (process.platform === 'win32') {
-        killWindowsProcessTree(child.pid);
-        child.kill();
-        terminationTimer = setTimeout(
-          () => finish(closeCode),
-          TERMINATION_GRACE_MS,
-        );
-        terminationTimer.unref();
-        return;
-      }
-      terminatePosixContainment(child.pid, systemdUnit, false);
-      terminationTimer = setTimeout(() => {
-        terminatePosixContainment(child.pid, systemdUnit, true);
-        // Do not let inherited pipe handles or a termination-resistant child
-        // defeat the adapter's execution bound.
-        setTimeout(() => finish(closeCode), TERMINATION_GRACE_MS).unref();
-      }, TERMINATION_GRACE_MS);
-      terminationTimer.unref();
-    };
-    const timer = setTimeout(() => {
-      timedOut = true;
-      terminate();
-    }, timeoutMs);
-    const collect = (
-      current: Buffer<ArrayBufferLike>,
-      chunk: Buffer<ArrayBufferLike>,
-    ): Buffer<ArrayBufferLike> => {
-      if (current.length + chunk.length > maxOutputBytes) {
-        overflowed = true;
-        terminate();
-        return Buffer.from(OMITTED_OUTPUT);
-      }
-      if (overflowed) return current;
-      return Buffer.concat([current, chunk]);
-    };
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdout = collect(stdout, chunk);
-    });
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr = collect(stderr, chunk);
-    });
-    child.on('error', (error) => {
-      fatalError = error;
-      finish(-1);
-    });
-    child.on('close', (code) => {
-      closeCode = code ?? -1;
-      if (!terminating) {
-        if (process.platform === 'win32') {
-          killWindowsDescendants(child.pid);
-        } else {
-          terminatePosixContainment(child.pid, systemdUnit, true);
-        }
-        finish(closeCode);
-      } else if (process.platform === 'win32') finish(closeCode);
-    });
-    child.stdin.on('error', (error: NodeJS.ErrnoException) => {
-      if (error.code !== 'EPIPE' && fatalError === undefined) {
-        fatalError = error;
-        terminate();
-      }
-    });
-    child.stdin.end(input, 'utf8');
-  });
-}
-
-interface SecuredCommand {
-  command: string;
-  arguments: string[];
-  systemdUnit?: string;
-}
-
-function secureCommand(
-  command: string,
-  arguments_: string[],
-  overriddenCommand: string | undefined,
-): SecuredCommand {
-  // Custom executables are an injected deterministic-test boundary. Normal CLI
-  // operation always uses the contained default Codex executable.
-  if (overriddenCommand !== undefined || process.platform === 'win32')
-    return { command, arguments: arguments_ };
-  if (process.platform !== 'linux') {
-    throw new Error(
-      'secure Codex process containment is currently unavailable on this platform',
-    );
-  }
-  const systemdUnit = `autocode-codex-${process.pid}-${randomUUID()}`;
-  return {
-    command: 'systemd-run',
-    arguments: [
-      '--user',
-      '--quiet',
-      '--wait',
-      '--collect',
-      '--pipe',
-      `--unit=${systemdUnit}`,
-      '--',
-      command,
-      ...arguments_,
-    ],
-    systemdUnit,
-  };
-}
-
-function killWindowsProcessTree(pid: number | undefined): void {
-  if (pid === undefined) return;
-  spawnSync('taskkill', ['/pid', String(pid), '/t', '/f'], {
-    windowsHide: true,
-    timeout: TERMINATION_GRACE_MS,
-  });
-}
-
-function killWindowsDescendants(pid: number | undefined): void {
-  if (pid === undefined) return;
-  const script =
-    'param([int]$RootPid) ' +
-    '$pending = [Collections.Generic.Queue[int]]::new(); $pending.Enqueue($RootPid); ' +
-    '$descendants = [Collections.Generic.List[int]]::new(); ' +
-    'while ($pending.Count -gt 0) { $parent = $pending.Dequeue(); ' +
-    'Get-CimInstance Win32_Process -Filter "ParentProcessId = $parent" | ForEach-Object { ' +
-    '$id = [int]$_.ProcessId; $descendants.Add($id); $pending.Enqueue($id) } }; ' +
-    '$descendants | Sort-Object -Descending | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }';
-  spawnSync(
-    'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-Command', script, String(pid)],
-    { windowsHide: true, timeout: TERMINATION_GRACE_MS },
-  );
-}
-
-function terminatePosixContainment(
-  pid: number | undefined,
-  systemdUnit: string | undefined,
-  force: boolean,
-): void {
-  if (systemdUnit !== undefined) {
-    spawnSync(
-      'systemctl',
-      [
-        '--user',
-        'kill',
-        `--kill-whom=all`,
-        `--signal=${force ? 'SIGKILL' : 'SIGTERM'}`,
-        systemdUnit,
-      ],
-      { windowsHide: true, timeout: TERMINATION_GRACE_MS },
-    );
-  }
-  if (pid === undefined) return;
-  try {
-    process.kill(-pid, force ? 'SIGKILL' : 'SIGTERM');
-  } catch {
-    // The process may have exited between the close check and escalation.
-  }
 }
 
 async function persistRoleResult(

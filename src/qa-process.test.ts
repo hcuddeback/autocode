@@ -7,7 +7,80 @@ import { spawn } from 'node:child_process';
 import {
   createContainedQaAdapter,
   assertContainedQaAdapter,
+  runContainedProcess,
 } from './qa-process.js';
+import { runProjectWorkflow } from './workflow.js';
+import { runRoleSeparatedCodexSessions } from './codex.js';
+import { runDeterministicVerification } from './verification.js';
+
+test('unsupported platforms cannot execute processes or accept workflow history', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'autocode-platform-'));
+  const marker = path.join(directory, 'executed');
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  try {
+    for (const platform of ['linux', 'darwin']) {
+      await t.test(platform, async () => {
+        Object.defineProperty(process, 'platform', {
+          ...descriptor,
+          value: platform,
+        });
+        try {
+          const unavailable =
+            /secure process containment is currently unavailable/;
+          await assert.rejects(
+            () =>
+              createContainedQaAdapter(directory, {
+                command: 'node',
+                arguments: [],
+              }).run(
+                {
+                  name: 'blocked',
+                  description: 'Unsupported process containment.',
+                },
+                { sequence: 1 },
+              ),
+            unavailable,
+          );
+          await assert.rejects(
+            () =>
+              runContainedProcess(
+                process.execPath,
+                [
+                  '-e',
+                  `require('node:fs').writeFileSync(${JSON.stringify(marker)},'executed')`,
+                ],
+                directory,
+                1000,
+                1024,
+              ),
+            unavailable,
+          );
+          await assert.rejects(
+            () => runProjectWorkflow(directory, { resumeOnly: true }),
+            unavailable,
+          );
+          await assert.rejects(
+            () =>
+              runRoleSeparatedCodexSessions(directory, {
+                command: process.execPath,
+              }),
+            unavailable,
+          );
+          await assert.rejects(
+            () => runDeterministicVerification(directory),
+            unavailable,
+          );
+          await assert.rejects(() => readFile(marker), { code: 'ENOENT' });
+        } finally {
+          Object.defineProperty(process, 'platform', descriptor);
+        }
+      });
+    }
+  } finally {
+    Object.defineProperty(process, 'platform', descriptor);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test(
   'Windows QA job is terminated if its operator process dies',

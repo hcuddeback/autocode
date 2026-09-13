@@ -13,7 +13,10 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
-import { runContainedProcess } from './qa-process.js';
+import {
+  runContainedProcess,
+  assertSecureProcessPlatform,
+} from './qa-process.js';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { parse as parseYaml } from 'yaml';
@@ -74,12 +77,6 @@ export interface ProcessResult {
   overflowed: boolean;
 }
 
-interface SecuredVerificationCommand {
-  command: string;
-  arguments: string[];
-  systemdUnit?: string;
-}
-
 /** Tampered workflow state must never be reconciled from subprocess-written receipts. */
 export class VerificationStateTamperingError extends Error {
   constructor() {
@@ -98,6 +95,7 @@ export async function runDeterministicVerification(
     taskId?: string;
   } = {},
 ): Promise<VerificationResult> {
+  assertSecureProcessPlatform();
   const evidenceName = options.evidenceName ?? 'evidence';
   if (!/^[a-z][a-z0-9-]{0,63}$/.test(evidenceName))
     throw new Error('invalid verification evidence name');
@@ -361,34 +359,6 @@ async function safeInspection<T>(
   } catch {
     return undefined;
   }
-}
-
-export function secureVerificationCommand(
-  command: string,
-  arguments_: string[],
-): SecuredVerificationCommand {
-  if (process.platform === 'win32') return { command, arguments: arguments_ };
-  if (process.platform !== 'linux') {
-    throw new Error(
-      'secure verification process containment is currently unavailable on this platform',
-    );
-  }
-  const systemdUnit = `autocode-verification-${process.pid}-${randomUUID()}`;
-  return {
-    command: 'systemd-run',
-    arguments: [
-      '--user',
-      '--quiet',
-      '--wait',
-      '--collect',
-      '--pipe',
-      `--unit=${systemdUnit}`,
-      '--',
-      command,
-      ...arguments_,
-    ],
-    systemdUnit,
-  };
 }
 
 export async function snapshotWorktree(root: string): Promise<string> {

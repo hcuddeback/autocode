@@ -39,7 +39,10 @@ import {
   evaluateCompletionGates,
   type CompletionGateInput,
 } from './completion-gates.js';
-import { assertContainedQaAdapter } from './qa-process.js';
+import {
+  assertContainedQaAdapter,
+  assertSecureProcessPlatform,
+} from './qa-process.js';
 
 const execFileAsync = promisify(execFile);
 const MAX_FILE_BYTES = 1024 * 1024;
@@ -99,6 +102,7 @@ export async function runProjectWorkflow(
   projectDirectory: string,
   options: WorkflowOptions = {},
 ): Promise<Readonly<DurableRunResult>> {
+  assertSecureProcessPlatform();
   const root = await realpath(projectDirectory);
   const selected = await selectProjectTask(root);
   if (selected.kind !== 'selected')

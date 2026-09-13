@@ -1,11 +1,7 @@
 import path from 'node:path';
 import os from 'node:os';
-import { mkdtemp, writeFile, unlink, rmdir, readFile } from 'node:fs/promises';
-import {
-  resolveExecutable,
-  runProcess,
-  secureVerificationCommand,
-} from './verification.js';
+import { mkdtemp, writeFile, unlink, rmdir } from 'node:fs/promises';
+import { resolveExecutable, runProcess } from './verification.js';
 import type { QaCallbacks } from './qa.js';
 
 export interface QaProcessOptions {
@@ -50,6 +46,7 @@ export function createContainedQaAdapter(
   const arguments_ = [...options.arguments];
   const adapter: QaCallbacks = Object.freeze<QaCallbacks>({
     async run(scenario, context) {
+      assertSecureProcessPlatform();
       const executable = await resolveExecutable(command, cwd);
       const argumentsWithContext = [
         ...arguments_,
@@ -72,6 +69,13 @@ export function createContainedQaAdapter(
 }
 
 /** Shared process boundary for untrusted QA and Codex roles. */
+export function assertSecureProcessPlatform(): void {
+  if (process.platform !== 'win32')
+    throw new Error(
+      'secure process containment is currently unavailable on this platform; Linux user-manager isolation and macOS acceptance remain required',
+    );
+}
+
 export async function runContainedProcess(
   executable: string,
   arguments_: string[],
@@ -80,76 +84,36 @@ export async function runContainedProcess(
   maxOutputBytes: number,
   input?: string,
 ) {
+  assertSecureProcessPlatform();
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
     throw new Error('timeout must be a positive integer');
   if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes <= 0)
     throw new Error('output limit must be a positive integer');
-  const job =
-    process.platform === 'win32'
-      ? await windowsJobScript(
-          executable,
-          arguments_,
-          cwd,
-          maxOutputBytes,
-          input,
-        )
-      : undefined;
+  const job = await windowsJobScript(
+    executable,
+    arguments_,
+    cwd,
+    maxOutputBytes,
+    input,
+  );
   try {
-    let systemctlCommand: string | undefined;
-    const secured =
-      process.platform === 'win32'
-        ? {
-            command: await resolveExecutable('powershell', cwd),
-            arguments: [
-              '-NoProfile',
-              '-NonInteractive',
-              '-ExecutionPolicy',
-              'Bypass',
-              '-File',
-              job!.script,
-            ],
-            systemdUnit: undefined,
-          }
-        : secureVerificationCommand(executable, arguments_);
-    if (process.platform === 'linux') {
-      systemctlCommand = await resolveExecutable('systemctl', cwd);
-      const guardianPayload = Buffer.from(
-        JSON.stringify({
-          parentPid: process.pid,
-          parentIdentity: linuxProcessIdentity(
-            await readFile(`/proc/${process.pid}/stat`, 'utf8'),
-          ),
-          command: await resolveExecutable(secured.command, cwd),
-          arguments: secured.arguments,
-          unit: secured.systemdUnit,
-          systemctl: systemctlCommand,
-        }),
-      ).toString('base64');
-      secured.command = process.execPath;
-      secured.arguments = [
-        '--input-type=module',
-        '-e',
-        LINUX_GUARDIAN,
-        guardianPayload,
-      ];
-    }
     const result = await runProcess(
-      secured.command,
-      secured.arguments,
+      await resolveExecutable('powershell', cwd),
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        job.script,
+      ],
       cwd,
       timeoutMs,
       maxOutputBytes,
-      secured.systemdUnit,
-      {
-        windowsJob: process.platform === 'win32',
-        systemctl: systemctlCommand,
-        input: process.platform === 'win32' ? undefined : input,
-      },
+      undefined,
+      { windowsJob: true },
     );
-    if (
-      process.platform === 'win32' &&
-      (result.exitCode === -2 || result.exitCode === 4294967294)
-    )
+    if (result.exitCode === -2 || result.exitCode === 4294967294)
       return {
         ...result,
         exitCode: -1,
@@ -159,10 +123,8 @@ export async function runContainedProcess(
       };
     return result;
   } finally {
-    if (job) {
-      await unlink(job.script);
-      await rmdir(job.directory);
-    }
+    await unlink(job.script);
+    await rmdir(job.directory);
   }
 }
 
@@ -311,24 +273,3 @@ public static class AutoCodeQaJob {
     }
   }
 }`;
-
-function linuxProcessIdentity(stat: string): string {
-  return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]!;
-}
-
-// A separate trusted guardian survives operator-process death long enough to kill
-// the systemd cgroup. PID start time prevents confusing a reused PID with the owner.
-const LINUX_GUARDIAN = String.raw`
-import {spawn,spawnSync} from 'node:child_process';
-import {readFileSync} from 'node:fs';
-const p=JSON.parse(Buffer.from(process.argv.at(-1),'base64').toString('utf8'));
-let finished=false;
-function identity(stat){return stat.slice(stat.lastIndexOf(')')+2).split(' ')[19];}
-function parentAlive(){try{const stat=readFileSync('/proc/'+p.parentPid+'/stat','utf8');const state=stat.slice(stat.lastIndexOf(')')+2).split(' ')[0];return state!=='Z'&&state!=='X'&&identity(stat)===p.parentIdentity;}catch{return false;}}
-function stop(code){if(finished)return;finished=true;clearInterval(timer);spawnSync(p.systemctl,['--user','kill','--kill-whom=all','--signal=SIGKILL',p.unit],{timeout:5000,stdio:'ignore'});process.exit(code);}
-if(!parentAlive())process.exit(1);
-const child=spawn(p.command,p.arguments,{stdio:'inherit'});
-const timer=setInterval(()=>{if(!parentAlive())stop(1);},50);
-child.on('error',()=>stop(1));child.on('exit',code=>stop(code??1));
-process.on('SIGTERM',()=>stop(1));process.on('SIGINT',()=>stop(1));
-`;
