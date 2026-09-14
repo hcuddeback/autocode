@@ -32,9 +32,9 @@ The product differentiator is orchestration above coding agents. Codex CLI is th
 
 ## Immediate queue
 
-AC-001 through AC-013 are complete and merged. AC-014 is in `review` for the current operator guide; finish its existing gates without expanding its runtime scope.
+AC-001 through AC-014 are complete and merged. [AC-014](completed/AC-014.md) documents the current operator guide and merged in [PR #18](https://github.com/hcuddeback/autocode/pull/18); the pnpm setup review finding is resolved in merged PR #21. No implementation task is active.
 
-After AC-014 closes, select/refine the remaining **MVP 1 acceptance outcomes** against current `main`, using [the MVP audit](../docs/MVP_AUDIT.md), D-007 and verified current code:
+Select/refine the remaining **MVP 1 acceptance outcomes** against current `main`, using [the MVP audit](../docs/MVP_AUDIT.md), D-007 and verified current code:
 
 1. **Durable task ownership and immutable summaries** — prevent competing ownership, reconcile interruption safely and retain final evidence-backed handoff summaries.
 2. **Required CLI QA and recovery** — supply applicable QA adapters and bounded QA-fix/reverification recovery without accepting stale evidence or repeating ambiguous effects.
