@@ -67,6 +67,8 @@ const PAYLOAD_TEXT_FIELDS = new Set([
 /** Operator policy is protected state, never model output. Missing policy blocks. */
 export interface WorkflowPolicy {
   version: 1;
+  /** Exact verification runtime files explicitly authorized by the operator. */
+  verificationReadResources?: string[];
   qa?: QaDecision;
   pullRequest?: { kind: 'not-applicable'; reason: string };
   completion?: CompletionGateInput;
@@ -141,6 +143,11 @@ export async function runProjectWorkflow(
     throw new Error('workflow requires configured deterministic checks');
   const policyText = await optionalRead(root, '.autocode/workflow.json');
   const policy = parsePolicy(policyText);
+  for (const resource of policy.verificationReadResources ?? []) {
+    const info = await lstat(resource);
+    if (!info.isFile() || info.isSymbolicLink())
+      throw new Error('verification read resources must be regular files');
+  }
   if (policy.qa?.kind === 'required' && options.qa)
     await preflightContainedQaAdapter(root, options.qa);
   const taskPolicy = parse(
@@ -175,7 +182,7 @@ export async function runProjectWorkflow(
   const initialPlan = await safeRead(root, `${preparedRelative}/plan.md`);
   const binding = hash(
     JSON.stringify({
-      processContainment: 'windows-appcontainer-job-v12',
+      processContainment: 'windows-appcontainer-job-v13',
       head,
       branch,
       task: hash(task.contents),
@@ -418,6 +425,7 @@ export async function runProjectWorkflow(
                   evidenceName: `workflow-${phase.id}`,
                   retainFailure: true,
                   taskId: task.taskId,
+                  sandboxReadResources: policy.verificationReadResources ?? [],
                 });
               } catch (error) {
                 if (error instanceof VerificationStateTamperingError)
@@ -657,7 +665,14 @@ function parsePolicy(text: string | undefined): WorkflowPolicy {
     !value ||
     value.version !== 1 ||
     Object.keys(value).some(
-      (key) => !['version', 'qa', 'pullRequest', 'completion'].includes(key),
+      (key) =>
+        ![
+          'version',
+          'qa',
+          'pullRequest',
+          'completion',
+          'verificationReadResources',
+        ].includes(key),
     )
   )
     throw new Error('invalid operator workflow policy');
@@ -672,6 +687,18 @@ function parsePolicy(text: string | undefined): WorkflowPolicy {
       Buffer.byteLength(value.pullRequest.reason.trim()) < 16)
   )
     throw new Error('PR exception requires a substantive operator reason');
+  if (
+    Object.hasOwn(value, 'verificationReadResources') &&
+    (!Array.isArray(value.verificationReadResources) ||
+      value.verificationReadResources.length > 16 ||
+      value.verificationReadResources.some(
+        (resource: unknown) =>
+          typeof resource !== 'string' ||
+          resource.includes('\0') ||
+          !path.isAbsolute(resource),
+      ))
+  )
+    throw new Error('invalid verification read resources');
   if (Object.hasOwn(value, 'qa')) value.qa = validateQaDecision(value.qa);
   if (Object.hasOwn(value, 'completion'))
     evaluateCompletionGates(value.completion);

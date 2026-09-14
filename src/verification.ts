@@ -94,9 +94,12 @@ export async function runDeterministicVerification(
     evidenceName?: string;
     retainFailure?: boolean;
     taskId?: string;
+    /** Resources explicitly authorized by the trusted operator. */
+    sandboxReadResources?: readonly string[];
   } = {},
 ): Promise<VerificationResult> {
   assertSecureProcessPlatform();
+  const sandboxReadResources = [...(options.sandboxReadResources ?? [])];
   const evidenceName = options.evidenceName ?? 'evidence';
   if (!/^[a-z][a-z0-9-]{0,63}$/.test(evidenceName))
     throw new Error('invalid verification evidence name');
@@ -237,6 +240,9 @@ export async function runDeterministicVerification(
         root,
         config.verification.timeoutMs,
         config.verification.maxOutputBytes,
+        undefined,
+        [],
+        sandboxReadResources,
       );
     } catch (error: unknown) {
       processResult = {

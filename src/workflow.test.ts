@@ -401,6 +401,12 @@ test('resume rejects legacy process containment receipts', async () => {
           ...legacyInput,
         }),
       ),
+      hash(
+        JSON.stringify({
+          processContainment: 'windows-appcontainer-job-v12',
+          ...legacyInput,
+        }),
+      ),
     ]) {
       assert.notEqual(currentBinding, legacy);
       receipt.binding = legacy;
@@ -1332,6 +1338,10 @@ test(
       process.env.PATH = bin + path.delimiter + previous;
       const configPath = path.join(f.root, '.autocode', 'config.yaml');
       const config = parse(await readFile(configPath, 'utf8'));
+      const operatorPolicy = path.join(f.root, '.autocode', 'workflow.json');
+      const policy = JSON.parse(await readFile(operatorPolicy, 'utf8'));
+      policy.verificationReadResources = [check];
+      await writeFile(operatorPolicy, JSON.stringify(policy));
       config.verification.commands[0].command = 'pnpm';
       config.verification.commands[0].args = ['run', 'check'];
       await writeFile(configPath, stringify(config));
@@ -1342,6 +1352,13 @@ test(
         (await runProjectWorkflow(f.root, { ...f.options, resumeOnly: true }))
           .outcome,
         'completed',
+      );
+      assert.deepEqual(await f.calls(), calls);
+      policy.verificationReadResources = [];
+      await writeFile(operatorPolicy, JSON.stringify(policy));
+      await assert.rejects(
+        () => runProjectWorkflow(f.root, { ...f.options, resumeOnly: true }),
+        /invalid workflow receipt/,
       );
       assert.deepEqual(await f.calls(), calls);
     } finally {

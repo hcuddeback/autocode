@@ -23,6 +23,8 @@ test('discovers standard ignored credential formats and retains redaction and fr
     await writeFile(path.join(root, '.gitignore'), '*\n');
     const credentials: Record<string, string> = {
       '.envrc': 'export GITHUB_TOKEN=envrc-private-token\n',
+      'gradle.properties':
+        '# repository credentials\nrepoUser=gradle-private-user\nrepoPassword : gradle-private-token\nsigning.password gradle-signing-token\nliteral=gradle-literal # suffix\n',
       '.npmrc': '//registry.example.invalid/:_authToken=npm-private-token',
       '.yarnrc':
         '# Yarn Classic\n_authToken yarn-classic-plain # comment\n"//registry.example.invalid/:_authToken" "yarn-classic-token=" # comment\n_authToken=\'yarn-classic-assigned=\'\n"//other.example.invalid/:_authToken" \'yarn-classic-single\'\n',
@@ -82,6 +84,10 @@ test('discovers standard ignored credential formats and retains redaction and fr
     for (const token of [
       'npm-private-token',
       'envrc-private-token',
+      'gradle-private-user',
+      'gradle-private-token',
+      'gradle-signing-token',
+      'gradle-literal # suffix',
       'yarn-classic-token=',
       'yarn-classic-assigned=',
       'yarn-classic-single',
@@ -175,6 +181,28 @@ test('discovers standard ignored credential formats and retains redaction and fr
       /changed protected credential state/,
     );
     await writeFile(path.join(root, '.envrc'), credentials['.envrc']!);
+    await writeFile(
+      path.join(root, 'gradle.properties'),
+      'repoPassword=replaced-gradle-token\n',
+    );
+    await assert.rejects(
+      () => assertCredentialFilesUnchanged(root, before.files),
+      /changed protected credential state/,
+    );
+    for (const unsupported of [
+      'repoPassword=escaped\\ value',
+      'repoPassword=private\0value',
+    ]) {
+      await writeFile(path.join(root, 'gradle.properties'), unsupported);
+      await assert.rejects(
+        () => discoverWorkspaceCredentials(root),
+        /ignored Gradle credential file has unsupported syntax/,
+      );
+    }
+    await writeFile(
+      path.join(root, 'gradle.properties'),
+      credentials['gradle.properties']!,
+    );
     await writeFile(
       path.join(root, '.npmrc'),
       '//registry.example.invalid/:_authToken=replaced-private-token',

@@ -642,6 +642,21 @@ function collectCredentialScalars(
   name: string,
   secrets: Set<string>,
 ): void {
+  if (name.toLowerCase() === 'gradle.properties') {
+    // Java Properties escaping and continuation require interpretation. Refuse
+    // unsupported layouts rather than retain only fragments of a credential.
+    if (/[\\\0]/.test(contents))
+      throw new Error('ignored Gradle credential file has unsupported syntax');
+    for (const line of contents.split(/\r\n|[\r\n]/)) {
+      if (/^[ \t\f]*(?:[#!]|$)/.test(line)) continue;
+      const match =
+        /^[ \t\f]*[^=:\s]+(?:[ \t\f]*[=:][ \t\f]*|[ \t\f]+)(.*)$/.exec(line);
+      // Quotes and inline comment markers are literal in Java Properties.
+      const value = match?.[1];
+      if (value !== undefined && value.length >= 4) secrets.add(value);
+    }
+    return;
+  }
   if (name.toLowerCase() === '.yarnrc') {
     for (const line of contents.split(/\r?\n/)) {
       if (!line.trim() || /^\s*#/.test(line)) continue;

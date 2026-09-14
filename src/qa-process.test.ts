@@ -1254,7 +1254,7 @@ test(
       });
       await writeFile(
         path.join(directory, '.gitignore'),
-        '.env*\n*credentials*\n.npmrc\n.yarnrc\n.yarnrc.yml\n.netrc\n_netrc\nauth.json\nid_rsa\n.pypirc\n.venv/pip.ini\nNuGet.Config\nnested/pip.conf\n.git-credentials\n*.pem\n.aws/\n.docker/\n',
+        'gradle.properties\nrelease.jks\nkeystore.properties\nopaque.bin\n.env*\n*credentials*\n.npmrc\n.yarnrc\n.yarnrc.yml\n.netrc\n_netrc\nauth.json\nid_rsa\n.pypirc\n.venv/pip.ini\nNuGet.Config\nnested/pip.conf\n.git-credentials\n*.pem\n.aws/\n.docker/\n',
       );
       await mkdir(path.join(directory, 'nested'));
       await mkdir(path.join(directory, '.venv'));
@@ -1263,6 +1263,10 @@ test(
       const credentialPaths = [
         '.env',
         '.envrc',
+        'gradle.properties',
+        'release.jks',
+        'keystore.properties',
+        'opaque.bin',
         '.credentials.json',
         'nested/service.credentials.json',
         '.npmrc',
@@ -1284,7 +1288,9 @@ test(
       for (const credential of credentialPaths)
         await writeFile(
           path.join(directory, credential),
-          credential === '.env' || credential === '.envrc'
+          credential === '.env' ||
+            credential === '.envrc' ||
+            credential === 'gradle.properties'
             ? 'PRIVATE_VALUE=operator-private'
             : credential === 'NuGet.Config'
               ? '<configuration><packageSourceCredentials><fixture><add key="ClearTextPassword" value="operator-private" /></fixture></packageSourceCredentials></configuration>'
@@ -1319,6 +1325,22 @@ test(
         'credential ACLs must be restored exactly',
       );
       assert.match(run.stdout, /private-boundary-passed/);
+      const safe = await runContainedProcess(
+        process.execPath,
+        [
+          '-e',
+          "const fs=require('node:fs');fs.readFileSync('opaque.bin');for(const p of ['release.jks','keystore.properties','gradle.properties']){for(const action of [()=>fs.readFileSync(p),()=>fs.writeFileSync(p,'corrupt'),()=>fs.renameSync(p,p+'.moved'),()=>fs.unlinkSync(p)]){try{action();throw Error('private resource exposed')}catch(e){if(!['EACCES','EPERM'].includes(e.code))throw e}}}console.log('exact-safe-file-grant')",
+        ],
+        directory,
+        10_000,
+        10_000,
+        undefined,
+        [],
+        [path.join(directory, 'opaque.bin')],
+      );
+      assert.equal(safe.exitCode, 0, safe.stderr);
+      assert.match(safe.stdout, /exact-safe-file-grant/);
+      assert.equal(await snapshotWindowsAcl(paths), originalAcl);
       for (const credential of credentialPaths)
         assert.match(
           await readFile(path.join(directory, credential), 'utf8'),

@@ -10,7 +10,7 @@ export function isCredentialPath(relative: string): boolean {
     sensitiveSegments.some((segment) =>
       /(?:secret|credential)/.test(segment),
     ) ||
-    /^(?:\.?npmrc|\.yarnrc(?:\.ya?ml)?|pip\.(?:ini|conf)|nuget\.config|[._]?netrc|\.pypirc|\.git-credentials|auth\.(?:json|ya?ml)|id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?)$/.test(
+    /^(?:\.?npmrc|\.yarnrc(?:\.ya?ml)?|pip\.(?:ini|conf)|nuget\.config|gradle\.properties|[._]?netrc|\.pypirc|\.git-credentials|auth\.(?:json|ya?ml)|id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?)$/.test(
       name,
     ) ||
     /\.(?:pem|key|p12|pfx)$/.test(name) ||

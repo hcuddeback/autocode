@@ -348,6 +348,22 @@ async function windowsJobScript(
       ]),
     ).values(),
   ];
+  // Only exact regular-file grants can expose ignored repository data. A broad
+  // workspace or dependency directory grant does not classify its files as safe.
+  const safeIgnoredFiles = new Set<string>();
+  for (const resource of sandboxReadResources) {
+    const info = await lstat(resource);
+    if (info.isSymbolicLink())
+      throw new Error('sandbox read resources must not be links');
+    if (info.isFile())
+      safeIgnoredFiles.add((await realpath(resource)).toLowerCase());
+  }
+  for (const executable of [
+    command,
+    process.execPath,
+    ...(batchExecutable ? [batchExecutable] : []),
+  ])
+    safeIgnoredFiles.add((await realpath(executable)).toLowerCase());
   const blocked = new Set<string>();
   const protectedPaths = new Set<string>();
   const seenDirectories = new Set<string>();
@@ -646,6 +662,30 @@ async function windowsJobScript(
           await discoverWorkspaceCredentials(directory)
         ).files.keys())
           blocked.add(await realpath(path.resolve(directory, relative)));
+        const ignored = await inspectGit(directory, [
+          'ls-files',
+          '--others',
+          '--ignored',
+          '--exclude-standard',
+          '-z',
+        ]);
+        for (const relative of ignored.split('\0').filter(Boolean)) {
+          if (++visited > 100000)
+            throw new Error(
+              'sandbox resource discovery exceeds its entry limit',
+            );
+          const target = path.resolve(directory, relative);
+          if (!within(directory, target))
+            throw new Error(
+              'ignored resource must remain inside its repository',
+            );
+          const info = await lstat(target);
+          if (!info.isFile() || info.isSymbolicLink())
+            throw new Error('ignored resources must be regular files');
+          const canonical = await realpath(target);
+          if (!safeIgnoredFiles.has(canonical.toLowerCase()))
+            blocked.add(canonical);
+        }
         const stdout = await inspectGit(directory, [
           'rev-parse',
           '--git-common-dir',
