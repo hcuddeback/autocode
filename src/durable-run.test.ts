@@ -77,6 +77,44 @@ test('executes ordered effects once and returns deeply immutable state', async (
   );
 });
 
+test('explicit blocked and failed phase results never checkpoint success or execute later phases', async () => {
+  for (const kind of ['blocked', 'failed'] as const) {
+    const root = await fixtureProject();
+    let executions = 0;
+    const callbacks = {
+      async execute() {
+        executions++;
+        return { kind, reason: 'phase did not satisfy its required gate' };
+      },
+      async reconcile() {
+        return {
+          kind: 'ambiguous',
+          reason: 'operator disposition is still required',
+        };
+      },
+    };
+    const first = await runDurableRun(
+      root,
+      { ...definition, runId: `explicit-${kind}` },
+      callbacks,
+    );
+    assert.equal(first.outcome, kind);
+    assert.equal(first.state.phases[0]!.status, 'in-flight');
+    assert.equal(first.state.phases[1]!.status, 'pending');
+    assert.equal(
+      (
+        await runDurableRun(
+          root,
+          { ...definition, runId: `explicit-${kind}` },
+          callbacks,
+        )
+      ).outcome,
+      kind,
+    );
+    assert.equal(executions, 1);
+  }
+});
+
 test('pauses only after a completed phase and resumes at the next phase', async () => {
   const root = await fixtureProject();
   const calls: string[] = [];

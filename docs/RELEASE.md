@@ -20,7 +20,7 @@ This runbook tracks release gates as the CLI and workflow are built.
 
 ## Repository validation
 
-Run `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build`. Package-install and fixture-workflow commands remain pending later tasks; skipped checks must be explicit.
+Run `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build`. AC-012 adds subprocess-backed local workflow fixtures and a forced-interruption model-receipt resume test. These use fake Codex processes and are not a clean-install distribution test or authenticated live-Codex smoke. Package-install commands remain pending; skipped checks must be explicit. See `MVP_AUDIT.md` for requirement evidence and release blockers.
 
 ## Package smoke
 

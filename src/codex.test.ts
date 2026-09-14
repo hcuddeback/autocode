@@ -1,12 +1,220 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { writeFileSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { redactSecrets, runRoleSeparatedCodexSessions } from './codex.js';
+import {
+  redactSecrets,
+  runRoleSeparatedCodexSessions,
+  discoverWorkspaceCredentials,
+  assertCredentialFilesUnchanged,
+} from './codex.js';
+
+test('discovers standard ignored credential formats and retains redaction and freshness', async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), 'autocode-standard-credentials-'),
+  );
+  try {
+    await execFileAsync('git', ['init', '-b', 'main'], { cwd: root });
+    await writeFile(path.join(root, '.gitignore'), '*\n');
+    const credentials: Record<string, string> = {
+      '.envrc': 'export GITHUB_TOKEN=envrc-private-token\n',
+      'gradle.properties':
+        '# repository credentials\nrepoUser=gradle-private-user\nrepoPassword : gradle-private-token\nsigning.password gradle-signing-token\nliteral=gradle-literal # suffix\n',
+      '.npmrc': '//registry.example.invalid/:_authToken=npm-private-token',
+      '.yarnrc':
+        '# Yarn Classic\n_authToken yarn-classic-plain # comment\n"//registry.example.invalid/:_authToken" "yarn-classic-token=" # comment\n_authToken=\'yarn-classic-assigned=\'\n"//other.example.invalid/:_authToken" \'yarn-classic-single\'\n',
+      '.yarnrc.yml':
+        'npmAuthToken: yarn-private-token=\nnpmRegistries:\n  "//registry.example.invalid":\n    npmAuthToken: yarn-nested-token\n',
+      'NuGet.Config':
+        '<configuration><packageSourceCredentials><fixture><add key="ClearTextPassword" value="nuget-private-token" /></fixture></packageSourceCredentials></configuration>',
+      'nested/nuget.config':
+        '<configuration><apikeys><add key="fixture" value="nuget&amp;encoded&#x2d;&#116;oken" /></apikeys></configuration>',
+      '.netrc':
+        'machine example.invalid login fixture password netrc-private-token',
+      _netrc: 'machine example.invalid password windows-netrc-token',
+      '.venv/pip.ini':
+        '[global]\nindex-url = https://fixture:pip-private-token@example.invalid/simple\n',
+      'nested/pip.conf':
+        '[global]\nindex-url=https://fixture:pip-conf-token@example.invalid/simple\n',
+      '.pypirc': '[distutils]\npassword=pypi-private-token',
+      '.git-credentials':
+        'https://fixture:git-private-password@example.invalid',
+      'nested/auth.json': '{"token":"auth-private-token"}',
+      id_rsa:
+        '-----BEGIN OPENSSH PRIVATE KEY-----\nsynthetic-key-body\n-----END OPENSSH PRIVATE KEY-----',
+      'nested/client.pem':
+        '-----BEGIN PRIVATE KEY-----\nsynthetic-pem-body\n-----END PRIVATE KEY-----',
+      '.aws/config': '[default]\naws_secret_access_key=aws-private-token',
+      '.docker/config.json':
+        '{"auths":{"example.invalid":{"auth":"docker-private-token"}}}',
+      '.kube/config': 'users:\n  - user:\n      token: kube-private-token=',
+    };
+    for (const [relative, content] of Object.entries(credentials)) {
+      await mkdir(path.dirname(path.join(root, relative)), { recursive: true });
+      await writeFile(path.join(root, relative), content);
+    }
+    await writeFile(path.join(root, 'ordinary.txt'), 'ordinary ignored data');
+    await mkdir(path.join(root, '.autocode', 'runs', 'overlapping-secrets'), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(
+        root,
+        '.autocode',
+        'runs',
+        'overlapping-secrets',
+        'events.jsonl',
+      ),
+      '{"sequence":1}\n{"sequence":2}\n',
+    );
+    await writeFile(
+      path.join(root, 'nested', 'client.p12'),
+      Buffer.from([0xff, 0x00]),
+    );
+    const before = await discoverWorkspaceCredentials(root);
+    assert.deepEqual(
+      [...before.files.keys()].sort(),
+      [...Object.keys(credentials), 'nested/client.p12'].sort(),
+    );
+    for (const token of [
+      'npm-private-token',
+      'envrc-private-token',
+      'gradle-private-user',
+      'gradle-private-token',
+      'gradle-signing-token',
+      'gradle-literal # suffix',
+      'yarn-classic-token=',
+      'yarn-classic-assigned=',
+      'yarn-classic-single',
+      'yarn-classic-plain',
+      'yarn-private-token=',
+      'yarn-nested-token',
+      'netrc-private-token',
+      'nuget-private-token',
+      'nuget&encoded-token',
+      'windows-netrc-token',
+      'pypi-private-token',
+      'https://fixture:pip-private-token@example.invalid/simple',
+      'https://fixture:pip-conf-token@example.invalid/simple',
+      'git-private-password',
+      'auth-private-token',
+      'synthetic-key-body',
+      'synthetic-pem-body',
+      'aws-private-token',
+      'docker-private-token',
+      'kube-private-token=',
+    ])
+      assert.ok(
+        !redactSecrets(token, before.secrets).includes(token),
+        `redaction must cover ${token}`,
+      );
+    await assertCredentialFilesUnchanged(root, before.files);
+    // Two invalid UTF-8 sequences decode identically, but their raw hashes must differ.
+    await writeFile(
+      path.join(root, 'nested', 'client.p12'),
+      Buffer.from([0xfe, 0x00]),
+    );
+    await assert.rejects(
+      () => assertCredentialFilesUnchanged(root, before.files),
+      /changed protected credential state/,
+    );
+    await writeFile(
+      path.join(root, 'nested', 'client.p12'),
+      Buffer.from([0xff, 0x00]),
+    );
+    await writeFile(
+      path.join(root, '.yarnrc.yml'),
+      'npmAuthToken: replaced-yarn-token\n',
+    );
+    await assert.rejects(
+      () => assertCredentialFilesUnchanged(root, before.files),
+      /changed protected credential state/,
+    );
+    await writeFile(
+      path.join(root, '.yarnrc.yml'),
+      credentials['.yarnrc.yml']!,
+    );
+    await writeFile(
+      path.join(root, '.yarnrc'),
+      '_authToken replaced-classic-token\n',
+    );
+    await assert.rejects(
+      () => assertCredentialFilesUnchanged(root, before.files),
+      /changed protected credential state/,
+    );
+    await writeFile(path.join(root, '.yarnrc'), credentials['.yarnrc']!);
+    await writeFile(
+      path.join(root, '.venv/pip.ini'),
+      '[global]\nindex-url=https://fixture:replaced-pip-token@example.invalid/simple\n',
+    );
+    await assert.rejects(
+      () => assertCredentialFilesUnchanged(root, before.files),
+      /changed protected credential state/,
+    );
+    await writeFile(
+      path.join(root, '.venv/pip.ini'),
+      credentials['.venv/pip.ini']!,
+    );
+    await writeFile(
+      path.join(root, 'NuGet.Config'),
+      '<configuration><add value="replaced-nuget-token" /></configuration>',
+    );
+    await assert.rejects(
+      () => assertCredentialFilesUnchanged(root, before.files),
+      /changed protected credential state/,
+    );
+    await writeFile(
+      path.join(root, 'NuGet.Config'),
+      credentials['NuGet.Config']!,
+    );
+    await writeFile(
+      path.join(root, '.envrc'),
+      'export GITHUB_TOKEN=replaced-envrc-token\n',
+    );
+    await assert.rejects(
+      () => assertCredentialFilesUnchanged(root, before.files),
+      /changed protected credential state/,
+    );
+    await writeFile(path.join(root, '.envrc'), credentials['.envrc']!);
+    await writeFile(
+      path.join(root, 'gradle.properties'),
+      'repoPassword=replaced-gradle-token\n',
+    );
+    await assert.rejects(
+      () => assertCredentialFilesUnchanged(root, before.files),
+      /changed protected credential state/,
+    );
+    for (const unsupported of [
+      'repoPassword=escaped\\ value',
+      'repoPassword=private\0value',
+    ]) {
+      await writeFile(path.join(root, 'gradle.properties'), unsupported);
+      await assert.rejects(
+        () => discoverWorkspaceCredentials(root),
+        /ignored Gradle credential file has unsupported syntax/,
+      );
+    }
+    await writeFile(
+      path.join(root, 'gradle.properties'),
+      credentials['gradle.properties']!,
+    );
+    await writeFile(
+      path.join(root, '.npmrc'),
+      '//registry.example.invalid/:_authToken=replaced-private-token',
+    );
+    await assert.rejects(
+      () => assertCredentialFilesUnchanged(root, before.files),
+      /changed protected credential state/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 const execFileAsync = promisify(execFile);
 const IMPLEMENTATION_ID = '11111111-1111-4111-8111-111111111111';
@@ -444,6 +652,7 @@ async function sessionFixture(mode: string) {
     `${JSON.stringify({ version: 1, taskId: 'AC-004', taskPath: 'tasks/AC-004.md', taskSha256: createHash('sha256').update(task).digest('hex'), headCommit: head, branch: 'feat/AC-004-codex-sessions' }, null, 2)}\n`,
   );
   const fake = path.join(base, 'fake-codex.mjs');
+  const previousCommit = (await git(worktree, ['rev-parse', 'HEAD^'])).trim();
   await writeFile(fake, fakeCodex());
   return {
     worktree,
@@ -451,7 +660,29 @@ async function sessionFixture(mode: string) {
     options: {
       command: process.execPath,
       commandPrefixArguments: [fake, mode],
-      timeoutMs: 2_000,
+      // Native profile/ACL setup runs inside the measured Windows host process.
+      // Keep explicit short-timeout tests unchanged while allowing fixture startup.
+      timeoutMs: process.platform === 'win32' ? 10_000 : 2_000,
+      sandboxWriteDirectories: [base],
+      // Simulate a concurrent operator/legacy writer, which the sandbox cannot impersonate.
+      validateFinalMessage: (message: string) => {
+        if (!message.startsWith('role=implementation')) return;
+        if (mode === 'mutate-credential-state')
+          writeFileSync(path.join(worktree, '.env'), 'DB_PASSWORD=destroyed\n');
+        if (mode === 'mutate-preparation')
+          writeFileSync(path.join(runDirectory, 'plan.md'), 'tampered');
+        if (mode === 'mutate-other-state')
+          writeFileSync(
+            path.join(worktree, '.autocode', 'config.yaml'),
+            'changed: true',
+          );
+        if (mode === 'commit') {
+          const gitdir = readFileSync(path.join(worktree, '.git'), 'utf8')
+            .trim()
+            .replace(/^gitdir: /, '');
+          writeFileSync(path.join(gitdir, 'HEAD'), previousCommit + '\n');
+        }
+      },
     },
     cleanup: () => rm(base, { recursive: true, force: true }),
   };
@@ -473,7 +704,7 @@ function selectedTask(): string {
 function fakeCodex(): string {
   return `const mode = process.argv[2];
 import { writeFile } from 'node:fs/promises';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const review = input.includes('independent critical-review role');
@@ -485,10 +716,6 @@ if (!review && mode === 'success-tree') spawn(process.execPath, ['-e', "setTimeo
 if (!review && mode === 'success-detached-tree') spawn(process.execPath, ['-e', "setTimeout(()=>require('node:fs').writeFileSync('escaped.txt','escaped'),1500); setTimeout(()=>{},10000)"], { stdio: 'ignore', detached: true }).unref();
 if (mode === 'overflow') { process.stdout.write('x'.repeat(4096)); await new Promise(resolve => setTimeout(resolve, 10_000)); }
 if (!review) await writeFile('implementation.txt', 'changed');
-if (!review && mode === 'mutate-preparation') { const { readdir } = await import('node:fs/promises'); const [run] = await readdir('.autocode/runs'); await writeFile('.autocode/runs/' + run + '/plan.md', 'tampered'); }
-if (!review && mode === 'mutate-other-state') await writeFile('.autocode/config.yaml', 'changed: true');
-if (!review && mode === 'mutate-credential-state') await writeFile('.env', 'DB_PASSWORD=destroyed\\n');
-if (!review && mode === 'commit') { spawnSync('git', ['add', 'implementation.txt']); spawnSync('git', ['commit', '-m', 'unexpected']); }
 if (mode === 'malformed') { console.log('{bad json'); process.exit(0); }
 const id = review && mode !== 'duplicate' ? '${REVIEW_ID}' : '${IMPLEMENTATION_ID}';
 console.log(JSON.stringify({ type: 'thread.started', thread_id: id }));

@@ -13,6 +13,7 @@ import {
 import { execFile } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
+import { gitInspectionArguments } from './git-inspection.js';
 import { parse, stringify } from 'yaml';
 
 export const CONFIG_FILE = '.autocode/config.yaml';
@@ -311,7 +312,7 @@ async function gitOutput(
   return new Promise((resolve, reject) => {
     execFile(
       'git',
-      args,
+      gitInspectionArguments(projectDirectory, args),
       {
         cwd: projectDirectory,
         encoding: 'utf8',
@@ -425,6 +426,10 @@ async function isLockStale(lockPath: string): Promise<boolean> {
     }
     return isOlderThan(ownerPath, FOREIGN_LOCK_LEASE_MS);
   } catch (error: unknown) {
+    // A concurrent Windows unlink can leave the owner temporarily unreadable.
+    // Do not infer stale ownership; the existing bounded acquisition loop retries.
+    if (process.platform === 'win32' && hasErrorCode(error, 'EPERM'))
+      return false;
     if (!isFileNotFound(error) && !(error instanceof SyntaxError)) {
       throw error;
     }
@@ -516,7 +521,13 @@ async function isPathEffectivelyIgnored(
   return new Promise((resolve, reject) => {
     execFile(
       'git',
-      ['check-ignore', '--quiet', '--no-index', '--', targetPath],
+      gitInspectionArguments(projectDirectory, [
+        'check-ignore',
+        '--quiet',
+        '--no-index',
+        '--',
+        targetPath,
+      ]),
       { cwd: projectDirectory, windowsHide: true },
       (error, _stdout, stderr) => {
         if (error === null) {

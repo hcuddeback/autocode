@@ -2,7 +2,7 @@
 
 **Status:** Selected for MVP 1
 
-**Last updated:** 2026-09-02
+**Last updated:** 2026-09-11
 
 ## Goals and constraints
 
@@ -34,6 +34,8 @@ Operator → AutoCode CLI → workflow engine → policy/gates
 
 ## Proposed boundaries
 
+AC-012 adds `workflow.ts` as the local composition boundary. `cli.ts` exposes run/resume; prepared Codex roles and unique verification rounds feed immutable phase receipts into `runDurableRun`. QA is callback-based and missing external integrations fail closed. Existing policy modules remain independently usable. See `WORKFLOW.md` for the implemented boundary and `MVP_AUDIT.md` for acceptance gaps.
+
 `src/` will add CLI, workflow, tasks, Codex, verification, review, QA, Git, GitHub, deployment, state, configuration, and observability modules only as the vertical slice needs them. Prompts remain versioned under `prompts/`.
 
 ## Data and state
@@ -63,6 +65,8 @@ Operator → AutoCode CLI → workflow engine → policy/gates
 - Missing optional integration → apply explicit applicability policy.
 
 ## Testing strategy
+
+Runtime subprocess execution currently supports the verified Windows fixture through AppContainer and Job Object containment; broader command compatibility remains unaccepted. Linux and macOS fail closed before model, QA, verification or workflow-history acceptance; Linux requires verified user-manager isolation. Cross-platform PRODUCT acceptance is not yet met; do not advertise broader support based on TypeScript portability.
 
 - Unit: schemas, readiness, transitions, retry/pacing policy.
 - Integration: subprocesses, worktrees, evidence, recovery, adapters.

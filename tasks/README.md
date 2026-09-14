@@ -24,7 +24,11 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 
 ## Immediate queue
 
-`AC-010` and `AC-011` merged through PRs #11 and #12. AC-010 post-merge lock/security findings remain in follow-up PR #13 on `fix/AC-010-review-findings`; finish its review and merge gates before selecting further implementation.
+`AC-010`, `AC-011`, and the AC-010 corrections in PR #13 are merged. `AC-012.md` is the active integration contract on `feat/AC-012-integrated-workflow`, based on main `63e8a49`. Current boundary corrections, verification, fixture QA, and the owner-accepted chat review are recorded in the task. The branch is published as [PR #14](https://github.com/hcuddeback/autocode/pull/14). Existing PR findings must be dispositioned and configured merge gates and human-authorized merge must pass before marking it done. The owner ended further continuous bot-review requests on 2026-09-14; D-005 permits the accepted critical review chat as review evidence. The MVP code audit lives in `docs/MVP_AUDIT.md`; remaining release or external-integration outcomes must be selected JIT after this task rather than implemented on this branch.
+
+## Later review follow-up
+
+After AC-012, consider one bounded maintainability audit of the integrated workflow and Windows containment code. Produce a prioritized list of concrete problems, impacts and verification criteria; select small fixes as separate JIT tasks. Do not repeatedly review PR #14 or make this audit a merge gate. No known security exposure or correctness bug is deferred by this entry; the two latest PR findings are fixed and verified in AC-012.
 
 ## JIT task process
 
@@ -38,7 +42,7 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 8. Confirm implementation is running from that feature branch/worktree; stop if the current branch is `main`.
 9. Generate the detailed plan immediately before coding.
 10. Implement and run deterministic verification, independent critical review, fixes, and applicable QA.
-11. Only after those implementation gates pass, push the feature branch and open its required PR.
+11. After deterministic verification and applicable QA pass, autonomously commit the scoped changes, push the feature branch, and open its required PR. A separate manual or external review is not a publication gate; owner-accepted review chats may supply independent review evidence for completion.
 12. Merge only through configured gates and human authorization.
 13. After merge gates pass, mark the task `done`, move it to `tasks/completed/`, and update the queue and `SYSTEM.md`.
 

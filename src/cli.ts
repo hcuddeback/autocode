@@ -6,6 +6,7 @@ import { selectProjectTask } from './tasks.js';
 import { prepareImplementationPlan } from './planning.js';
 import { runRoleSeparatedCodexSessions } from './codex.js';
 import { runDeterministicVerification } from './verification.js';
+import { runProjectWorkflow } from './workflow.js';
 
 async function main(args: string[]): Promise<void> {
   const [command, ...options] = args;
@@ -18,6 +19,17 @@ async function main(args: string[]): Promise<void> {
     throw new Error(`${command} accepts at most one project directory`);
   }
   const projectDirectory = path.resolve(target);
+  if (command === 'run' || command === 'resume') {
+    const result = await runProjectWorkflow(projectDirectory, {
+      resumeOnly: command === 'resume',
+    });
+    console.log(
+      `Workflow ${result.outcome}: ${result.state.reason}; evidence at ${result.runDirectory}`,
+    );
+    if (result.outcome === 'failed' || result.outcome === 'blocked')
+      process.exitCode = 1;
+    return;
+  }
   if (command === 'init') {
     const result = await initializeProject(projectDirectory);
     console.log(
@@ -84,7 +96,7 @@ async function main(args: string[]): Promise<void> {
 function printHelp(): void {
   console.log('Usage: autocode <command> [project-directory]');
   console.log(
-    '\nCommands:\n  init      Initialize project-local configuration and state\n  select    Select the first ready task with completed dependencies\n  prepare   Validate the selected task and create commit-bound planning artifacts\n  sessions  Run separate Codex implementation and critical-review sessions\n  verify    Run configured deterministic checks and retain evidence',
+    '\nCommands:\n  init      Initialize project-local configuration and state\n  select    Select the first ready task with completed dependencies\n  prepare   Validate the selected task and create commit-bound planning artifacts\n  sessions  Run separate Codex implementation and critical-review sessions\n  verify    Run configured deterministic checks and retain evidence\n  run       Run one task through the durable integrated local workflow\n  resume    Reconcile and resume the same workflow without repeating completed phases',
   );
 }
 

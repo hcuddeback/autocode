@@ -13,12 +13,24 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
+import { gitInspectionArguments } from './git-inspection.js';
+import {
+  runContainedProcess,
+  assertSecureProcessPlatform,
+} from './qa-process.js';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { parse as parseYaml } from 'yaml';
-import { discoverWorkspaceCredentials, redactSecrets } from './codex.js';
+import {
+  assertCredentialFilesUnchanged,
+  assertDirectoryUnchanged,
+  discoverWorkspaceCredentials,
+  redactSecrets,
+  snapshotDirectory,
+} from './codex.js';
 import { CONFIG_FILE, validateConfig } from './config.js';
-import { loadTaskCatalog } from './tasks.js';
+import { snapshotReadResources } from './read-resources.js';
+import { loadTaskCatalog, selectProjectTask } from './tasks.js';
 
 const execFileAsync = promisify(execFile);
 const OMITTED_OUTPUT = '[output omitted: exceeded configured limit]\n';
@@ -59,7 +71,7 @@ export interface VerificationResult {
   checks: VerificationCheckRecord[];
 }
 
-interface ProcessResult {
+export interface ProcessResult {
   stdout: string;
   stderr: string;
   exitCode: number;
@@ -67,15 +79,33 @@ interface ProcessResult {
   overflowed: boolean;
 }
 
-interface SecuredVerificationCommand {
-  command: string;
-  arguments: string[];
-  systemdUnit?: string;
+/** Tampered workflow state must never be reconciled from subprocess-written receipts. */
+export class VerificationStateTamperingError extends Error {
+  constructor() {
+    super(
+      'deterministic verification failed: protected AutoCode state changed',
+    );
+    this.name = 'VerificationStateTamperingError';
+  }
 }
 
 export async function runDeterministicVerification(
   projectDirectory: string,
+  options: {
+    evidenceName?: string;
+    retainFailure?: boolean;
+    taskId?: string;
+    /** Resources explicitly authorized by the trusted operator. */
+    sandboxReadResources?: readonly string[];
+  } = {},
 ): Promise<VerificationResult> {
+  assertSecureProcessPlatform();
+  const sandboxReadResources = [...(options.sandboxReadResources ?? [])];
+  const initialReadResources =
+    await snapshotReadResources(sandboxReadResources);
+  const evidenceName = options.evidenceName ?? 'evidence';
+  if (!/^[a-z][a-z0-9-]{0,63}$/.test(evidenceName))
+    throw new Error('invalid verification evidence name');
   const root = await verifiedProjectRoot(projectDirectory);
   const config = validateConfig(
     parseYaml(
@@ -88,10 +118,20 @@ export async function runDeterministicVerification(
   const active = (await loadTaskCatalog(root)).filter((task) =>
     ['ready', 'in_progress', 'review'].includes(task.status),
   );
-  if (active.length !== 1) {
+  const task =
+    options.taskId === undefined
+      ? active[0]
+      : active.find((entry) => entry.taskId === options.taskId);
+  if ((options.taskId === undefined && active.length !== 1) || !task) {
     throw new Error('verification requires exactly one active task');
   }
-  const task = active[0]!;
+  if (options.taskId !== undefined) {
+    const selection = await selectProjectTask(root);
+    if (selection.kind !== 'selected' || selection.task.taskId !== task.taskId)
+      throw new Error(
+        'workflow verification must match the dependency-ready selected task',
+      );
+  }
   const [branch, headCommit, initialStatus] = await Promise.all([
     gitOutput(root, ['branch', '--show-current']),
     gitOutput(root, ['rev-parse', '--verify', 'HEAD']),
@@ -156,7 +196,7 @@ export async function runDeterministicVerification(
     );
   }
 
-  const evidenceDirectory = path.join(runDirectory, 'evidence');
+  const evidenceDirectory = path.join(runDirectory, evidenceName);
   await assertDirectoryIdentity(runsIdentity, 'runs directory');
   await assertDirectoryIdentity(runIdentity, 'prepared run directory');
   try {
@@ -176,22 +216,36 @@ export async function runDeterministicVerification(
   );
   await assertDirectoryIdentity(runIdentity, 'prepared run directory');
   const credentials = await discoverWorkspaceCredentials(root);
+  const stateDirectory = path.join(root, '.autocode');
+  const stateIdentity = await directoryIdentity(
+    stateDirectory,
+    'state directory',
+  );
+  const ignoredStateEntries = new Set([
+    normalizedRelativePath(stateDirectory, evidenceDirectory),
+  ]);
+  const stateSnapshot = await snapshotDirectory(
+    stateDirectory,
+    ignoredStateEntries,
+  );
   const checks: VerificationCheckRecord[] = [];
   let passed = true;
+  let stateTampered = false;
   for (const configured of config.verification.commands) {
     const started = Date.now();
     const startedAt = new Date(started).toISOString();
     let processResult: ProcessResult;
     try {
       const executable = await resolveExecutable(configured.command, root);
-      const secured = secureVerificationCommand(executable, configured.args);
-      processResult = await runProcess(
-        secured.command,
-        secured.arguments,
+      processResult = await runContainedProcess(
+        executable,
+        configured.args,
         root,
         config.verification.timeoutMs,
         config.verification.maxOutputBytes,
-        secured.systemdUnit,
+        undefined,
+        [],
+        sandboxReadResources,
       );
     } catch (error: unknown) {
       processResult = {
@@ -224,7 +278,27 @@ export async function runDeterministicVerification(
     const worktreeUnchanged =
       currentStatus === initialStatus &&
       currentWorktreeSnapshot === initialWorktreeSnapshot;
-    const protectedStateUnchanged = await filesUnchanged(protectedFiles);
+    const protectedStateUnchanged =
+      (await safeInspection(
+        async () =>
+          JSON.stringify(await snapshotReadResources(sandboxReadResources)) ===
+          JSON.stringify(initialReadResources),
+      )) === true &&
+      (await safeInspection(async () => {
+        await assertDirectoryIdentity(stateIdentity, 'state directory');
+        await assertDirectoryUnchanged(
+          stateDirectory,
+          stateSnapshot,
+          ignoredStateEntries,
+        );
+        return true;
+      })) === true &&
+      (await filesUnchanged(protectedFiles)) &&
+      (await safeInspection(async () => {
+        await assertCredentialFilesUnchanged(root, credentials.files);
+        return true;
+      })) === true;
+    stateTampered = !protectedStateUnchanged;
     const record: VerificationCheckRecord = {
       version: 1,
       name: configured.name,
@@ -251,13 +325,18 @@ export async function runDeterministicVerification(
         worktreeUnchanged &&
         protectedStateUnchanged,
     };
-    await persistCheck(
-      evidenceDirectory,
-      evidenceIdentity,
-      record,
-      processResult,
-      credentials.secrets,
-    );
+    try {
+      await persistCheck(
+        evidenceDirectory,
+        evidenceIdentity,
+        record,
+        processResult,
+        credentials.secrets,
+      );
+    } catch (error) {
+      if (stateTampered) throw new VerificationStateTamperingError();
+      throw error;
+    }
     checks.push(record);
     if (!record.passed) {
       passed = false;
@@ -265,16 +344,22 @@ export async function runDeterministicVerification(
     }
   }
   const result = { runDirectory, passed, checks };
-  await assertDirectoryIdentity(
-    evidenceIdentity,
-    'verification evidence directory',
-  );
-  await writeFile(
-    path.join(evidenceDirectory, 'summary.json'),
-    `${JSON.stringify(result, null, 2)}\n`,
-    { flag: 'wx' },
-  );
-  if (!passed)
+  try {
+    await assertDirectoryIdentity(
+      evidenceIdentity,
+      'verification evidence directory',
+    );
+    await writeFile(
+      path.join(evidenceDirectory, 'summary.json'),
+      `${JSON.stringify(result, null, 2)}\n`,
+      { flag: 'wx' },
+    );
+  } catch (error) {
+    if (stateTampered) throw new VerificationStateTamperingError();
+    throw error;
+  }
+  if (stateTampered) throw new VerificationStateTamperingError();
+  if (!passed && !options.retainFailure)
     throw new Error(
       'deterministic verification failed; retained evidence identifies the failing check',
     );
@@ -291,35 +376,7 @@ async function safeInspection<T>(
   }
 }
 
-function secureVerificationCommand(
-  command: string,
-  arguments_: string[],
-): SecuredVerificationCommand {
-  if (process.platform === 'win32') return { command, arguments: arguments_ };
-  if (process.platform !== 'linux') {
-    throw new Error(
-      'secure verification process containment is currently unavailable on this platform',
-    );
-  }
-  const systemdUnit = `autocode-verification-${process.pid}-${randomUUID()}`;
-  return {
-    command: 'systemd-run',
-    arguments: [
-      '--user',
-      '--quiet',
-      '--wait',
-      '--collect',
-      '--pipe',
-      `--unit=${systemdUnit}`,
-      '--',
-      command,
-      ...arguments_,
-    ],
-    systemdUnit,
-  };
-}
-
-async function snapshotWorktree(root: string): Promise<string> {
+export async function snapshotWorktree(root: string): Promise<string> {
   const digest = createHash('sha256');
   await hashGitOutput(digest, root, [
     'diff',
@@ -355,7 +412,7 @@ async function snapshotWorktree(root: string): Promise<string> {
 
 function gitNullOutput(root: string, args: string[]): Promise<string[]> {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', args, {
+    const child = spawn('git', gitInspectionArguments(root, args), {
       cwd: root,
       shell: false,
       windowsHide: true,
@@ -395,7 +452,7 @@ function hashGitOutput(
   args: string[],
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', args, {
+    const child = spawn('git', gitInspectionArguments(root, args), {
       cwd: root,
       shell: false,
       windowsHide: true,
@@ -417,7 +474,7 @@ function hashGitOutput(
   });
 }
 
-async function resolveExecutable(
+export async function resolveExecutable(
   command: string,
   root: string,
 ): Promise<string> {
@@ -515,13 +572,18 @@ async function persistCheck(
   }
 }
 
-function runProcess(
+export function runProcess(
   command: string,
   arguments_: string[],
   cwd: string,
   timeoutMs: number,
   maxOutputBytes: number,
   systemdUnit?: string,
+  containment?: {
+    windowsJob: boolean;
+    systemctl?: string | undefined;
+    input?: string | undefined;
+  },
 ): Promise<ProcessResult> {
   return new Promise((resolve) => {
     const child = spawn(command, arguments_, {
@@ -529,7 +591,11 @@ function runProcess(
       detached: process.platform !== 'win32',
       shell: false,
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [
+        containment?.input === undefined ? 'ignore' : 'pipe',
+        'pipe',
+        'pipe',
+      ],
     });
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
@@ -553,9 +619,12 @@ function runProcess(
     };
     const terminate = () => {
       if (terminationTimer !== undefined) return;
-      terminateTree(child.pid, false, systemdUnit);
+      if (containment?.windowsJob) child.kill('SIGKILL');
+      else terminateTree(child.pid, false, systemdUnit, containment?.systemctl);
       terminationTimer = setTimeout(() => {
-        terminateTree(child.pid, true, systemdUnit);
+        if (containment?.windowsJob) child.kill('SIGKILL');
+        else
+          terminateTree(child.pid, true, systemdUnit, containment?.systemctl);
         finish(-1);
       }, TERMINATION_GRACE_MS);
       terminationTimer.unref();
@@ -574,14 +643,19 @@ function runProcess(
       if (target === 'stdout') stdout = Buffer.concat([stdout, chunk]);
       else stderr = Buffer.concat([stderr, chunk]);
     };
-    child.stdout.on('data', (chunk: Buffer) => collect('stdout', chunk));
-    child.stderr.on('data', (chunk: Buffer) => collect('stderr', chunk));
+    child.stdout!.on('data', (chunk: Buffer) => collect('stdout', chunk));
+    child.stderr!.on('data', (chunk: Buffer) => collect('stderr', chunk));
+    child.stdin?.on('error', (error: NodeJS.ErrnoException) => {
+      if (error.code !== 'EPIPE') terminate();
+    });
+    child.stdin?.end(containment?.input, 'utf8');
     child.on('error', (error) => {
       stderr = Buffer.from(error.message);
       finish(-1);
     });
     child.on('close', (code) => {
-      if (!timedOut && !overflowed) terminateTree(child.pid, true, systemdUnit);
+      if (!timedOut && !overflowed && !containment?.windowsJob)
+        terminateTree(child.pid, true, systemdUnit, containment?.systemctl);
       finish(code ?? -1);
     });
   });
@@ -591,6 +665,7 @@ function terminateTree(
   pid: number | undefined,
   force: boolean,
   systemdUnit?: string,
+  systemctlCommand = 'systemctl',
 ): void {
   if (pid === undefined) return;
   if (process.platform === 'win32') {
@@ -608,7 +683,7 @@ function terminateTree(
   }
   if (systemdUnit !== undefined) {
     spawnSync(
-      'systemctl',
+      systemctlCommand,
       [
         '--user',
         'kill',
@@ -732,12 +807,16 @@ async function assertLinkedWorktree(root: string): Promise<void> {
 }
 
 async function gitOutput(root: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync('git', args, {
-    cwd: root,
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024,
-    windowsHide: true,
-  });
+  const { stdout } = await execFileAsync(
+    'git',
+    gitInspectionArguments(root, args),
+    {
+      cwd: root,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024,
+      windowsHide: true,
+    },
+  );
   return stdout.trim();
 }
 

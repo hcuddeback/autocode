@@ -14,6 +14,7 @@ import {
 } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { gitInspectionArguments } from './git-inspection.js';
 import { types as utilTypes } from 'node:util';
 import { discoverWorkspaceCredentials, redactSecrets } from './codex.js';
 
@@ -72,6 +73,7 @@ export interface DurableEffectContext {
 
 export type DurableEffectResult =
   | { readonly kind: 'applied'; readonly reason: string }
+  | { readonly kind: 'blocked' | 'failed'; readonly reason: string }
   | {
       readonly kind: 'retryable';
       readonly reason: string;
@@ -413,7 +415,8 @@ export async function runDurableRun(
         );
       }
 
-      if (state.status === 'failed') return finish(paths, state);
+      if (state.status === 'failed' || state.status === 'blocked')
+        return finish(paths, state);
 
       if (
         options.pauseAfterPhase === phase.id &&
@@ -494,6 +497,18 @@ async function executeEffect(
       options,
       result.reason,
       result.retryAfterMs,
+    );
+  }
+  if (result.kind === 'blocked' || result.kind === 'failed') {
+    return transition(
+      paths,
+      definition,
+      state,
+      {
+        type: result.kind === 'blocked' ? 'run-blocked' : 'run-failed',
+        reason: result.reason,
+      },
+      options,
     );
   }
   await options.onCheckpoint?.('after-effect-applied', freezeState(state));
@@ -1736,15 +1751,18 @@ function normalizeEffectResult(
     const reason = dataValue(record, 'reason');
     const retryAfter = dataValue(record, 'retryAfterMs');
     if (
-      (kind !== 'applied' && kind !== 'retryable') ||
+      (kind !== 'applied' &&
+        kind !== 'retryable' &&
+        kind !== 'blocked' &&
+        kind !== 'failed') ||
       !isBoundedText(reason) ||
-      (kind === 'applied' && retryAfter !== undefined)
+      (kind !== 'retryable' && retryAfter !== undefined)
     ) {
       return undefined;
     }
     const redactedReason = redactSecrets(reason, secrets);
     if (!isBoundedText(redactedReason)) return undefined;
-    if (kind === 'applied')
+    if (kind !== 'retryable')
       return Object.freeze({ kind, reason: redactedReason });
     return Object.freeze({
       kind,
@@ -1884,7 +1902,7 @@ function gitOutput(
   return new Promise((resolve, reject) => {
     execFile(
       'git',
-      arguments_,
+      gitInspectionArguments(root, arguments_),
       {
         cwd: root,
         encoding: 'utf8',
@@ -1903,7 +1921,7 @@ function gitExitCode(
   return new Promise((resolve, reject) => {
     execFile(
       'git',
-      arguments_,
+      gitInspectionArguments(root, arguments_),
       {
         cwd: root,
         encoding: 'utf8',
