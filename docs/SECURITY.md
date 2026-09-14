@@ -2,7 +2,7 @@
 
 **Status:** Baseline design
 
-**Last reviewed:** 2026-09-13 (AC-012 corrections; owner-accepted chat review)
+**Last reviewed:** 2026-09-14 (AC-012 corrections; owner-accepted chat review)
 
 ## Data classification
 
@@ -79,3 +79,5 @@ Actual Git `config` and `config.worktree` locations are parsed with Git's bounde
 The common Git `modules` metadata namespace is private by default, including submodule configs, included fragments, nested submodules and opaque files. Recursive discovery propagates privacy through reserved metadata boundaries and isolates every descendant, refusing preexisting package/capability read grants unchanged. Parent-repository public config/ref/object reads remain supported. Commands requiring private submodule metadata can be unavailable; no private-data fallback exists.
 
 Git config includes receive no automatic host read authorization. A separate bounded, deduplicated walk parses regular referenced files only inside resources authorized for sandbox access, and isolates every existing in-scope target, including chained/conditional includes outside modules metadata. Canonical inspection caching terminates cycles; a 1,000-target ceiling, unsupported user-relative expansion, links and unsafe inspection fail closed without raw config-error values. Outside-resource includes are neither read nor granted by this walk.
+
+**Private Git file reference refinement (2026-09-14):** Discover known literal TLS key/certificate, cookie, credential-file, askpass, SSH -i and credential-store file references from guarded configs. Canonical in-scope regular files are private; references never grant external access or execute helpers. Discovery and target expansion are capped at 1,000 entries and unsafe inspections fail closed. Carry the Git metadata role explicitly, including when the common directory is named .autocode. Containment version 7 invalidates v6 and earlier receipts.

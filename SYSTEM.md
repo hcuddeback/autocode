@@ -1,6 +1,6 @@
 # AutoCode system state
 
-**Last verified:** 2026-09-13
+**Last verified:** 2026-09-14
 
 **Stage:** AC-001 through AC-011 and PR #13 merged; AC-012 local workflow integration is published in PR #14 and unmerged
 
@@ -43,6 +43,12 @@
 See `docs/MVP_AUDIT.md` for requirement-by-requirement code evidence and the remaining acceptance/release gaps. The complete MVP is not yet accepted or released.
 
 ## Latest AC-012 boundary checkpoint
+
+### Private Git file references and explicit metadata roles, 2026-09-14
+
+Independent critical review reproduced an opaque generated RSA private key exposed through http.sslKey despite isolating its config. Known Git TLS key/certificate, cookie, credential-file, literal askpass, SSH identity and credential-store references now receive bounded canonical discovery and credential isolation inside authorized resources. References do not execute helpers, read private file contents or authorize external resources. PR finding 4002440974 additionally showed a custom common directory named .autocode; discovery now carries its explicit Git metadata role independently of the basename, including recursive module privacy. New regressions preserve public parent config/refs, ordinary writes, original contents and ACL restoration. Containment version 7 invalidates v6 and earlier receipts.
+
+Fresh frozen-source verification covers all 306 cases: 302 pass, four platform skips, zero failures/cancellations and every one of 13 source files/33 workflow roots exactly once. The forced-interruption fixture runs alone; other files are serialized and the remaining workflow roots run in three disjoint processes. Every command exits zero, with no retry required. Fresh production-JavaScript boundary QA passes 52 tests; built pnpm CMD and CLI run/resume QA passes two. The real disposable RSA-key regression now reports PRIVATE_REFERENCE_PROTECTED. Configured formatting, lint, typecheck, clean build and built CLI help pass; source hashes match. Current-head remote review and human merge remain gates.
 
 ### Submodule metadata privacy, 2026-09-13
 

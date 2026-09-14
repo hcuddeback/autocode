@@ -421,6 +421,7 @@ test(
       'worktree',
       'askpass',
       'include',
+      'file-reference',
       'public',
     ])
       await t.test(mode, async () => {
@@ -434,6 +435,7 @@ test(
           await mkdir(extra);
           const exec = promisify(execFile);
           const configs: string[] = [];
+          const privateReferences: string[] = [];
           for (const root of [cwd, extra]) {
             await exec('git', ['init', '-b', 'main'], {
               cwd: root,
@@ -464,6 +466,34 @@ test(
               cwd: root,
               windowsHide: true,
             });
+            if (mode === 'file-reference') {
+              const fields = [
+                'http.sslKey',
+                'http.sslCert',
+                'http.cookieFile',
+                'credential.helper',
+                'core.sshCommand',
+                'core.askPass',
+              ];
+              for (const [index, field] of fields.entries()) {
+                const reference = `./.git/opaque-${index}`;
+                const target = path.join(root, '.git', `opaque-${index}`);
+                await writeFile(target, 'synthetic-private-file');
+                privateReferences.push(target);
+                const value =
+                  field === 'credential.helper'
+                    ? `store --file="${reference}"`
+                    : field === 'core.sshCommand'
+                      ? `ssh -i "${reference}"`
+                      : field === 'core.askPass'
+                        ? `"${reference}"`
+                        : reference;
+                await exec('git', ['config', '--file', config, field, value], {
+                  cwd: root,
+                  windowsHide: true,
+                });
+              }
+            }
             configs.push(config);
           }
           if (mode === 'public')
@@ -477,15 +507,16 @@ test(
             path.join(base, 'private-config'),
             '[http]\nextraHeader = Authorization: Basic operator-private\n',
           );
+          const targets = [...configs, ...privateReferences];
           const originals = await Promise.all(
-            configs.map((file) => readFile(file, 'utf8')),
+            targets.map((file) => readFile(file, 'utf8')),
           );
-          const paths = [cwd, extra, ...configs];
+          const paths = [cwd, extra, ...targets];
           const originalAcl = await snapshotWindowsAcl(paths);
           const script =
             mode === 'public'
               ? `const fs=require('node:fs');${JSON.stringify(configs)}.forEach(p=>{if(!fs.readFileSync(p,'utf8').includes('Public Fixture'))throw Error('missing public config')});console.log('public-config-readable')`
-              : `const fs=require('node:fs');${JSON.stringify(configs)}.forEach(p=>{try{fs.readFileSync(p);throw Error('private config readable')}catch(e){if(!['EACCES','EPERM'].includes(e.code))throw e}});fs.writeFileSync('ordinary.txt','allowed');console.log('private-config-protected')`;
+              : `const fs=require('node:fs');${JSON.stringify(targets)}.forEach(p=>{try{fs.readFileSync(p);throw Error('private config/reference readable')}catch(e){if(!['EACCES','EPERM'].includes(e.code))throw e}});fs.writeFileSync('ordinary.txt','allowed');console.log('private-config-protected')`;
           const result = await runContainedProcess(
             process.execPath,
             ['-e', script],
@@ -504,7 +535,7 @@ test(
           );
           assert.equal(await snapshotWindowsAcl(paths), originalAcl);
           assert.deepEqual(
-            await Promise.all(configs.map((file) => readFile(file, 'utf8'))),
+            await Promise.all(targets.map((file) => readFile(file, 'utf8'))),
             originals,
           );
         } finally {
@@ -518,7 +549,13 @@ test(
   'Windows keeps submodule metadata and opaque config fragments private',
   { skip: process.platform !== 'win32' },
   async (t) => {
-    for (const mode of ['cwd', 'additional', 'linked', 'package-read'])
+    for (const mode of [
+      'cwd',
+      'additional',
+      'linked',
+      'package-read',
+      'custom-common',
+    ])
       await t.test(mode, async () => {
         const base = await mkdtemp(path.join(os.tmpdir(), 'autocode-modules-'));
         try {
@@ -528,7 +565,15 @@ test(
           const exec = promisify(execFile);
           const git = (args: string[]) =>
             exec('git', args, { cwd: source, windowsHide: true });
-          await git(['init', '-b', 'main']);
+          const common = path.join(
+            source,
+            mode === 'custom-common' ? '.autocode' : '.git',
+          );
+          await git(
+            mode === 'custom-common'
+              ? ['init', '-b', 'main', '--separate-git-dir', common]
+              : ['init', '-b', 'main'],
+          );
           await git(['config', 'user.name', 'Public Fixture']);
           await git(['config', 'user.email', 'fixture@example.invalid']);
           await writeFile(path.join(source, 'ordinary.txt'), 'tracked');
@@ -538,7 +583,6 @@ test(
           if (mode === 'linked') {
             await git(['worktree', 'add', '-b', 'feature', workspace]);
           }
-          const common = path.join(source, '.git');
           const module = path.join(common, 'modules', 'config');
           await mkdir(module, { recursive: true });
           await exec('git', ['init', '--bare', module], {
@@ -594,7 +638,7 @@ test(
           );
           await writeFile(
             targets[5]!,
-            '[include]\npath = ./.git/modules/config/config\n[http]\nextraHeader = Authorization: Basic synthetic-private\n',
+            `[include]\npath = ./${path.basename(common)}/modules/config/config\n[http]\nextraHeader = Authorization: Basic synthetic-private\n`,
           );
           if (mode === 'package-read')
             await editWindowsAcl(
@@ -602,7 +646,11 @@ test(
               "$rule=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-15-2-1'),'Read','Allow');$acl.AddAccessRule($rule)",
             );
           const cwd =
-            mode === 'cwd' || mode === 'package-read' ? source : workspace;
+            mode === 'cwd' ||
+            mode === 'package-read' ||
+            mode === 'custom-common'
+              ? source
+              : workspace;
           const paths = [source, workspace, common, module, nested, ...targets];
           const originalAcl = await snapshotWindowsAcl(paths);
           const contents = await Promise.all(

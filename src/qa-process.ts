@@ -330,7 +330,17 @@ async function windowsJobScript(
     }
   }
   const configIncludes = new Set<string>();
+  const configFileReferences = new Map<
+    string,
+    { file: string; value: string }
+  >();
   const inspectedConfigs = new Map<string, boolean>();
+  function privateFileReference(file: string, value: string): void {
+    if (!value) return;
+    configFileReferences.set(JSON.stringify([file, value]), { file, value });
+    if (configFileReferences.size > 1000)
+      throw new Error('Git private file references exceed their entry limit');
+  }
   async function credentialGitConfig(file: string): Promise<boolean> {
     const cached = inspectedConfigs.get(file.toLowerCase());
     if (cached !== undefined) return cached;
@@ -350,6 +360,32 @@ async function windowsJobScript(
         separator < 0 ? entry : entry.slice(0, separator)
       ).toLowerCase();
       const value = separator < 0 ? '' : entry.slice(separator + 1);
+      if (
+        /(?:^|\.)(?:sslkey|sslcert|cookiefile)$/.test(key) ||
+        /^credential(?:\..*)?\.(?:file|path)$/.test(key) ||
+        key === 'core.askpass'
+      ) {
+        const quoted =
+          key === 'core.askpass'
+            ? value.match(/^(?:"([^"]+)"|'([^']+)')$/)
+            : null;
+        privateFileReference(file, quoted ? (quoted[1] ?? quoted[2]!) : value);
+      }
+      if (key === 'core.sshcommand')
+        for (const identity of value.matchAll(
+          /(?:^|\s)-i\s*(?:"([^"]+)"|'([^']+)'|(\S+))/g,
+        ))
+          privateFileReference(
+            file,
+            identity[1] ?? identity[2] ?? identity[3]!,
+          );
+      if (/^credential(?:\..*)?\.helper$/.test(key)) {
+        const store = value.match(
+          /^(?:!\s*)?(?:git\s+credential-)?store\s+--file(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))\s*$/,
+        );
+        if (store)
+          privateFileReference(file, store[1] ?? store[2] ?? store[3]!);
+      }
       if (
         (key === 'include.path' || /^includeif\..*\.path$/.test(key)) &&
         value
@@ -482,16 +518,19 @@ async function windowsJobScript(
     inRepository = false,
     metadata = false,
     privateMetadata = false,
+    gitMetadata = false,
   ): Promise<void> {
     const key =
       directory.toLowerCase() +
       (privateMetadata
         ? '|private'
-        : metadata
-          ? '|metadata'
-          : inRepository
-            ? '|repository'
-            : '|generic');
+        : gitMetadata
+          ? '|git-metadata'
+          : metadata
+            ? '|metadata'
+            : inRepository
+              ? '|repository'
+              : '|generic');
     if (seenDirectories.has(key)) return;
     seenDirectories.add(key);
     let dotGit;
@@ -523,7 +562,7 @@ async function windowsJobScript(
         }
         protectedPaths.add(common);
         readFiles.push(common);
-        await discover(common, common, false, true);
+        await discover(common, common, false, true, false, true);
       }
     }
     for await (const entry of await opendir(directory)) {
@@ -540,7 +579,7 @@ async function windowsJobScript(
         protectedPaths.add(await realpath(candidate));
       }
       const prefix = metadata
-        ? path.basename(base).toLowerCase() === '.autocode'
+        ? !gitMetadata
           ? '.autocode/'
           : '.git/'
         : isCredentialDirectoryName(path.basename(base))
@@ -549,8 +588,6 @@ async function windowsJobScript(
       const relative = path.relative(base, candidate);
       const parts = relative.split(path.sep);
       const namespace = parts[0]?.toLowerCase();
-      const gitMetadata =
-        metadata && path.basename(base).toLowerCase() !== '.autocode';
       // Submodule metadata is private by default: configs, include fragments
       // and nested modules need not use recognizable credential filenames.
       const privateEntry =
@@ -601,6 +638,7 @@ async function windowsJobScript(
           inRepository,
           metadata || reserved,
           privateEntry,
+          reserved ? entry.name.toLowerCase() === '.git' : gitMetadata,
         );
     }
   }
@@ -640,6 +678,44 @@ async function windowsJobScript(
       throw new Error('Git configuration includes must be regular files');
     blocked.add(canonical);
     await credentialGitConfig(canonical);
+  }
+  const referenceTargets = new Map<string, string>();
+  for (const { file, value } of configFileReferences.values()) {
+    if (/^~[^\\/]/.test(value))
+      throw new Error('Unsupported Git private file reference');
+    const contexts =
+      path.isAbsolute(value) || /^~[\\/]/.test(value)
+        ? [path.dirname(file)]
+        : [cwd, path.dirname(file), ...writableRoots, ...repositories];
+    for (const context of contexts) {
+      const target = /^~[\\/]/.test(value)
+        ? path.resolve(os.homedir(), value.slice(2))
+        : path.resolve(context, value);
+      referenceTargets.set(target.toLowerCase(), target);
+      if (referenceTargets.size > 1000)
+        throw new Error('Git private file targets exceed their entry limit');
+    }
+  }
+  for (const target of referenceTargets.values()) {
+    let info;
+    let canonical;
+    try {
+      info = await lstat(target);
+      canonical = await realpath(target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      // File reference paths are config values and may themselves contain secrets.
+      // eslint-disable-next-line preserve-caught-error -- do not retain raw config values
+      throw new Error('Could not inspect Git private file references safely');
+    }
+    if (
+      !grantedFiles.has(canonical.toLowerCase()) &&
+      !grantedDirectories.some((root) => within(root, canonical))
+    )
+      continue;
+    if (!info.isFile() || info.isSymbolicLink())
+      throw new Error('Git private file references must be regular files');
+    blocked.add(canonical);
   }
   for (const metadata of protectedPaths)
     for (const writable of writableRoots)
