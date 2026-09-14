@@ -175,7 +175,7 @@ export async function runProjectWorkflow(
   const initialPlan = await safeRead(root, `${preparedRelative}/plan.md`);
   const binding = hash(
     JSON.stringify({
-      processContainment: 'windows-appcontainer-job-v5',
+      processContainment: 'windows-appcontainer-job-v6',
       head,
       branch,
       task: hash(task.contents),

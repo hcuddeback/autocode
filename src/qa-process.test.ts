@@ -515,6 +515,139 @@ test(
 );
 
 test(
+  'Windows keeps submodule metadata and opaque config fragments private',
+  { skip: process.platform !== 'win32' },
+  async (t) => {
+    for (const mode of ['cwd', 'additional', 'linked', 'package-read'])
+      await t.test(mode, async () => {
+        const base = await mkdtemp(path.join(os.tmpdir(), 'autocode-modules-'));
+        try {
+          const source = path.join(base, 'source');
+          const workspace = path.join(base, 'workspace');
+          await mkdir(source);
+          const exec = promisify(execFile);
+          const git = (args: string[]) =>
+            exec('git', args, { cwd: source, windowsHide: true });
+          await git(['init', '-b', 'main']);
+          await git(['config', 'user.name', 'Public Fixture']);
+          await git(['config', 'user.email', 'fixture@example.invalid']);
+          await writeFile(path.join(source, 'ordinary.txt'), 'tracked');
+          await git(['add', '.']);
+          await git(['commit', '-m', 'fixture']);
+          await mkdir(workspace);
+          if (mode === 'linked') {
+            await git(['worktree', 'add', '-b', 'feature', workspace]);
+          }
+          const common = path.join(source, '.git');
+          const module = path.join(common, 'modules', 'config');
+          await mkdir(module, { recursive: true });
+          await exec('git', ['init', '--bare', module], {
+            cwd: source,
+            windowsHide: true,
+          });
+          const nested = path.join(module, 'modules', 'nested');
+          await mkdir(nested, { recursive: true });
+          await exec('git', ['init', '--bare', nested], {
+            cwd: source,
+            windowsHide: true,
+          });
+          const targets = [
+            path.join(module, 'config'),
+            path.join(module, 'opaque-fragment'),
+            path.join(nested, 'config'),
+            path.join(nested, 'opaque.bin'),
+            path.join(common, 'shared-fragment'),
+            path.join(source, 'ordinary-config-fragment'),
+          ];
+          await exec(
+            'git',
+            [
+              'config',
+              '--file',
+              targets[0]!,
+              mode === 'additional'
+                ? 'includeIf.gitdir:never/.path'
+                : 'include.path',
+              '../../shared-fragment',
+            ],
+            { cwd: source, windowsHide: true },
+          );
+          await writeFile(
+            targets[1]!,
+            '[http]\nextraHeader = Authorization: Basic synthetic-private\n',
+          );
+          await exec(
+            'git',
+            [
+              'config',
+              '--file',
+              targets[2]!,
+              'remote.origin.url',
+              'https://synthetic-private@example.invalid/repo',
+            ],
+            { cwd: source, windowsHide: true },
+          );
+          await writeFile(targets[3]!, 'synthetic-private');
+          await writeFile(
+            targets[4]!,
+            '[include]\npath = ../ordinary-config-fragment\n',
+          );
+          await writeFile(
+            targets[5]!,
+            '[include]\npath = ./.git/modules/config/config\n[http]\nextraHeader = Authorization: Basic synthetic-private\n',
+          );
+          if (mode === 'package-read')
+            await editWindowsAcl(
+              targets[5]!,
+              "$rule=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-15-2-1'),'Read','Allow');$acl.AddAccessRule($rule)",
+            );
+          const cwd =
+            mode === 'cwd' || mode === 'package-read' ? source : workspace;
+          const paths = [source, workspace, common, module, nested, ...targets];
+          const originalAcl = await snapshotWindowsAcl(paths);
+          const contents = await Promise.all(
+            targets.map((file) => readFile(file)),
+          );
+          const script = `const fs=require('node:fs');${JSON.stringify(targets)}.forEach(p=>{try{fs.readFileSync(p);throw Error('private submodule metadata readable')}catch(e){if(!['EACCES','EPERM'].includes(e.code))throw e}});if(!fs.readFileSync(${JSON.stringify(path.join(common, 'config'))},'utf8').includes('Public Fixture'))throw Error('missing public config');if(!fs.readFileSync(${JSON.stringify(path.join(common, 'refs', 'heads', 'main'))},'utf8').trim())throw Error('missing public ref');fs.writeFileSync('launched','yes');console.log('submodule-metadata-private')`;
+          const result = await runContainedProcess(
+            process.execPath,
+            ['-e', script],
+            cwd,
+            20000,
+            10000,
+            undefined,
+            mode === 'additional' ? [source] : [],
+          );
+          if (mode === 'package-read') {
+            assert.notEqual(result.exitCode, 0);
+            assert.match(
+              result.stderr,
+              /credential ACL already grants application-package access/,
+            );
+            await assert.rejects(() => readFile(path.join(cwd, 'launched')), {
+              code: 'ENOENT',
+            });
+          } else {
+            assert.equal(result.exitCode, 0, result.stderr);
+            assert.match(result.stdout, /submodule-metadata-private/);
+            assert.equal(
+              await readFile(path.join(cwd, 'launched'), 'utf8'),
+              'yes',
+            );
+          }
+          assert.equal(await snapshotWindowsAcl(paths), originalAcl);
+          assert.deepEqual(
+            await Promise.all(targets.map((file) => readFile(file))),
+            contents,
+          );
+        } finally {
+          await rm(base, { recursive: true, force: true });
+        }
+      });
+  },
+);
+
+test(
   'Windows protects a directly authorized cloud credential directory',
   { skip: process.platform !== 'win32' },
   async () => {

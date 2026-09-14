@@ -44,7 +44,19 @@ See `docs/MVP_AUDIT.md` for requirement-by-requirement code evidence and the rem
 
 ## Latest AC-012 boundary checkpoint
 
-### Git metadata authorization and config isolation, 2026-09-13
+### Submodule metadata privacy, 2026-09-13
+
+PR #14 security finding 4002215127 on 216c1a4 identifies credentials in standard submodule configs and included fragments under common Git modules metadata. The complete modules namespace is now private by default, including nested submodules, opaque filenames and nested reserved metadata. Every descendant receives credential ACL preflight/isolation; a preexisting package-read grant on an included fragment blocks launch unchanged. No filename or config-include inference authorizes private submodule reads. Git commands requiring submodule metadata can therefore be unavailable; no private-data fallback exists.
+
+Native regressions cover current/additional repositories and registered linked worktrees, included config fragments, nested module URL credentials, opaque files, denied reads, ordinary authorized writes, readable parent Git configs/refs and exact ACL/content restoration. Published-source controls reproduce all four cases; the fixed five-test group passes. Containment version 6 invalidates v5 and earlier receipts. The owner-accepted chat supplies scoped independent critical review.
+
+Referenced includes are isolated even when they leave the modules subtree. The guarded Git reader uses --no-includes; a separate bounded, deduplicated walk parses only regular referenced files inside resources authorized for sandbox access, including chained and conditional includes. Includes do not authorize external host reads or grants. Every existing in-scope referenced file remains private, cycles terminate through canonical inspection caching, and more than 1,000 include targets or unsafe inspection fails closed without raw config values. A module-only control reproduces outside-fragment exposure; the complete fixed config/include group passes 12 native tests.
+
+Fresh final-source coverage verifies all 304 cases: 300 passed and four platform skips, covering all 13 source test files and all 33 workflow registrations. Other files run serialized and workflow tests run in three isolated, disjoint Node processes. The initial parallel run passed 299 cases with four skips and one forced-interruption-fixture failure at its 30-second outer process budget. With all competing QA finished, that sole failed fixture passes in isolation; source, assertions and timeouts are unchanged. The original failed attempt remains intact. `.autocode/implementation-plans/AC-012-pr14-modules-verified-coverage.json` maps every workflow root to its successful evidence and records the failed attempt plus retry explicitly; raw suite/manifest/process logs and `AC-012-pr14-modules-interruption-retry.log` are retained. Compiled Windows boundary QA passes 50 tests and compiled pnpm CMD/CLI run-resume QA passes two, using hash-identical production JavaScript. Configured formatting, lint, typecheck, clean production build and built CLI help pass. Frozen source hashes match. Earlier aborted/module-only runs do not support this checkpoint.
+
+AC-012 remains in review under exact-head external review and human merge gates; this does not claim broader MVP acceptance.
+
+### Historical Git metadata authorization and config isolation, 2026-09-13
 
 PR #14's P1 findings (4001840321 and 4001840327) on e951cce are corrected. An external common Git directory requires original explicit directory read authorization or a registered linked worktree whose canonical back-pointer resolves to this workspace's .git file. Derived read grants do not authorize another repository. Unrelated pointers, including pointers to another registered worktree, fail before launch grants. Actual registered feature worktrees remain supported.
 

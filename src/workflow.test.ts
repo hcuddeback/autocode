@@ -359,6 +359,12 @@ test('resume rejects legacy process containment receipts', async () => {
           ...legacyInput,
         }),
       ),
+      hash(
+        JSON.stringify({
+          processContainment: 'windows-appcontainer-job-v5',
+          ...legacyInput,
+        }),
+      ),
     ]) {
       assert.notEqual(currentBinding, legacy);
       receipt.binding = legacy;

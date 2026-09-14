@@ -329,7 +329,11 @@ async function windowsJobScript(
       throw new Error('Could not inspect sandbox Git metadata safely');
     }
   }
+  const configIncludes = new Set<string>();
+  const inspectedConfigs = new Map<string, boolean>();
   async function credentialGitConfig(file: string): Promise<boolean> {
+    const cached = inspectedConfigs.get(file.toLowerCase());
+    if (cached !== undefined) return cached;
     const config = await inspectGit(cwd, [
       'config',
       '--file',
@@ -338,6 +342,7 @@ async function windowsJobScript(
       '--no-includes',
       '--list',
     ]);
+    let credential = false;
     for (const entry of config.split('\0').filter(Boolean)) {
       const separator = entry.indexOf('\n');
       // Git permits valueless boolean keys; --null lists those without a value.
@@ -345,6 +350,22 @@ async function windowsJobScript(
         separator < 0 ? entry : entry.slice(0, separator)
       ).toLowerCase();
       const value = separator < 0 ? '' : entry.slice(separator + 1);
+      if (
+        (key === 'include.path' || /^includeif\..*\.path$/.test(key)) &&
+        value
+      ) {
+        if (/^~[^\\/]/.test(value))
+          throw new Error('Unsupported Git configuration include path');
+        configIncludes.add(
+          /^[~][\\/]/.test(value)
+            ? path.resolve(os.homedir(), value.slice(2))
+            : path.resolve(path.dirname(file), value),
+        );
+        if (configIncludes.size > 1000)
+          throw new Error(
+            'Git configuration includes exceed their entry limit',
+          );
+      }
       if (
         /^(?:credential|include|includeif)\./.test(key) ||
         /(?:^|\.)(?:extraheader|cookiefile|password|passwd|token|secret|authorization|sslkey|sslcert)$/.test(
@@ -354,9 +375,19 @@ async function windowsJobScript(
         ['core.sshcommand', 'core.askpass'].includes(key) ||
         /[a-z][a-z0-9+.-]*:\/\/[^/\s]*@/i.test(key + '\n' + value)
       )
-        return true;
+        credential = true;
     }
-    return false;
+    inspectedConfigs.set(file.toLowerCase(), credential);
+    return credential;
+  }
+  async function moduleConfig(directory: string): Promise<boolean> {
+    try {
+      const head = await lstat(path.join(directory, 'HEAD'));
+      return head.isFile() && !head.isSymbolicLink();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      return false;
+    }
   }
   async function registeredWorktree(
     directory: string,
@@ -450,10 +481,17 @@ async function windowsJobScript(
     base: string,
     inRepository = false,
     metadata = false,
+    privateMetadata = false,
   ): Promise<void> {
     const key =
       directory.toLowerCase() +
-      (metadata ? '|metadata' : inRepository ? '|repository' : '|generic');
+      (privateMetadata
+        ? '|private'
+        : metadata
+          ? '|metadata'
+          : inRepository
+            ? '|repository'
+            : '|generic');
     if (seenDirectories.has(key)) return;
     seenDirectories.add(key);
     let dotGit;
@@ -513,13 +551,26 @@ async function windowsJobScript(
       const namespace = parts[0]?.toLowerCase();
       const gitMetadata =
         metadata && path.basename(base).toLowerCase() !== '.autocode';
+      // Submodule metadata is private by default: configs, include fragments
+      // and nested modules need not use recognizable credential filenames.
+      const privateEntry =
+        privateMetadata || (gitMetadata && namespace === 'modules');
+      if (privateEntry) {
+        if (info.isSymbolicLink())
+          throw new Error('credential paths must not be links');
+        blocked.add(await realpath(candidate));
+      }
       if (
         gitMetadata &&
         ((parts.length === 1 &&
           ['config', 'config.worktree'].includes(entry.name.toLowerCase())) ||
           (namespace === 'worktrees' &&
             parts.length === 3 &&
-            entry.name.toLowerCase() === 'config.worktree'))
+            entry.name.toLowerCase() === 'config.worktree') ||
+          (privateEntry &&
+            ['config', 'config.worktree'].includes(entry.name.toLowerCase()) &&
+            info.isFile() &&
+            (await moduleConfig(directory))))
       ) {
         if (info.isSymbolicLink() || !info.isFile())
           throw new Error('Git configuration must be a regular file');
@@ -549,6 +600,7 @@ async function windowsJobScript(
           reserved ? candidate : base,
           inRepository,
           metadata || reserved,
+          privateEntry,
         );
     }
   }
@@ -559,6 +611,36 @@ async function windowsJobScript(
       !writableRoots.some((parent) => parent !== root && within(parent, root)),
   ))
     await discover(root, root);
+  // Includes never authorize host reads. Inspect only referenced regular files
+  // inside resources that will receive sandbox access, and keep each private.
+  const grantedDirectories = [...writableRoots];
+  const grantedFiles = new Set<string>();
+  for (const resource of readFiles) {
+    if ((await stat(resource)).isDirectory()) grantedDirectories.push(resource);
+    else grantedFiles.add(resource.toLowerCase());
+  }
+  for (const include of configIncludes) {
+    let info;
+    let canonical;
+    try {
+      info = await lstat(include);
+      canonical = await realpath(include);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      // Include paths are configuration values and can contain secrets.
+      // eslint-disable-next-line preserve-caught-error -- do not retain raw config values
+      throw new Error('Could not inspect Git configuration includes safely');
+    }
+    if (
+      !grantedFiles.has(canonical.toLowerCase()) &&
+      !grantedDirectories.some((root) => within(root, canonical))
+    )
+      continue;
+    if (!info.isFile() || info.isSymbolicLink())
+      throw new Error('Git configuration includes must be regular files');
+    blocked.add(canonical);
+    await credentialGitConfig(canonical);
+  }
   for (const metadata of protectedPaths)
     for (const writable of writableRoots)
       if (within(metadata, writable))
