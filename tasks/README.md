@@ -26,7 +26,7 @@ The product differentiator is orchestration above coding agents. Codex CLI is th
 
 **Outcome:** Finish acceptance/documentation of the single-task kernel, then begin the smallest dependency-safe multi-task pipeline.
 
-**MVP 2 proof:** A five-task dependency chain can be started once, advance automatically through runnable tasks, stop correctly on a blocker, leave downstream tasks waiting and resume without repeating completed work.
+**MVP 2 proof:** A disposable local-only five-task dependency chain advances automatically under explicit PR/production exceptions, stops correctly on a blocker and resumes without repeating completed work. A PR-required chain stops at verified handoff, leaves dependents waiting and advances only after operator-completed repository gates and merged-base reconciliation.
 
 **Initial WIP:** One task executing at a time. Parallel task execution is explicitly deferred.
 
@@ -34,13 +34,22 @@ The product differentiator is orchestration above coding agents. Codex CLI is th
 
 AC-001 through AC-013 are complete and merged. AC-014 is in `review` for the current operator guide; finish its existing gates without expanding its runtime scope.
 
-After AC-014 closes, select/refine the next JIT tasks against current `main` for MVP 2 in this order of outcomes:
+After AC-014 closes, select/refine the remaining **MVP 1 acceptance outcomes** against current `main`, using [the MVP audit](../docs/MVP_AUDIT.md), D-007 and verified current code:
+
+1. **Durable task ownership and immutable summaries** — prevent competing ownership, reconcile interruption safely and retain final evidence-backed handoff summaries.
+2. **Required CLI QA and recovery** — supply applicable QA adapters and bounded QA-fix/reverification recovery without accepting stale evidence or repeating ambiguous effects.
+3. **Platform and live compatibility acceptance** — close supported-platform containment, Windows command/runtime compatibility and authenticated live Codex execution gaps with retained evidence; unsupported execution continues to fail closed.
+4. **Release/security acceptance** — close CI, clean-install/package and license decisions, applicable security/release checks and remaining audit requirements; record explicit acceptance evidence and limitations.
+
+These are coarse outcomes, not claims of missing implementations after future merges. Recheck each against current code and split it into bounded JIT tasks as needed. Do not begin MVP 2 implementation until MVP 1 acceptance is recorded; AC-014 closure alone is insufficient.
+
+Then select/refine MVP 2 JIT tasks in this order of outcomes:
 
 1. **Task graph/readiness model** — load active + completed task contracts, validate dependency references/cycles and derive deterministic READY/WAITING/BLOCKED/DONE state.
 2. **Bounded batch selection** — define and implement the smallest explicit batch contract (for example task list or `--through <task>` over an ordered queue).
-3. **Sequential pipeline loop** — reuse the existing single-task kernel, finalize/persist each task outcome, recalculate readiness and advance without another operator prompt.
+3. **Sequential pipeline loop** — reuse the existing single-task kernel, persist each outcome and advance only on applicable completion evidence. Retain operator-managed PR publication/merge, stop at PR-required handoff and verify the merged predecessor is in the current target branch before creating a dependent worktree from that branch.
 4. **Durable batch resume** — persist batch identity/current task/completed work/blockers/remaining work and reconcile after interruption without repeating completed side effects.
-5. **Five-task dogfood acceptance** — run a controlled dependency chain end-to-end, including at least one legitimate blocker/resume scenario, and retain evidence.
+5. **Five-task fixture and repository-boundary acceptance** — prove automatic local-only advancement with genuine explicit exceptions and blocker/resume evidence; separately prove PR-required handoff stops dependents until operator-completed gates and merged-base reconciliation permit resume.
 
 Do not pre-number or over-specify all five implementation contracts now. Create each task JIT after inspecting the merged state from the preceding outcome. The outcome sequence above is the task board until those contracts materialize.
 

@@ -103,6 +103,8 @@ AC-008 remote PR-review orchestration and AC-009 automated remote merge/producti
 
 MVP 1 is now explicitly treated as the **execution kernel**, not the final product boundary.
 
+Before MVP 2 implementation begins, MVP 1 acceptance must close durable task ownership, immutable final handoff summaries, required CLI QA adapters and bounded QA recovery, supported-platform containment/live Codex compatibility, and release/security acceptance. AC-014 documents the current kernel; closing it alone does not accept MVP 1. Select these remaining outcomes JIT using [the MVP audit](MVP_AUDIT.md) and current code evidence.
+
 ## MVP 2 — autonomous task pipeline
 
 ### Outcome
@@ -136,9 +138,17 @@ load task contracts
 - Stop rather than guess when credentials, architecture/product decisions, unsafe permissions or configured human gates are required.
 - Produce a final run summary showing completed, blocked, waiting, failed and not-started work with evidence locations.
 
-### Initial acceptance scenario
+### Publication, completion and branch-base boundary
 
-Given a five-task dependency chain, one AutoCode invocation must:
+MVP 2 initially retains D-007's operator-managed publication and merge boundary. The batch runner does not commit, push, create PRs, merge or deploy. For a PR-required task it persists a verified local handoff and stops for the operator to publish, address remote review, obtain human-authorized merge through configured gates, perform applicable production verification and update the completed task record. Handoff, a published PR and passing local checks do not satisfy a dependency.
+
+On batch resume, reconcile the completed record with durable evidence of all applicable repository gates, including the merged implementation identity. Fetch and verify the current target branch contains that implementation before preparing a dependent task's fresh isolated feature worktree from that target branch. Never base dependent work on an unmerged predecessor branch or reuse the predecessor's prepared run. Missing, stale or contradictory evidence blocks advancement. Reconcile the batch checkpoint without repeating completed task effects; prepare a new task run when task/base identity changes, preserving the kernel's existing resume rules.
+
+Automatic dependent advancement is initially proven only in a disposable local fixture whose task contracts and trusted operator policy explicitly permit PR and production exceptions and whose local completion evidence passes the configured gates. Such run completion may satisfy fixture dependencies; it cannot mark PR-required repository tasks done. Remote publication/merge automation requires a separately selected lifecycle milestone and policy decision before unattended PR-required chains are promised.
+
+### Initial acceptance scenarios
+
+Given a disposable five-task dependency chain with genuine explicit local-only exceptions as defined above, one AutoCode invocation must:
 
 1. execute the first READY task;
 2. pass it through deterministic validation, independent review and bounded fixes;
@@ -148,7 +158,9 @@ Given a five-task dependency chain, one AutoCode invocation must:
 6. leave downstream dependent tasks WAITING rather than attempting them; and
 7. resume the same batch without repeating already-completed side effects.
 
-The proof is successful if the operator does not manually launch each Codex task or determine what comes next.
+The local proof is successful if the operator does not manually launch each Codex task or determine what comes next. It demonstrates scheduling and durable batch execution, not remote repository acceptance.
+
+A separate PR-required chain scenario must stop at the first verified handoff and leave dependents WAITING. After the operator completes the repository gates, resume must reconcile the merged predecessor and start the next READY task from the verified current target branch without repeating predecessor effects. Before merge, absent authorization, failed gates or a target branch missing the merged implementation must prevent advancement.
 
 ### Deliberate non-goals for MVP 2
 
@@ -158,6 +170,7 @@ The proof is successful if the operator does not manually launch each Codex task
 - Automatic decomposition of a vague product idea into an entire project plan.
 - Multiple model/provider backends.
 - Cross-repository orchestration.
+- Automated publication, PR-review observation, merge and deployment.
 - Unbounded autonomous merging/deployment.
 - Jira/Slack/project-management integrations.
 
@@ -200,6 +213,5 @@ AutoCode is useful when a developer can define several bounded engineering outco
 ## Open questions
 
 - Select the public package/binary name after checking registry availability.
-- Define the exact MVP 2 repository publication boundary: verified handoff only, or commit/push/PR creation before advancing to the next task.
-- Define how task completion is reconciled when repository merge remains human-authorized.
+- Select a later remote lifecycle milestone and its exact-head publication, authorized merge and deployment reconciliation policy.
 - Define the first batch-selection CLI contract.
