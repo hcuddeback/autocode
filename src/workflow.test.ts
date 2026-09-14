@@ -428,6 +428,12 @@ test('resume rejects legacy process containment receipts', async () => {
           ...legacyInput,
         }),
       ),
+      hash(
+        JSON.stringify({
+          processContainment: 'windows-appcontainer-job-v16',
+          ...legacyInput,
+        }),
+      ),
     ]) {
       assert.notEqual(currentBinding, legacy);
       receipt.binding = legacy;
@@ -678,15 +684,125 @@ test('required QA records scenario evidence and blocks code changes that stale p
           { mutate },
         ),
       });
-      assert.equal(result.outcome, mutate ? 'blocked' : 'completed');
-      assert.equal(await fixtureQaCalls(f), 1);
       const evidence = JSON.parse(
         await readFile(path.join(result.runDirectory, 'qa.json'), 'utf8'),
       );
+      assert.equal(
+        result.outcome,
+        mutate ? 'blocked' : 'completed',
+        JSON.stringify(evidence),
+      );
+      assert.equal(await fixtureQaCalls(f), 1);
       assert.equal(evidence.evidence.applicability, 'required');
     } finally {
       await f.cleanup();
     }
+  }
+
+  const qaFixture = await fixture();
+  const previousPath = process.env.PATH;
+  try {
+    const policyPath = path.join(qaFixture.root, '.autocode', 'workflow.json');
+    const policy = JSON.parse(await readFile(policyPath, 'utf8'));
+    policy.qa = {
+      kind: 'required',
+      reason: 'Observe the runtime fixture.',
+      scenarios: [
+        {
+          name: 'runtime',
+          description: 'Execute the fixed external QA runtime.',
+        },
+      ],
+    };
+    await writeFile(policyPath, JSON.stringify(policy));
+    const executable = path.join(qaFixture.directory, 'autocode-qa.cmd');
+    const runtime = path.join(qaFixture.directory, 'qa-reader.mjs');
+    const calls = path.join(qaFixture.directory, 'qa-runtime-calls.txt');
+    const code =
+      "import fs from 'node:fs';fs.appendFileSync(" +
+      JSON.stringify(calls) +
+      ",'observed\\n');console.log(JSON.stringify({kind:'passed',reason:'Observed the external QA runtime.'}));";
+    const shim = '@echo off\r\n"%AUTOCODE_NODE%" "' + runtime + '"\r\n';
+    await writeFile(runtime, code);
+    await writeFile(executable, shim);
+    process.env.PATH = qaFixture.directory + path.delimiter + previousPath;
+    const adapterOptions = {
+      command: 'autocode-qa',
+      arguments: [],
+      sandboxWriteDirectories: [qaFixture.directory],
+      sandboxWriteFiles: [calls],
+      sandboxReadResources: [runtime],
+    };
+    const qa = createContainedQaAdapter(qaFixture.root, adapterOptions);
+    const paused = await runProjectWorkflow(qaFixture.root, {
+      ...qaFixture.options,
+      qa,
+      durable: { pauseAfterPhase: 'qa' },
+    });
+    assert.equal(paused.outcome, 'paused', paused.state.reason);
+    const modelCalls = await qaFixture.calls();
+    const observed = await readFile(calls, 'utf8');
+    for (const [target, original] of [
+      [runtime, code],
+      [executable, shim],
+    ] as const) {
+      await writeFile(
+        target,
+        original +
+          (target === executable
+            ? '\r\nrem changed\r\n'
+            : '\n// changed runtime\n'),
+      );
+      await assert.rejects(
+        () =>
+          runProjectWorkflow(qaFixture.root, {
+            ...qaFixture.options,
+            qa,
+            resumeOnly: true,
+          }),
+        /QA inputs changed|evidence is stale/,
+      );
+      assert.deepEqual(await qaFixture.calls(), modelCalls);
+      assert.equal(await readFile(calls, 'utf8'), observed);
+      await writeFile(target, original);
+    }
+    await assert.rejects(
+      () =>
+        runProjectWorkflow(qaFixture.root, {
+          ...qaFixture.options,
+          resumeOnly: true,
+          qa: createContainedQaAdapter(qaFixture.root, {
+            ...adapterOptions,
+            arguments: ['changed-config'],
+          }),
+        }),
+      /QA inputs changed|evidence is stale/,
+    );
+    assert.equal(
+      (
+        await runProjectWorkflow(qaFixture.root, {
+          ...qaFixture.options,
+          qa,
+          resumeOnly: true,
+        })
+      ).outcome,
+      'completed',
+    );
+    assert.equal(
+      (
+        await runProjectWorkflow(qaFixture.root, {
+          ...qaFixture.options,
+          resumeOnly: true,
+        })
+      ).outcome,
+      'completed',
+    );
+    assert.deepEqual(await qaFixture.calls(), modelCalls);
+    assert.equal(await readFile(calls, 'utf8'), observed);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    await qaFixture.cleanup();
   }
 });
 
@@ -1048,7 +1164,7 @@ durable:{onCheckpoint:async(checkpoint,state)=>{if(checkpoint==='after-effect-ap
       timeout: 90_000,
     });
     assert.equal(await readFile(effectLog, 'utf8'), 'effect-applied');
-    const resumed = await runProjectWorkflow(f.root, {
+    const changedAdapter = {
       ...f.options,
       resumeOnly: true,
       qa: containedFixtureQa(
@@ -1063,6 +1179,19 @@ durable:{onCheckpoint:async(checkpoint,state)=>{if(checkpoint==='after-effect-ap
         }.run,
         {},
       ),
+    };
+    await assert.rejects(
+      () => runProjectWorkflow(f.root, changedAdapter),
+      /QA inputs changed|evidence is stale/,
+    );
+    const resumed = await runProjectWorkflow(f.root, {
+      ...f.options,
+      resumeOnly: true,
+      qa: createContainedQaAdapter(f.root, {
+        command: 'node',
+        arguments: ['-e', qaScript],
+        sandboxWriteDirectories: [f.directory],
+      }),
     });
     assert.equal(resumed.outcome, 'blocked');
     await assert.rejects(fixtureQaCalls(f), { code: 'ENOENT' });
@@ -1199,6 +1328,7 @@ test('workflow rejects in-process QA callbacks before any model effects', async 
         NaN,
         Infinity,
         Number.MAX_SAFE_INTEGER + 1,
+        ...(field === 'maxOutputBytes' ? [16 * 1024 * 1024 + 1] : []),
       ]) {
         await assert.rejects(
           () =>

@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { parse } from 'yaml';
 import { CONFIG_FILE, validateConfig } from './config.js';
 import { snapshotReadResources } from './read-resources.js';
+import { refreshQaInputs, type QaInputSnapshot } from './qa-inputs.js';
 import { loadTaskCatalog, selectProjectTask } from './tasks.js';
 import { prepareImplementationPlan } from './planning.js';
 import {
@@ -45,6 +46,7 @@ import {
 } from './completion-gates.js';
 import {
   preflightContainedQaAdapter,
+  snapshotContainedQaAdapter,
   preflightContainedProcess,
   assertSecureProcessPlatform,
 } from './qa-process.js';
@@ -100,6 +102,7 @@ interface Receipt {
   phaseId: string;
   binding: string;
   workspace: string;
+  qaInputs?: QaInputSnapshot;
   result: DurableEffectResult;
   evidence: unknown;
 }
@@ -168,6 +171,10 @@ export async function runProjectWorkflow(
   }
   if (policy.qa?.kind === 'required' && options.qa)
     await preflightContainedQaAdapter(root, options.qa);
+  let activeQaInputs =
+    policy.qa?.kind === 'required' && options.qa
+      ? await snapshotContainedQaAdapter(root, options.qa)
+      : undefined;
   const codexOptions = await preflightCodexSession(root, options.codex);
   const taskPolicy = parse(
     /^---\r?\n([\s\S]*?)\r?\n---/.exec(task.contents)![1]!,
@@ -201,7 +208,7 @@ export async function runProjectWorkflow(
   const initialPlan = await safeRead(root, `${preparedRelative}/plan.md`);
   const binding = hash(
     JSON.stringify({
-      processContainment: 'windows-appcontainer-job-v16',
+      processContainment: 'windows-appcontainer-job-v17',
       verificationResources,
       head,
       branch,
@@ -219,7 +226,13 @@ export async function runProjectWorkflow(
   }
   phaseIds.push('qa', 'completion');
 
-  async function currentWorkspace(): Promise<string> {
+  function receiptBinding(inputs?: QaInputSnapshot) {
+    return inputs
+      ? hash(JSON.stringify({ binding, qaInputs: inputs }))
+      : binding;
+  }
+
+  async function currentWorkspace(qaInputs?: QaInputSnapshot): Promise<string> {
     if (
       (await git(root, ['rev-parse', '--verify', 'HEAD'])) !== head ||
       (await git(root, ['branch', '--show-current'])) !== branch
@@ -242,6 +255,7 @@ export async function runProjectWorkflow(
     return hash(
       JSON.stringify({
         worktree: await snapshotWorktree(root),
+        qaInputs: qaInputs ? await refreshQaInputs(root, qaInputs) : undefined,
         verificationResources: await snapshotReadResources(
           policy.verificationReadResources ?? [],
         ),
@@ -262,13 +276,23 @@ export async function runProjectWorkflow(
     if (
       value.version !== 1 ||
       value.phaseId !== phaseId ||
-      value.binding !== binding ||
+      value.binding !== receiptBinding(value.qaInputs) ||
       !/^[a-f0-9]{64}$/.test(value.workspace) ||
       !['applied', 'blocked', 'failed'].includes(value.result?.kind) ||
       typeof value.result.reason !== 'string' ||
       value.result.reason.length === 0
     )
       throw new Error('invalid workflow receipt');
+    if (value.qaInputs !== undefined) {
+      if (!['qa', 'completion'].includes(phaseId))
+        throw new Error('invalid QA input receipt');
+      const current = await refreshQaInputs(
+        root,
+        activeQaInputs ?? value.qaInputs,
+      );
+      if (JSON.stringify(current) !== JSON.stringify(value.qaInputs))
+        throw new Error('workflow QA inputs changed; evidence is stale');
+    }
     return value;
   }
 
@@ -287,13 +311,20 @@ export async function runProjectWorkflow(
     result: DurableEffectResult,
     evidence: unknown,
   ): Promise<void> {
-    const workspace = await currentWorkspace();
+    const qaInputs =
+      phaseId === 'qa'
+        ? activeQaInputs
+        : phaseId === 'completion'
+          ? (await receipt('qa'))?.qaInputs
+          : undefined;
+    const workspace = await currentWorkspace(qaInputs);
     const credentials = await discoverWorkspaceCredentials(root);
     const value: Receipt = {
       version: 1,
       phaseId,
-      binding,
+      binding: receiptBinding(qaInputs),
       workspace,
+      ...(qaInputs === undefined ? {} : { qaInputs }),
       result: {
         ...result,
         reason: redactSecrets(result.reason, credentials.secrets),
@@ -356,7 +387,10 @@ export async function runProjectWorkflow(
   }
 
   const existing = await latest();
-  if (existing && existing.workspace !== (await currentWorkspace()))
+  if (
+    existing &&
+    existing.workspace !== (await currentWorkspace(existing.qaInputs))
+  )
     throw new Error('workflow evidence is stale after workspace changes');
   const result = await runDurableRun(
     root,
@@ -379,7 +413,10 @@ export async function runProjectWorkflow(
           )
             throw new WorkflowReceiptTamperingError();
           const previous = await latest();
-          if (previous && previous.workspace !== (await currentWorkspace()))
+          if (
+            previous &&
+            previous.workspace !== (await currentWorkspace(previous.qaInputs))
+          )
             return {
               kind: 'blocked',
               reason: 'workspace changed; evidence requires a new run',
@@ -529,7 +566,12 @@ export async function runProjectWorkflow(
               });
               return result;
             } else {
-              const beforeQa = await currentWorkspace();
+              if (policy.qa.kind === 'required' && options.qa)
+                activeQaInputs = await snapshotContainedQaAdapter(
+                  root,
+                  options.qa,
+                );
+              const beforeQa = await currentWorkspace(activeQaInputs);
               const credentialsBeforeQa =
                 await discoverWorkspaceCredentials(root);
               const stateDirectory = await safePath(root, '.autocode', true);
@@ -566,7 +608,7 @@ export async function runProjectWorkflow(
                   reason: 'QA changed protected AutoCode state',
                 };
               }
-              if (beforeQa !== (await currentWorkspace()))
+              if (beforeQa !== (await currentWorkspace(activeQaInputs)))
                 result = {
                   kind: 'blocked',
                   reason:
@@ -632,7 +674,7 @@ export async function runProjectWorkflow(
           phase.id !== 'qa' &&
           phase.id !== 'completion' &&
           own &&
-          own.workspace === (await currentWorkspace()) &&
+          own.workspace === (await currentWorkspace(own.qaInputs)) &&
           own.result.kind === 'applied'
         )
           return {
@@ -653,7 +695,7 @@ export async function runProjectWorkflow(
             | undefined;
           if (
             waiting?.result.kind === 'blocked' &&
-            waiting.workspace === (await currentWorkspace()) &&
+            waiting.workspace === (await currentWorkspace(waiting.qaInputs)) &&
             evidence?.prerequisite === 'qa-adapter' &&
             evidence.effectId === context.effectId &&
             evidence.attempt === context.attempt
@@ -677,7 +719,11 @@ export async function runProjectWorkflow(
     },
     options.durable,
   );
-  await currentWorkspace();
+  if (result.outcome === 'completed') {
+    const last = await latest();
+    if (last && last.workspace !== (await currentWorkspace(last.qaInputs)))
+      throw new Error('workflow evidence is stale after workspace changes');
+  } else await currentWorkspace();
   return result;
 }
 

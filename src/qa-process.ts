@@ -21,7 +21,9 @@ import {
   isCredentialDirectoryName,
 } from './credential-paths.js';
 import { WINDOWS_SANDBOX } from './windows-sandbox.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { snapshotQaInputs } from './qa-inputs.js';
+export const MAX_CONTAINED_OUTPUT_BYTES = 16 * 1024 * 1024;
 import { resolveExecutable, runProcess } from './verification.js';
 import type { QaCallbacks } from './qa.js';
 
@@ -68,7 +70,7 @@ export function createContainedQaAdapter(
     timeoutMs > 30 * 60_000 ||
     !Number.isSafeInteger(maxOutputBytes) ||
     maxOutputBytes < 1 ||
-    maxOutputBytes > 16 * 1024 * 1024
+    maxOutputBytes > MAX_CONTAINED_OUTPUT_BYTES
   )
     throw new Error('invalid contained QA process limits');
   const cwd = path.resolve(root);
@@ -147,7 +149,7 @@ export async function runContainedProcess(
   if (
     !Number.isSafeInteger(maxOutputBytes) ||
     maxOutputBytes <= 0 ||
-    maxOutputBytes > 2_147_483_647
+    maxOutputBytes > MAX_CONTAINED_OUTPUT_BYTES
   )
     throw new Error(
       'output limit must be a positive integer within the native range',
@@ -293,6 +295,23 @@ export async function preflightContainedQaAdapter(
   );
 }
 
+/** Copied adapter configuration plus selected executable and explicit read inputs. */
+export async function snapshotContainedQaAdapter(
+  root: string,
+  adapter: QaCallbacks,
+) {
+  assertContainedQaAdapter(root, adapter);
+  const registered = adapters.get(adapter)!;
+  const options = registered.options;
+  const executable = await resolveExecutable(options.command, registered.root);
+  const configuration = createHash('sha256')
+    .update(JSON.stringify({ root: registered.root, ...options }))
+    .digest('hex');
+  return snapshotQaInputs(root, configuration, [
+    executable,
+    ...(options.sandboxReadResources ?? []),
+  ]);
+}
 /** Inspect a fixed process launch without creating any external process effect. */
 export async function preflightContainedProcess(
   executable: string,
@@ -307,7 +326,7 @@ export async function preflightContainedProcess(
   if (
     !Number.isSafeInteger(maxOutputBytes) ||
     maxOutputBytes <= 0 ||
-    maxOutputBytes > 2_147_483_647
+    maxOutputBytes > MAX_CONTAINED_OUTPUT_BYTES
   )
     throw new Error(
       'output limit must be a positive integer within the native range',

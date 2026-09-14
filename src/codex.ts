@@ -21,6 +21,7 @@ import { resolveExecutable } from './verification.js';
 import {
   runContainedProcess,
   preflightContainedProcess,
+  MAX_CONTAINED_OUTPUT_BYTES,
   assertSecureProcessPlatform,
 } from './qa-process.js';
 
@@ -107,7 +108,7 @@ export async function preflightCodexSession(
     timeoutMs > 2_147_483_647 ||
     !Number.isSafeInteger(maxOutputBytes) ||
     maxOutputBytes <= 0 ||
-    maxOutputBytes > 2_147_483_647
+    maxOutputBytes > MAX_CONTAINED_OUTPUT_BYTES
   )
     throw new Error(
       'Codex limits must be positive integers within the native range',
