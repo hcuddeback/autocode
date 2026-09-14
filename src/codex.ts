@@ -99,8 +99,23 @@ export async function preflightCodexSession(
   root: string,
   options: CodexSessionOptions = {},
 ): Promise<CodexSessionOptions> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs <= 0 ||
+    timeoutMs > 2_147_483_647 ||
+    !Number.isSafeInteger(maxOutputBytes) ||
+    maxOutputBytes <= 0 ||
+    maxOutputBytes > 2_147_483_647
+  )
+    throw new Error(
+      'Codex limits must be positive integers within the native range',
+    );
   const copied = {
     ...options,
+    timeoutMs,
+    maxOutputBytes,
     commandPrefixArguments: [...(options.commandPrefixArguments ?? [])],
     sandboxWriteDirectories: [...(options.sandboxWriteDirectories ?? [])],
     sandboxWriteFiles: [...(options.sandboxWriteFiles ?? [])],

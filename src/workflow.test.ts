@@ -422,6 +422,12 @@ test('resume rejects legacy process containment receipts', async () => {
           ...legacyInput,
         }),
       ),
+      hash(
+        JSON.stringify({
+          processContainment: 'windows-appcontainer-job-v15',
+          ...legacyInput,
+        }),
+      ),
     ]) {
       assert.notEqual(currentBinding, legacy);
       receipt.binding = legacy;
@@ -1184,6 +1190,32 @@ test('workflow rejects in-process QA callbacks before any model effects', async 
       `durable-workflow-ac-001-${head.slice(0, 12)}`,
       'events.jsonl',
     );
+    for (const field of ['timeoutMs', 'maxOutputBytes'] as const) {
+      for (const value of [
+        0,
+        -1,
+        0.5,
+        2_147_483_648,
+        NaN,
+        Infinity,
+        Number.MAX_SAFE_INTEGER + 1,
+      ]) {
+        await assert.rejects(
+          () =>
+            runProjectWorkflow(f.root, {
+              ...f.options,
+              codex: { ...f.options.codex, [field]: value },
+            }),
+          /Codex limits/,
+        );
+        await assert.rejects(() => f.calls(), { code: 'ENOENT' });
+        await assert.rejects(() => readFile(events), { code: 'ENOENT' });
+        assert.equal(
+          await readFile(path.join(f.root, 'result.txt'), 'utf8'),
+          'initial',
+        );
+      }
+    }
     for (const commands of [[missing], [valid, missing]]) {
       configured.verification.commands = commands;
       await writeFile(configPath, stringify(configured));

@@ -136,10 +136,22 @@ export async function runContainedProcess(
   sandboxWriteFiles: readonly string[] = [],
 ) {
   assertSecureProcessPlatform();
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
-    throw new Error('timeout must be a positive integer');
-  if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes <= 0)
-    throw new Error('output limit must be a positive integer');
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs <= 0 ||
+    timeoutMs > 2_147_483_647
+  )
+    throw new Error(
+      'timeout must be a positive integer within the native range',
+    );
+  if (
+    !Number.isSafeInteger(maxOutputBytes) ||
+    maxOutputBytes <= 0 ||
+    maxOutputBytes > 2_147_483_647
+  )
+    throw new Error(
+      'output limit must be a positive integer within the native range',
+    );
   const batch = /\.(?:cmd|bat)$/i.test(executable);
   if (batch && arguments_.some((argument) => /[\0\r\n]/.test(argument)))
     throw new Error('batch arguments cannot contain NUL or line breaks');
@@ -292,6 +304,14 @@ export async function preflightContainedProcess(
   sandboxWriteFiles: readonly string[] = [],
 ): Promise<void> {
   assertSecureProcessPlatform();
+  if (
+    !Number.isSafeInteger(maxOutputBytes) ||
+    maxOutputBytes <= 0 ||
+    maxOutputBytes > 2_147_483_647
+  )
+    throw new Error(
+      'output limit must be a positive integer within the native range',
+    );
   if (!path.isAbsolute(executable) || !(await lstat(executable)).isFile())
     throw new Error('contained executable must be an absolute regular file');
   const batch = /\.(?:cmd|bat)$/i.test(executable);

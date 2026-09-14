@@ -426,6 +426,10 @@ async function isLockStale(lockPath: string): Promise<boolean> {
     }
     return isOlderThan(ownerPath, FOREIGN_LOCK_LEASE_MS);
   } catch (error: unknown) {
+    // A concurrent Windows unlink can leave the owner temporarily unreadable.
+    // Do not infer stale ownership; the existing bounded acquisition loop retries.
+    if (process.platform === 'win32' && hasErrorCode(error, 'EPERM'))
+      return false;
     if (!isFileNotFound(error) && !(error instanceof SyntaxError)) {
       throw error;
     }
