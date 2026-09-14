@@ -16,33 +16,49 @@
 
 ## Evidence level
 
-| Claim                          | Evidence                                              | Confidence                                                                           |
-| ------------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Documentation baseline exists  | Repository files and internal-link validation         | High                                                                                 |
-| CLI is usable                  | Build, initialization, and selection tests            | High                                                                                 |
-| Task selection is implemented  | Ready/blocked/malformed/completed fixture tests       | High                                                                                 |
-| JIT planning is implemented    | Commit/task binding and artifact safety tests         | High                                                                                 |
-| Codex session roles exist      | Fake-Codex subprocess and failure-path tests          | High                                                                                 |
-| Verification evidence exists   | Deterministic subprocess and artifact fixtures        | High                                                                                 |
-| Bounded fix policy exists      | Deterministic transition and ceiling tests            | High                                                                                 |
-| QA applicability policy exists | Deterministic decision and scenario tests             | High                                                                                 |
-| PR-review disposition exists   | Deterministic finding/disposition tests               | High                                                                                 |
-| Completion gates exist         | Deterministic merge/production gate tests             | High                                                                                 |
-| Durable pause/resume exists    | Unit and forced-interruption subprocess tests         | High                                                                                 |
-| Durable pacing/retry exists    | Restart, budget, cooldown, and backoff tests          | High                                                                                 |
-| Local workflow is integrated   | AC-012 phase fixtures, including process interruption | Full suite after PR review corrections: 264 passed, four platform skips, no failures |
+| Claim                          | Evidence                                              | Confidence                                    |
+| ------------------------------ | ----------------------------------------------------- | --------------------------------------------- |
+| Documentation baseline exists  | Repository files and internal-link validation         | High                                          |
+| CLI is usable                  | Build, initialization, and selection tests            | High                                          |
+| Task selection is implemented  | Ready/blocked/malformed/completed fixture tests       | High                                          |
+| JIT planning is implemented    | Commit/task binding and artifact safety tests         | High                                          |
+| Codex session roles exist      | Fake-Codex subprocess and failure-path tests          | High                                          |
+| Verification evidence exists   | Deterministic subprocess and artifact fixtures        | High                                          |
+| Bounded fix policy exists      | Deterministic transition and ceiling tests            | High                                          |
+| QA applicability policy exists | Deterministic decision and scenario tests             | High                                          |
+| PR-review disposition exists   | Deterministic finding/disposition tests               | High                                          |
+| Completion gates exist         | Deterministic merge/production gate tests             | High                                          |
+| Durable pause/resume exists    | Unit and forced-interruption subprocess tests         | High                                          |
+| Durable pacing/retry exists    | Restart, budget, cooldown, and backoff tests          | High                                          |
+| Local workflow is integrated   | AC-012 phase fixtures, including process interruption | See latest AC-012 boundary verification below |
 
 ## Known gaps and blockers
 
 - CI, required CLI QA adapters/QA-fix rounds, remote lifecycle adapters, and task completion updates are absent. Native Codex continuation is unused; fresh scoped roles provide the documented fallback.
-- PR #13 merged as `63e8a49`. AC-012 is on `feat/AC-012-integrated-workflow` in its isolated worktree. PR #14's reported findings are corrected: typed receipt redaction, raw review validation before display redaction, and ignored credential protection/freshness. Codex protected-state checks run on failed exits as well as success, and tampering durably terminates the run before receipt reconciliation. Fresh execution rejects pre-created phase receipts, and every verification command protects ignored credentials. QA receipt-only reconciliation is refused for interrupted/blocked callbacks; operator reconciliation is required, while safe missing-adapter recovery remains available. Completion also refuses receipt-only reconciliation, and all supplied nested workflow policy is validated before effects. Required integrated QA now rejects arbitrary callbacks and accepts only frozen process adapters from createContainedQaAdapter. Integrated Codex roles and deterministic check commands share QA process containment; Windows standalone Codex sessions also use AppContainers and Job Objects. Windows AppContainers deny Task Scheduler registration and launch, including existing operator-owned tasks; sandbox write grants exclude .autocode, .git and common Git metadata, temporary ACL boundaries restore original permissions, and discovered ignored credentials deny all sandbox package/capability access, child environments omit operator tokens and use private home/profile directories, and legacy Job-only or credential-exposing AppContainer receipts are rejected; Job Objects contain detached descendants and operator death before state checks; Linux execution now fails closed before process launch or workflow-history acceptance because user-manager IPC can start surviving sibling units; verified manager isolation is required. The unsafe Linux launcher and raw Codex runner are removed. Fresh full suite: 264 passed, four platform skips, zero failures; formatting, lint, typecheck, clean build, built CLI help and built CLI run/resume pass. The owner accepts this chat as independent review. Exact-head remote review and human merge authorization remain required; the task is in review. Older worktree-only and Job-only receipt bindings cannot advance upgraded runs. Node/libuv captured child-process pipes, cross-volume batch execution and live authenticated Codex compatibility remain unaccepted; unsupported commands fail closed.
+- PR #13 merged as `63e8a49`. AC-012 is published in PR #14 from its isolated feature worktree. Integrated Codex, QA and verification share Windows AppContainer/Job containment; protected metadata writes and credential access are denied before execution, sanitized environments omit operator tokens, and tampering durably terminates runs. Fresh receipts cannot be pre-created; interrupted QA/completion require operator reconciliation. The latest boundary corrections below preserve concurrent ACL hardening and prevent trusted-host Git helpers from escaping containment. AC-012 remains in review under the required current-head remote review and human merge gates. Node captured-child pipes, cross-volume batch execution and live authenticated compatibility remain unaccepted; unsupported commands fail closed.
 - The owner accepts the current chat as AC-012 independent review and authorizes commit, push, and PR creation without a separate manual review (D-005). Exact-head remote PR review and human merge authorization remain merge gates.
 - Linux and macOS subprocess execution fail closed; PRODUCT's three-platform acceptance remains open.
 - License has not been selected and added.
 
 See `docs/MVP_AUDIT.md` for requirement-by-requirement code evidence and the remaining acceptance/release gaps. The complete MVP is not yet accepted or released.
 
-## AC-012 review corrections
+## Latest AC-012 boundary checkpoint
+
+### Credential and Git inspection boundary corrections, 2026-09-13
+
+The latest P2 ACL-cleanup finding (3999340870) and P1 common-credential-filename finding on PR #14 are corrected. Shared discovery covers dotenv, npm/netrc/pypirc/Git auth, auth JSON/YAML, private keys and sensitive cloud/SSH/Kubernetes/Docker paths. Raw-byte fingerprints detect binary changes; bounded format-aware redaction also handles padded YAML tokens. Generic non-repository launches scan recursively with a 10,000-entry ceiling and fail closed on credential links or overflow.
+
+Credential isolation never removes and reconstructs preexisting package/capability allows. Such access blocks launch and requires operator hardening, leaving those ACL entries unchanged. Normal and timeout cleanup remove only launch-specific permissions and restore inheritance only when the recorded temporary boundary is unchanged; concurrent hardening remains authoritative. Containment version 3 invalidates earlier receipts.
+
+Critical review found that trusted-host Git inspection could execute text-conversion, clean/process-filter and filesystem-monitor helpers outside containment and conceal changes. Every production Git inspection call now disables these helpers, including smudge filters and external diff drivers. A regression includes actual unsafe positive controls, confirms no helper executes through AutoCode, and verifies hidden edits invalidate evidence.
+
+Critical review also reproduced preexisting package write access on a descendant of protected metadata. Recursive metadata ACL preflight now rejects package/capability write/delete/ACL-changing rights, null ACLs and links, with a 100,000-entry ceiling before enqueue. Safe package read access remains allowed; regression verifies read access, write denial, unchanged original ACLs and fail-closed unsafe launch.
+
+Fresh verification of the corrections over 9f1e4e1: the complete serialized source suite outside the restricted Windows sandbox passes 271 tests, with four platform-specific skips and zero failures; no tests are omitted. Compiled Windows boundary QA passes 21 tests, and compiled pnpm CMD/CLI run-resume QA passes two. Configured formatting, lint, typecheck, clean build, built CLI help and diff checks pass. The source hashes remain identical to the frozen verification snapshot. Evidence is retained under gitignored .autocode/implementation-plans/AC-012-pr14-*.log.
+
+The owner-accepted chat supplies independent critical review, including the reproduced Git-helper and padded-token findings and their corrections. Exact-head remote PR review and human merge authorization remain gates; AC-012 stays in review. Production verification is not applicable. Live authenticated Codex compatibility, captured Node child-process pipes, cross-volume batch execution, unsupported platforms and broader MVP acceptance remain unaccepted; no raw-process fallback is enabled. This checkpoint supersedes earlier claims of reconstructing original package ACL grants.
+
+## Historical AC-012 review corrections
 
 Published as [PR #14](https://github.com/hcuddeback/autocode/pull/14) from `feat/AC-012-integrated-workflow`. Commit `1980bca` contains the verified corrections and owner-authorized publication policy changes. The owner accepts this chat as the independent review. Required exact-head PR review and human merge authorization remain pending.
 

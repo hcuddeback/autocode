@@ -13,6 +13,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
+import { gitInspectionArguments } from './git-inspection.js';
 import { promisify } from 'node:util';
 import { parse } from 'yaml';
 import { CONFIG_FILE, STATE_DIRECTORY, validateConfig } from './config.js';
@@ -614,12 +615,16 @@ function planTemplate(metadata: PlanningMetadata): string {
 }
 
 async function gitOutput(root: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync('git', args, {
-    cwd: root,
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024,
-    windowsHide: true,
-  });
+  const { stdout } = await execFileAsync(
+    'git',
+    gitInspectionArguments(root, args),
+    {
+      cwd: root,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024,
+      windowsHide: true,
+    },
+  );
   return stdout.trim();
 }
 

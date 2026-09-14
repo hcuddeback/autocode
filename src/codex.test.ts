@@ -7,7 +7,108 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { redactSecrets, runRoleSeparatedCodexSessions } from './codex.js';
+import {
+  redactSecrets,
+  runRoleSeparatedCodexSessions,
+  discoverWorkspaceCredentials,
+  assertCredentialFilesUnchanged,
+} from './codex.js';
+
+test('discovers standard ignored credential formats and retains redaction and freshness', async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), 'autocode-standard-credentials-'),
+  );
+  try {
+    await execFileAsync('git', ['init', '-b', 'main'], { cwd: root });
+    await writeFile(path.join(root, '.gitignore'), '*\n');
+    const credentials: Record<string, string> = {
+      '.npmrc': '//registry.example.invalid/:_authToken=npm-private-token',
+      '.netrc':
+        'machine example.invalid login fixture password netrc-private-token',
+      _netrc: 'machine example.invalid password windows-netrc-token',
+      '.pypirc': '[distutils]\npassword=pypi-private-token',
+      '.git-credentials':
+        'https://fixture:git-private-password@example.invalid',
+      'nested/auth.json': '{"token":"auth-private-token"}',
+      id_rsa:
+        '-----BEGIN OPENSSH PRIVATE KEY-----\nsynthetic-key-body\n-----END OPENSSH PRIVATE KEY-----',
+      'nested/client.pem':
+        '-----BEGIN PRIVATE KEY-----\nsynthetic-pem-body\n-----END PRIVATE KEY-----',
+      '.aws/config': '[default]\naws_secret_access_key=aws-private-token',
+      '.docker/config.json':
+        '{"auths":{"example.invalid":{"auth":"docker-private-token"}}}',
+      '.kube/config': 'users:\n  - user:\n      token: kube-private-token=',
+    };
+    for (const [relative, content] of Object.entries(credentials)) {
+      await mkdir(path.dirname(path.join(root, relative)), { recursive: true });
+      await writeFile(path.join(root, relative), content);
+    }
+    await writeFile(path.join(root, 'ordinary.txt'), 'ordinary ignored data');
+    await mkdir(path.join(root, '.autocode', 'runs', 'overlapping-secrets'), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(
+        root,
+        '.autocode',
+        'runs',
+        'overlapping-secrets',
+        'events.jsonl',
+      ),
+      '{"sequence":1}\n{"sequence":2}\n',
+    );
+    await writeFile(
+      path.join(root, 'nested', 'client.p12'),
+      Buffer.from([0xff, 0x00]),
+    );
+    const before = await discoverWorkspaceCredentials(root);
+    assert.deepEqual(
+      [...before.files.keys()].sort(),
+      [...Object.keys(credentials), 'nested/client.p12'].sort(),
+    );
+    for (const token of [
+      'npm-private-token',
+      'netrc-private-token',
+      'windows-netrc-token',
+      'pypi-private-token',
+      'git-private-password',
+      'auth-private-token',
+      'synthetic-key-body',
+      'synthetic-pem-body',
+      'aws-private-token',
+      'docker-private-token',
+      'kube-private-token=',
+    ])
+      assert.ok(
+        !redactSecrets(token, before.secrets).includes(token),
+        `redaction must cover ${token}`,
+      );
+    await assertCredentialFilesUnchanged(root, before.files);
+    // Two invalid UTF-8 sequences decode identically, but their raw hashes must differ.
+    await writeFile(
+      path.join(root, 'nested', 'client.p12'),
+      Buffer.from([0xfe, 0x00]),
+    );
+    await assert.rejects(
+      () => assertCredentialFilesUnchanged(root, before.files),
+      /changed protected credential state/,
+    );
+    await writeFile(
+      path.join(root, 'nested', 'client.p12'),
+      Buffer.from([0xff, 0x00]),
+    );
+    await writeFile(
+      path.join(root, '.npmrc'),
+      '//registry.example.invalid/:_authToken=replaced-private-token',
+    );
+    await assert.rejects(
+      () => assertCredentialFilesUnchanged(root, before.files),
+      /changed protected credential state/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 const execFileAsync = promisify(execFile);
 const IMPLEMENTATION_ID = '11111111-1111-4111-8111-111111111111';

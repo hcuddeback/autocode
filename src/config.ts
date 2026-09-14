@@ -13,6 +13,7 @@ import {
 import { execFile } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
+import { gitInspectionArguments } from './git-inspection.js';
 import { parse, stringify } from 'yaml';
 
 export const CONFIG_FILE = '.autocode/config.yaml';
@@ -311,7 +312,7 @@ async function gitOutput(
   return new Promise((resolve, reject) => {
     execFile(
       'git',
-      args,
+      gitInspectionArguments(projectDirectory, args),
       {
         cwd: projectDirectory,
         encoding: 'utf8',
@@ -516,7 +517,13 @@ async function isPathEffectivelyIgnored(
   return new Promise((resolve, reject) => {
     execFile(
       'git',
-      ['check-ignore', '--quiet', '--no-index', '--', targetPath],
+      gitInspectionArguments(projectDirectory, [
+        'check-ignore',
+        '--quiet',
+        '--no-index',
+        '--',
+        targetPath,
+      ]),
       { cwd: projectDirectory, windowsHide: true },
       (error, _stdout, stderr) => {
         if (error === null) {

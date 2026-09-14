@@ -12,6 +12,7 @@ import {
   lstat,
 } from 'node:fs/promises';
 import { discoverWorkspaceCredentials } from './codex.js';
+import { isCredentialPath } from './credential-paths.js';
 import { WINDOWS_SANDBOX } from './windows-sandbox.js';
 import { randomUUID } from 'node:crypto';
 import { resolveExecutable, runProcess } from './verification.js';
@@ -263,6 +264,19 @@ async function windowsJobScript(
       return realpath(resource);
     }),
   );
+  // Reject resources containing the helper root before recursively inspecting
+  // them. In particular, the system temp directory is never a valid worktree.
+  const helperRoot = await realpath(os.tmpdir());
+  for (const writable of [await realpath(cwd), ...writeDirectories]) {
+    const relative = path.relative(writable, helperRoot);
+    if (
+      relative === '' ||
+      (!relative.startsWith('..' + path.sep) &&
+        relative !== '..' &&
+        !path.isAbsolute(relative))
+    )
+      throw new Error('sandbox helper must be outside every writable resource');
+  }
   const blockedCredentials: string[] = [];
   let repository = false;
   try {
@@ -278,16 +292,23 @@ async function windowsJobScript(
       blockedCredentials.push(await realpath(path.resolve(cwd, relative)));
   } else {
     // Generic non-repository adapters still protect recognizable local secrets.
-    for (const entry of await readdir(cwd))
-      if (
-        /^\.env(?:\.|$)/i.test(entry) ||
-        /(?:secret|credential)/i.test(entry)
-      ) {
-        const candidate = path.join(cwd, entry);
-        if ((await lstat(candidate)).isSymbolicLink())
-          throw new Error('credential paths must not be links');
-        blockedCredentials.push(await realpath(candidate));
+    let visited = 0;
+    async function discover(directory: string): Promise<void> {
+      for (const entry of await readdir(directory)) {
+        if (directory === cwd && entry.toLowerCase() === '.git') continue;
+        if (++visited > 10_000)
+          throw new Error('credential discovery exceeds its entry limit');
+        const candidate = path.join(directory, entry);
+        const info = await lstat(candidate);
+        if (isCredentialPath(path.relative(cwd, candidate))) {
+          if (info.isSymbolicLink())
+            throw new Error('credential paths must not be links');
+          blockedCredentials.push(await realpath(candidate));
+        }
+        if (info.isDirectory()) await discover(candidate);
       }
+    }
+    await discover(cwd);
   }
   const protectedResources = [
     path.join(cwd, '.autocode'),

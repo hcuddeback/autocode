@@ -14,6 +14,7 @@ import {
 } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { gitInspectionArguments } from './git-inspection.js';
 import { types as utilTypes } from 'node:util';
 import { discoverWorkspaceCredentials, redactSecrets } from './codex.js';
 
@@ -1901,7 +1902,7 @@ function gitOutput(
   return new Promise((resolve, reject) => {
     execFile(
       'git',
-      arguments_,
+      gitInspectionArguments(root, arguments_),
       {
         cwd: root,
         encoding: 'utf8',
@@ -1920,7 +1921,7 @@ function gitExitCode(
   return new Promise((resolve, reject) => {
     execFile(
       'git',
-      arguments_,
+      gitInspectionArguments(root, arguments_),
       {
         cwd: root,
         encoding: 'utf8',

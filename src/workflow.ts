@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { link, lstat, open, realpath, unlink } from 'node:fs/promises';
 import path from 'node:path';
+import { gitInspectionArguments } from './git-inspection.js';
 import { promisify } from 'node:util';
 import { parse } from 'yaml';
 import { CONFIG_FILE, validateConfig } from './config.js';
@@ -174,7 +175,7 @@ export async function runProjectWorkflow(
   const initialPlan = await safeRead(root, `${preparedRelative}/plan.md`);
   const binding = hash(
     JSON.stringify({
-      processContainment: 'windows-appcontainer-job-v2',
+      processContainment: 'windows-appcontainer-job-v3',
       head,
       branch,
       task: hash(task.contents),
@@ -743,11 +744,15 @@ function redactWorkflowPayload(
 }
 
 async function git(root: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync('git', args, {
-    cwd: root,
-    windowsHide: true,
-    maxBuffer: MAX_FILE_BYTES,
-  });
+  const { stdout } = await execFileAsync(
+    'git',
+    gitInspectionArguments(root, args),
+    {
+      cwd: root,
+      windowsHide: true,
+      maxBuffer: MAX_FILE_BYTES,
+    },
+  );
   return stdout.trim();
 }
 

@@ -29,6 +29,223 @@ async function snapshotWindowsAcl(paths: string[]): Promise<string> {
   return stdout.trim();
 }
 
+async function editWindowsAcl(
+  target: string,
+  operation: string,
+): Promise<void> {
+  const encoded = Buffer.from(target).toString('base64');
+  await promisify(execFile)(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `$target=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}'));$acl=[IO.File]::GetAccessControl($target);${operation};[IO.File]::SetAccessControl($target,$acl)`,
+    ],
+    { windowsHide: true },
+  );
+}
+
+test(
+  'Windows refuses existing package credential grants without changing them',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), 'autocode-package-acl-'),
+    );
+    try {
+      const target = path.join(directory, '.npmrc');
+      await writeFile(
+        target,
+        '//registry.example.invalid/:_authToken=synthetic-private',
+      );
+      for (const inherited of [false, true]) {
+        const grantTarget = inherited ? directory : target;
+        const encoded = Buffer.from(grantTarget).toString('base64');
+        await promisify(execFile)(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `$target=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}'));$acl=if([IO.Directory]::Exists($target)){[IO.Directory]::GetAccessControl($target)}else{[IO.File]::GetAccessControl($target)};$rule=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-15-2-1'),'Read',${inherited ? "'ContainerInherit,ObjectInherit','None'," : ''}'Allow');$acl.AddAccessRule($rule);if([IO.Directory]::Exists($target)){[IO.Directory]::SetAccessControl($target,$acl)}else{[IO.File]::SetAccessControl($target,$acl)}`,
+          ],
+          { windowsHide: true },
+        );
+        const original = await snapshotWindowsAcl([directory, target]);
+        const result = await runContainedProcess(
+          process.execPath,
+          ['-e', "require('node:fs').writeFileSync('launched','bad')"],
+          directory,
+          10_000,
+          10_000,
+        );
+        assert.notEqual(result.exitCode, 0);
+        assert.match(
+          result.stderr,
+          /credential ACL already grants application-package access/,
+        );
+        assert.equal(await snapshotWindowsAcl([directory, target]), original);
+        await assert.rejects(() => readFile(path.join(directory, 'launched')), {
+          code: 'ENOENT',
+        });
+        // Remove only the synthetic fixture grant between cases.
+        await promisify(execFile)(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `$target=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}'));$acl=if([IO.Directory]::Exists($target)){[IO.Directory]::GetAccessControl($target)}else{[IO.File]::GetAccessControl($target)};$rule=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-15-2-1'),'Read',${inherited ? "'ContainerInherit,ObjectInherit','None'," : ''}'Allow');$acl.RemoveAccessRuleSpecific($rule);if([IO.Directory]::Exists($target)){[IO.Directory]::SetAccessControl($target,$acl)}else{[IO.File]::SetAccessControl($target,$acl)}`,
+          ],
+          { windowsHide: true },
+        );
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'Windows refuses preexisting package write access within protected metadata',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), 'autocode-metadata-package-'),
+    );
+    try {
+      await mkdir(path.join(directory, '.autocode'));
+      const target = path.join(directory, '.autocode', 'state.json');
+      await writeFile(target, 'operator-state');
+      await editWindowsAcl(
+        target,
+        "$rule=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-15-2-1'),'Read','Allow');$acl.AddAccessRule($rule)",
+      );
+      const readOnlyAcl = await snapshotWindowsAcl([
+        directory,
+        path.dirname(target),
+        target,
+      ]);
+      const readOnly = await runContainedProcess(
+        process.execPath,
+        [
+          '-e',
+          "const fs=require('node:fs');console.log(fs.readFileSync('.autocode/state.json','utf8'));try{fs.writeFileSync('.autocode/state.json','forged');process.exit(2)}catch(e){if(!['EACCES','EPERM'].includes(e.code))throw e}",
+        ],
+        directory,
+        10000,
+        10000,
+      );
+      assert.equal(readOnly.exitCode, 0, readOnly.stderr);
+      assert.match(readOnly.stdout, /operator-state/);
+      assert.equal(
+        await snapshotWindowsAcl([directory, path.dirname(target), target]),
+        readOnlyAcl,
+      );
+      await editWindowsAcl(
+        target,
+        "$rule=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-15-2-1'),'Modify','Allow');$acl.AddAccessRule($rule)",
+      );
+      const original = await snapshotWindowsAcl([
+        directory,
+        path.dirname(target),
+        target,
+      ]);
+      const result = await runContainedProcess(
+        process.execPath,
+        [
+          '-e',
+          "require('node:fs').writeFileSync('.autocode/state.json','forged')",
+        ],
+        directory,
+        10000,
+        10000,
+      );
+      assert.notEqual(
+        result.exitCode,
+        0,
+        'preexisting package grants must not bypass metadata isolation',
+      );
+      assert.match(
+        result.stderr,
+        /metadata ACL already grants application-package write access/,
+      );
+      assert.equal(await readFile(target, 'utf8'), 'operator-state');
+      assert.equal(
+        await snapshotWindowsAcl([directory, path.dirname(target), target]),
+        original,
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'Windows normal and timeout cleanup preserve concurrent credential ACL hardening',
+  { skip: process.platform !== 'win32' },
+  async (t) => {
+    for (const mode of ['normal', 'timeout'])
+      await t.test(mode, async () => {
+        const directory = await mkdtemp(
+          path.join(os.tmpdir(), 'autocode-concurrent-acl-'),
+        );
+        let pending: ReturnType<typeof runContainedProcess> | undefined;
+        try {
+          const target = path.join(directory, '.env');
+          await writeFile(target, 'PRIVATE=synthetic-private');
+          await editWindowsAcl(
+            target,
+            "$rule=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-32-546'),'Read','Allow');$acl.AddAccessRule($rule)",
+          );
+          const ready = path.join(directory, 'ready');
+          pending = runContainedProcess(
+            process.execPath,
+            [
+              '-e',
+              `const fs=require('node:fs');fs.writeFileSync('ready','ready');setInterval(()=>{if(fs.existsSync('finish'))process.exit(0)},10);`,
+            ],
+            directory,
+            mode === 'timeout' ? 6000 : 15_000,
+            10_000,
+          );
+          const deadline = Date.now() + 5000;
+          while (true) {
+            try {
+              await readFile(ready);
+              break;
+            } catch {
+              if (Date.now() >= deadline)
+                throw new Error('contained ACL fixture did not start');
+              await new Promise((resolve) => setTimeout(resolve, 25));
+            }
+          }
+          // This replacement is performed by the trusted operator while the command runs.
+          await editWindowsAcl(
+            target,
+            "$acl.PurgeAccessRules([Security.Principal.SecurityIdentifier]::new('S-1-5-32-546'));$acl.SetAccessRuleProtection($true,$true)",
+          );
+          const hardened = await snapshotWindowsAcl([target]);
+          if (mode === 'normal')
+            await writeFile(path.join(directory, 'finish'), 'finish');
+          const result = await pending;
+          assert.equal(result.timedOut, mode === 'timeout');
+          if (mode === 'normal')
+            assert.equal(result.exitCode, 0, result.stderr);
+          assert.equal(
+            await snapshotWindowsAcl([target]),
+            hardened,
+            'cleanup must preserve the operator replacement exactly',
+          );
+        } finally {
+          await pending?.catch(() => {});
+          await rm(directory, { recursive: true, force: true });
+        }
+      });
+  },
+);
+
 test(
   'Windows sandbox rejects a helper inside an authorized writable directory',
   { skip: process.platform !== 'win32' },
@@ -143,13 +360,25 @@ test(
       });
       await writeFile(
         path.join(directory, '.gitignore'),
-        '.env*\n*credentials*\n',
+        '.env*\n*credentials*\n.npmrc\n.netrc\n_netrc\nauth.json\nid_rsa\n.pypirc\n.git-credentials\n*.pem\n.aws/\n.docker/\n',
       );
       await mkdir(path.join(directory, 'nested'));
+      await mkdir(path.join(directory, '.aws'));
+      await mkdir(path.join(directory, '.docker'));
       const credentialPaths = [
         '.env',
         '.credentials.json',
         'nested/service.credentials.json',
+        '.npmrc',
+        '.netrc',
+        '_netrc',
+        'nested/auth.json',
+        'id_rsa',
+        '.pypirc',
+        '.git-credentials',
+        'nested/private.pem',
+        '.aws/config',
+        '.docker/config.json',
       ];
       for (const credential of credentialPaths)
         await writeFile(
@@ -158,19 +387,6 @@ test(
             ? 'PRIVATE_VALUE=operator-private'
             : '{"private":"operator-private"}',
         );
-      const envPath = Buffer.from(path.join(directory, '.env')).toString(
-        'base64',
-      );
-      await promisify(execFile)(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          `$target=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${envPath}'));$acl=[IO.File]::GetAccessControl($target);$rule=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-15-2-1'),'Read','Allow');$acl.AddAccessRule($rule);[IO.File]::SetAccessControl($target,$acl)`,
-        ],
-        { windowsHide: true },
-      );
       const paths = credentialPaths.map((credential) =>
         path.join(directory, credential),
       );

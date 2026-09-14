@@ -24,7 +24,7 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 
 ## Immediate queue
 
-`AC-010`, `AC-011`, and the AC-010 corrections in PR #13 are merged. `AC-012.md` is the active integration contract on `feat/AC-012-integrated-workflow`, based on main `63e8a49`. Local verification (201 passed, four platform skips), fixture QA, and the owner-accepted chat review are recorded in the task. The branch is published as [PR #14](https://github.com/hcuddeback/autocode/pull/14). Finish required remote PR review and human-authorized merge gates before marking it done. The MVP code audit lives in `docs/MVP_AUDIT.md`; remaining release or external-integration outcomes must be selected JIT after this task rather than implemented on this branch.
+`AC-010`, `AC-011`, and the AC-010 corrections in PR #13 are merged. `AC-012.md` is the active integration contract on `feat/AC-012-integrated-workflow`, based on main `63e8a49`. Current boundary corrections, verification, fixture QA, and the owner-accepted chat review are recorded in the task. The branch is published as [PR #14](https://github.com/hcuddeback/autocode/pull/14). Required remote PR review and human-authorized merge gates must pass before marking it done. The MVP code audit lives in `docs/MVP_AUDIT.md`; remaining release or external-integration outcomes must be selected JIT after this task rather than implemented on this branch.
 
 ## JIT task process
 

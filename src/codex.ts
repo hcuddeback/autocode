@@ -12,6 +12,8 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
+import { gitInspectionArguments } from './git-inspection.js';
+import { isCredentialPath, isIniCredentialPath } from './credential-paths.js';
 import { parse as parseYaml } from 'yaml';
 import { selectProjectTask } from './tasks.js';
 import { snapshotWorktree } from './verification.js';
@@ -625,13 +627,12 @@ export async function discoverWorkspaceCredentials(
   const files = new Map<string, string>();
   for (const relative of ignored.split('\0').filter(Boolean)) {
     const name = path.basename(relative);
-    if (!/^\.env(?:\.|$)/i.test(name) && !/(?:secret|credential)/i.test(name))
-      continue;
+    if (!isCredentialPath(relative)) continue;
     const target = path.resolve(root, relative);
     normalizedRelativePath(root, target);
-    const contents = await readRealFile(target, 'ignored credential file');
+    const contents = await readStableFile(target, 'ignored credential file');
     files.set(relative, createHash('sha256').update(contents).digest('hex'));
-    collectCredentialScalars(contents, name, secrets);
+    collectCredentialScalars(contents.toString('utf8'), name, secrets);
   }
   return { secrets: [...secrets], files };
 }
@@ -641,11 +642,43 @@ function collectCredentialScalars(
   name: string,
   secrets: Set<string>,
 ): void {
-  if (/^\.env(?:\.|$)/i.test(name)) {
-    for (const line of contents.split(/\r?\n/)) {
-      const match = /^\s*(?:export\s+)?[^#=]+=(.*)$/.exec(line);
-      if (match?.[1] !== undefined) addSecretScalar(match[1], secrets);
+  if (name.toLowerCase() === '.git-credentials') {
+    for (const line of contents.split(/\r?\n/).filter(Boolean)) {
+      addSecretScalar(line, secrets);
+      try {
+        const url = new URL(line);
+        addSecretScalar(decodeURIComponent(url.username), secrets);
+        addSecretScalar(decodeURIComponent(url.password), secrets);
+      } catch {
+        // Retain malformed entries as opaque secrets; they cannot authorize access.
+      }
     }
+    return;
+  }
+  if (isIniCredentialPath(name)) {
+    let assignments = false;
+    for (const line of contents.split(/\r?\n/)) {
+      const match = /^\s*(?:export\s+)?[^\s#=]+[ \t]*=(.*)$/.exec(line);
+      if (match?.[1] !== undefined) {
+        assignments = true;
+        addSecretScalar(match[1], secrets);
+      }
+    }
+    if (assignments || /^\.env(?:\.|$)/i.test(name)) return;
+  }
+  if (/^[._]?netrc$/i.test(name)) {
+    for (const match of contents.matchAll(
+      /(?:login|password|account)\s+("[^"]*"|'[^']*'|\S+)/gi,
+    ))
+      addSecretScalar(match[1]!, secrets);
+    return;
+  }
+  if (
+    /^(?:id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?)$/i.test(name) ||
+    /\.(?:pem|key|p12|pfx)$/i.test(name)
+  ) {
+    addSecretScalar(contents, secrets);
+    for (const line of contents.split(/\r?\n/)) addSecretScalar(line, secrets);
     return;
   }
   let parsed: unknown;
@@ -704,6 +737,13 @@ async function readRealFile(
   target: string,
   description: string,
 ): Promise<string> {
+  return (await readStableFile(target, description)).toString('utf8');
+}
+
+async function readStableFile(
+  target: string,
+  description: string,
+): Promise<Buffer> {
   let handle;
   try {
     handle = await open(target, 'r');
@@ -721,7 +761,7 @@ async function readRealFile(
     }
     if (stats.size > MAX_INPUT_BYTES)
       throw new Error(`${description} exceeds ${MAX_INPUT_BYTES} bytes`);
-    return await handle.readFile('utf8');
+    return await handle.readFile();
   } finally {
     await handle?.close();
   }
@@ -894,7 +934,7 @@ async function gitOutput(root: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) =>
     execFile(
       'git',
-      args,
+      gitInspectionArguments(root, args),
       { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024, windowsHide: true },
       (error, stdout) => (error ? reject(error) : resolve(stdout.trim())),
     ),

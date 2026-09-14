@@ -82,26 +82,58 @@ public sealed class AutoCodeSandbox : IDisposable {
     else { var acl=File.GetAccessControl(target); acl.AddAccessRule(rule); File.SetAccessControl(target,acl); }
     grants.Add(target); File.AppendAllText(manifest,target+Environment.NewLine);
   }
+  void CheckMetadataPackageAccess(string target) {
+    var pending=new System.Collections.Generic.Stack<string>(); pending.Push(target); int visited=1;
+    while(pending.Count>0) {
+      string entry=pending.Pop();
+      bool directory=Directory.Exists(entry); if(!directory && !File.Exists(entry)) continue;
+      if((File.GetAttributes(entry)&FileAttributes.ReparsePoint)!=0) throw new InvalidOperationException("protected metadata must not contain links");
+      FileSystemSecurity acl=directory ? (FileSystemSecurity)Directory.GetAccessControl(entry) : File.GetAccessControl(entry);
+      var descriptor=new RawSecurityDescriptor(acl.GetSecurityDescriptorBinaryForm(),0);
+      if(descriptor.DiscretionaryAcl==null) throw new InvalidOperationException("sandbox resources must have a restrictive ACL");
+      foreach(GenericAce ace in descriptor.DiscretionaryAcl) {
+        var allowed=ace as QualifiedAce;
+        // File/directory write, append, delete, ACL ownership and generic write/all.
+        if(allowed!=null && allowed.AceQualifier==AceQualifier.AccessAllowed && !allowed.SecurityIdentifier.Equals(identity) && allowed.SecurityIdentifier.Value.StartsWith("S-1-15-",StringComparison.Ordinal) && (unchecked((uint)allowed.AccessMask)&0x500d0156u)!=0)
+          throw new InvalidOperationException("metadata ACL already grants application-package write access; operator hardening is required before launch");
+      }
+      if(directory) foreach(string child in Directory.EnumerateFileSystemEntries(entry)) { if(++visited>100000) throw new InvalidOperationException("metadata ACL inspection exceeds its entry limit"); pending.Push(child); }
+    }
+  }
   void ProtectMetadata(string target,bool readable) {
     bool directory=Directory.Exists(target); if(!directory && !File.Exists(target)) return;
     FileSystemSecurity acl=directory ? (FileSystemSecurity)Directory.GetAccessControl(target) : File.GetAccessControl(target);
-    // Save inheritance state outside sandbox writes before changing the boundary.
-    string record=target+"\t"+Convert.ToBase64String(acl.GetSecurityDescriptorBinaryForm())+"\t"+(readable ? "read" : "blocked");
-    File.AppendAllText(Path.Combine(Path.GetDirectoryName(manifest),"acl-boundaries"),record+Environment.NewLine);
-    boundaries.Add(record);
+    if(readable) CheckMetadataPackageAccess(target);
+    var before=new RawSecurityDescriptor(acl.GetSecurityDescriptorBinaryForm(),0);
+    if(before.DiscretionaryAcl==null) throw new InvalidOperationException("sandbox resources must have a restrictive ACL");
+    // Never remove and later reconstruct an operator's package grants. Such
+    // reconstruction cannot distinguish our removals from concurrent hardening.
+    if(!readable) foreach(GenericAce entry in before.DiscretionaryAcl) {
+      var allowed=entry as QualifiedAce;
+      if(allowed!=null && allowed.AceQualifier==AceQualifier.AccessAllowed && !allowed.SecurityIdentifier.Equals(identity) && allowed.SecurityIdentifier.Value.StartsWith("S-1-15-",StringComparison.Ordinal))
+        throw new InvalidOperationException("credential ACL already grants application-package access; operator hardening is required before launch");
+    }
+    string original=Convert.ToBase64String(acl.GetSecurityDescriptorBinaryForm());
     acl.SetAccessRuleProtection(true,true);
     // PurgeAccessRules does not remove inherited ACEs. Convert retained entries
     // explicitly and remove every grant for this launch before adding read access.
     var descriptor=new RawSecurityDescriptor(acl.GetSecurityDescriptorBinaryForm(),0);
     for(int index=descriptor.DiscretionaryAcl.Count-1;index>=0;index--) {
       var known=descriptor.DiscretionaryAcl[index] as KnownAce;
-      if(known!=null && (known.SecurityIdentifier.Equals(identity) || (!readable && known.SecurityIdentifier.Value.StartsWith("S-1-15-",StringComparison.Ordinal)))) descriptor.DiscretionaryAcl.RemoveAce(index);
+      if(known!=null && known.SecurityIdentifier.Equals(identity)) descriptor.DiscretionaryAcl.RemoveAce(index);
       else descriptor.DiscretionaryAcl[index].AceFlags &= ~AceFlags.Inherited;
     }
     byte[] boundaryBytes=new byte[descriptor.BinaryLength]; descriptor.GetBinaryForm(boundaryBytes,0);
     acl.SetSecurityDescriptorBinaryForm(boundaryBytes,AccessControlSections.Access);
     var inheritance=directory ? InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit : InheritanceFlags.None;
     if(readable) acl.AddAccessRule(new FileSystemAccessRule(identity,FileSystemRights.ReadAndExecute,inheritance,PropagationFlags.None,AccessControlType.Allow));
+    FileSystemSecurity expected=directory ? (FileSystemSecurity)new DirectorySecurity() : new FileSecurity();
+    expected.SetSecurityDescriptorBinaryForm(acl.GetSecurityDescriptorBinaryForm());
+    expected.PurgeAccessRules(identity);
+    // Retain the exact boundary before applying it, for normal and crash cleanup.
+    string record=target+"\t"+original+"\t"+Convert.ToBase64String(expected.GetSecurityDescriptorBinaryForm());
+    File.AppendAllText(Path.Combine(Path.GetDirectoryName(manifest),"acl-boundaries"),record+Environment.NewLine);
+    boundaries.Add(record);
     if(directory) Directory.SetAccessControl(target,(DirectorySecurity)acl); else File.SetAccessControl(target,(FileSecurity)acl);
     grants.Add(target); File.AppendAllText(manifest,target+Environment.NewLine);
   }
@@ -112,17 +144,18 @@ public sealed class AutoCodeSandbox : IDisposable {
     original.SetSecurityDescriptorBinaryForm(Convert.FromBase64String(fields[1]));
     FileSystemSecurity current=directory ? (FileSystemSecurity)Directory.GetAccessControl(target) : File.GetAccessControl(target);
     current.PurgeAccessRules(identity);
-    if(!original.AreAccessRulesProtected && current.AreAccessRulesProtected) {
+    FileSystemSecurity expected=directory ? (FileSystemSecurity)new DirectorySecurity() : new FileSecurity();
+    expected.SetSecurityDescriptorBinaryForm(Convert.FromBase64String(fields[2]));
+    // Concurrent operator ACL replacements/removals remain authoritative. Do not
+    // re-enable inheritance or reconstruct old entries over a changed boundary.
+    bool unchanged=current.GetSecurityDescriptorSddlForm(AccessControlSections.Access)==expected.GetSecurityDescriptorSddlForm(AccessControlSections.Access);
+    if(unchanged && !original.AreAccessRulesProtected && current.AreAccessRulesProtected) {
       // Remove only converted inherited entries, then adopt current parent ACLs.
       // Preserve unrelated explicit entries and concurrent operator ACL changes.
       foreach(FileSystemAccessRule rule in original.GetAccessRules(false,true,typeof(SecurityIdentifier))) {
         current.RemoveAccessRuleSpecific(new FileSystemAccessRule(rule.IdentityReference,rule.FileSystemRights,rule.InheritanceFlags,rule.PropagationFlags,rule.AccessControlType));
       }
       current.SetAccessRuleProtection(false,false);
-    }
-    if(fields.Length>2 && fields[2]=="blocked") foreach(FileSystemAccessRule rule in original.GetAccessRules(true,false,typeof(SecurityIdentifier))) {
-      var sid=rule.IdentityReference as SecurityIdentifier;
-      if(sid!=null && !sid.Equals(identity) && sid.Value.StartsWith("S-1-15-",StringComparison.Ordinal)) current.AddAccessRule(rule);
     }
     if(directory) Directory.SetAccessControl(target,(DirectorySecurity)current); else File.SetAccessControl(target,(FileSecurity)current);
   }

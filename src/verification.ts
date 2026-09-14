@@ -13,6 +13,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
+import { gitInspectionArguments } from './git-inspection.js';
 import {
   runContainedProcess,
   assertSecureProcessPlatform,
@@ -397,7 +398,7 @@ export async function snapshotWorktree(root: string): Promise<string> {
 
 function gitNullOutput(root: string, args: string[]): Promise<string[]> {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', args, {
+    const child = spawn('git', gitInspectionArguments(root, args), {
       cwd: root,
       shell: false,
       windowsHide: true,
@@ -437,7 +438,7 @@ function hashGitOutput(
   args: string[],
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', args, {
+    const child = spawn('git', gitInspectionArguments(root, args), {
       cwd: root,
       shell: false,
       windowsHide: true,
@@ -792,12 +793,16 @@ async function assertLinkedWorktree(root: string): Promise<void> {
 }
 
 async function gitOutput(root: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync('git', args, {
-    cwd: root,
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024,
-    windowsHide: true,
-  });
+  const { stdout } = await execFileAsync(
+    'git',
+    gitInspectionArguments(root, args),
+    {
+      cwd: root,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024,
+      windowsHide: true,
+    },
+  );
   return stdout.trim();
 }
 
