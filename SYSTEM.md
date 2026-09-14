@@ -44,6 +44,10 @@
 
 See [the MVP audit](docs/MVP_AUDIT.md), refreshed against merged source 6d72cfd on 2026-09-14, for requirement-by-requirement code evidence and remaining acceptance/release gaps. Its final completion evidence is distinguished from historical pre-merge checks; runtime checks were not rerun for the documentation refresh. The complete MVP is not yet accepted or released.
 
+## Compatible package refresh, 2026-09-14
+
+Updated pnpm to 11.27.0, Node 24 types to 24.13.4, ESLint to 10.10.0, typescript-eslint to 8.70.0 and YAML to 2.9.1; regenerated the lockfile. TypeScript remains at 6.0.3 within typescript-eslint's supported peer range; Node 24 and the current dependency major versions are retained. Formatting, lint, typecheck, clean build, built CLI help and frozen-lockfile installation pass. The complete Windows suite passes 306 of 310 cases with four platform skips and no failures or cancellations, including fake-Codex CLI run/resume and pnpm CMD-shim workflow QA. Current-chat critical diff review found no manifest/lockfile mismatch, unsupported peer combination, unrelated source change or exposed run artifacts. Authenticated live Codex, other operating systems and distribution installation were not verified; existing release limitations remain.
+
 ## PR #19 requirements review, 2026-09-14
 
 Current-chat review verified both reported findings against PRODUCT, WORKFLOW, D-007 and the MVP audit. The P1 dependent-advancement finding is addressed by explicit operator publication/merge, completion evidence and target-branch reconciliation requirements, with separate local-only and PR-required acceptance scenarios. The P2 acceptance-queue finding is addressed by scheduling remaining MVP 1 acceptance outcomes before MVP 2 implementation. The scoped diff changes documentation only; no runtime behavior, merge authority or release acceptance is claimed. Scoped formatting, local document links, lint, typecheck, compilation, CLI help and diff checks pass. Runtime tests, live Codex, platform QA and clean-install acceptance were not rerun for this documentation change.
