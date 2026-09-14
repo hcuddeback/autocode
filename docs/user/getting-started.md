@@ -6,6 +6,8 @@ Use Node.js 24 or newer, Git, and the repository's declared pnpm version (`12.4.
 
 Choose a disposable project first. Approve the task scope and source sharing before model execution. Keep secrets out of task text, command arguments and tracked files. Local evidence under `.autocode/` stays private and uncommitted.
 
+If an older pnpm is first on PATH, use `npx --yes pnpm@12.4.1` in place of `pnpm` for the commands below. pnpm 12 uses a multi-document lockfile that older pnpm releases cannot read. Check the active version with `pnpm --version` and locate competing installations with `Get-Command pnpm -All` in PowerShell.
+
 ## Build AutoCode
 
 In PowerShell, clone and build the source:
