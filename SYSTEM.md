@@ -2,7 +2,7 @@
 
 **Last verified:** 2026-09-14
 
-**Stage:** AC-001 through AC-013 merged; MVP 1 local lifecycle settled; next task awaits JIT selection
+**Stage:** AC-001 through AC-013 merged; MVP 1 local lifecycle settled; AC-014 user documentation in review
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -41,6 +41,10 @@
 - License has not been selected and added.
 
 See [the MVP audit](docs/MVP_AUDIT.md), refreshed against merged source 6d72cfd on 2026-09-14, for requirement-by-requirement code evidence and remaining acceptance/release gaps. Its final completion evidence is distinguished from historical pre-merge checks; runtime checks were not rerun for the documentation refresh. The complete MVP is not yet accepted or released.
+
+## AC-014 user documentation, 2026-09-14
+
+[The user guide](docs/user/README.md) covers the current source setup, operator-authored task/worktree preparation, configuration/commands and conservative recovery. It retains platform, authenticated execution, QA adapter and release limits. Documentation is under AC-014 review; runtime behavior is unchanged. Scoped formatting, lint, typecheck, build/help, 39 local links, schema examples and disposable init/select/prepare checks pass. No authenticated model, clean-install or new runtime-suite evidence is claimed; review dispositions and limitations are recorded in [AC-014](tasks/AC-014.md).
 
 ## AC-013 lifecycle boundary, 2026-09-14
 
