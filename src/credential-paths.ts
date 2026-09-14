@@ -10,7 +10,7 @@ export function isCredentialPath(relative: string): boolean {
     sensitiveSegments.some((segment) =>
       /(?:secret|credential)/.test(segment),
     ) ||
-    /^(?:\.?npmrc|\.yarnrc\.ya?ml|[._]?netrc|\.pypirc|\.git-credentials|auth\.(?:json|ya?ml)|id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?)$/.test(
+    /^(?:\.?npmrc|\.yarnrc(?:\.ya?ml)?|pip\.(?:ini|conf)|[._]?netrc|\.pypirc|\.git-credentials|auth\.(?:json|ya?ml)|id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?)$/.test(
       name,
     ) ||
     /\.(?:pem|key|p12|pfx)$/.test(name) ||
@@ -19,7 +19,7 @@ export function isCredentialPath(relative: string): boolean {
 }
 
 export function isIniCredentialPath(name: string): boolean {
-  return /^(?:\.env(?:\.|$)|\.?npmrc$|\.pypirc$|config$|credentials$)/i.test(
+  return /^(?:\.env(?:\.|$)|\.?npmrc$|pip\.(?:ini|conf)$|\.pypirc$|config$|credentials$)/i.test(
     name,
   );
 }

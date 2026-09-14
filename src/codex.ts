@@ -642,6 +642,28 @@ function collectCredentialScalars(
   name: string,
   secrets: Set<string>,
 ): void {
+  if (name.toLowerCase() === '.yarnrc') {
+    for (const line of contents.split(/\r?\n/)) {
+      if (!line.trim() || /^\s*#/.test(line)) continue;
+      const assignment = /^\s*[^\s#=]+[ \t]*=(.*)$/.exec(line);
+      const pair = /^\s*(?:"[^"]+"|'[^']+'|[^\s#]+)[ \t]+(.+)$/.exec(line);
+      const value = assignment?.[1] ?? pair?.[1];
+      if (value === undefined)
+        throw new Error('ignored Yarn credential file has unsupported syntax');
+      const literal = value.trim();
+      if (/^["']/.test(literal)) {
+        const quoted = literal.match(
+          /^(?:"([^"\\]*)"|'([^'\\]*)')(?:[ \t]+#.*)?$/,
+        );
+        if (!quoted)
+          throw new Error(
+            'ignored Yarn credential file has unsupported syntax',
+          );
+        addSecretScalar(quoted[1] ?? quoted[2]!, secrets);
+      } else addSecretScalar(literal.replace(/[ \t]+#.*$/, ''), secrets);
+    }
+    return;
+  }
   if (name.toLowerCase() === '.git-credentials') {
     for (const line of contents.split(/\r?\n/).filter(Boolean)) {
       addSecretScalar(line, secrets);

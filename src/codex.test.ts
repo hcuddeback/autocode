@@ -23,11 +23,17 @@ test('discovers standard ignored credential formats and retains redaction and fr
     await writeFile(path.join(root, '.gitignore'), '*\n');
     const credentials: Record<string, string> = {
       '.npmrc': '//registry.example.invalid/:_authToken=npm-private-token',
+      '.yarnrc':
+        '# Yarn Classic\n_authToken yarn-classic-plain # comment\n"//registry.example.invalid/:_authToken" "yarn-classic-token=" # comment\n_authToken=\'yarn-classic-assigned=\'\n"//other.example.invalid/:_authToken" \'yarn-classic-single\'\n',
       '.yarnrc.yml':
         'npmAuthToken: yarn-private-token=\nnpmRegistries:\n  "//registry.example.invalid":\n    npmAuthToken: yarn-nested-token\n',
       '.netrc':
         'machine example.invalid login fixture password netrc-private-token',
       _netrc: 'machine example.invalid password windows-netrc-token',
+      '.venv/pip.ini':
+        '[global]\nindex-url = https://fixture:pip-private-token@example.invalid/simple\n',
+      'nested/pip.conf':
+        '[global]\nindex-url=https://fixture:pip-conf-token@example.invalid/simple\n',
       '.pypirc': '[distutils]\npassword=pypi-private-token',
       '.git-credentials':
         'https://fixture:git-private-password@example.invalid',
@@ -70,11 +76,17 @@ test('discovers standard ignored credential formats and retains redaction and fr
     );
     for (const token of [
       'npm-private-token',
+      'yarn-classic-token=',
+      'yarn-classic-assigned=',
+      'yarn-classic-single',
+      'yarn-classic-plain',
       'yarn-private-token=',
       'yarn-nested-token',
       'netrc-private-token',
       'windows-netrc-token',
       'pypi-private-token',
+      'https://fixture:pip-private-token@example.invalid/simple',
+      'https://fixture:pip-conf-token@example.invalid/simple',
       'git-private-password',
       'auth-private-token',
       'synthetic-key-body',
@@ -112,6 +124,27 @@ test('discovers standard ignored credential formats and retains redaction and fr
     await writeFile(
       path.join(root, '.yarnrc.yml'),
       credentials['.yarnrc.yml']!,
+    );
+    await writeFile(
+      path.join(root, '.yarnrc'),
+      '_authToken replaced-classic-token\n',
+    );
+    await assert.rejects(
+      () => assertCredentialFilesUnchanged(root, before.files),
+      /changed protected credential state/,
+    );
+    await writeFile(path.join(root, '.yarnrc'), credentials['.yarnrc']!);
+    await writeFile(
+      path.join(root, '.venv/pip.ini'),
+      '[global]\nindex-url=https://fixture:replaced-pip-token@example.invalid/simple\n',
+    );
+    await assert.rejects(
+      () => assertCredentialFilesUnchanged(root, before.files),
+      /changed protected credential state/,
+    );
+    await writeFile(
+      path.join(root, '.venv/pip.ini'),
+      credentials['.venv/pip.ini']!,
     );
     await writeFile(
       path.join(root, '.npmrc'),

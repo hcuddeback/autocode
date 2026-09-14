@@ -1229,9 +1229,10 @@ test(
       });
       await writeFile(
         path.join(directory, '.gitignore'),
-        '.env*\n*credentials*\n.npmrc\n.yarnrc.yml\n.netrc\n_netrc\nauth.json\nid_rsa\n.pypirc\n.git-credentials\n*.pem\n.aws/\n.docker/\n',
+        '.env*\n*credentials*\n.npmrc\n.yarnrc\n.yarnrc.yml\n.netrc\n_netrc\nauth.json\nid_rsa\n.pypirc\n.venv/pip.ini\nnested/pip.conf\n.git-credentials\n*.pem\n.aws/\n.docker/\n',
       );
       await mkdir(path.join(directory, 'nested'));
+      await mkdir(path.join(directory, '.venv'));
       await mkdir(path.join(directory, '.aws'));
       await mkdir(path.join(directory, '.docker'));
       const credentialPaths = [
@@ -1239,7 +1240,10 @@ test(
         '.credentials.json',
         'nested/service.credentials.json',
         '.npmrc',
+        '.yarnrc',
         '.yarnrc.yml',
+        '.venv/pip.ini',
+        'nested/pip.conf',
         '.netrc',
         '_netrc',
         'nested/auth.json',
@@ -1255,9 +1259,13 @@ test(
           path.join(directory, credential),
           credential === '.env'
             ? 'PRIVATE_VALUE=operator-private'
-            : credential === '.yarnrc.yml'
-              ? 'npmAuthToken: operator-private\n'
-              : '{"private":"operator-private"}',
+            : /pip\.(?:ini|conf)$/.test(credential)
+              ? '[global]\nindex-url=https://fixture:operator-private@example.invalid/simple\n'
+              : credential === '.yarnrc.yml'
+                ? 'npmAuthToken: operator-private\n'
+                : credential === '.yarnrc'
+                  ? '_authToken "operator-private"\n'
+                  : '{"private":"operator-private"}',
         );
       const paths = credentialPaths.map((credential) =>
         path.join(directory, credential),
