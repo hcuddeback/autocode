@@ -7,6 +7,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   writeFile,
 } from 'node:fs/promises';
@@ -185,6 +186,7 @@ console.log(JSON.stringify({type:'turn.completed'}));
         commandPrefixArguments: [fake],
         timeoutMs: 10_000,
         sandboxWriteDirectories: [directory],
+        sandboxWriteFiles: [calls],
       },
     },
     calls: async () =>
@@ -220,6 +222,7 @@ function containedFixtureQa(
     arguments: ['--input-type=module', '-e', script],
     timeoutMs: 30_000,
     sandboxWriteDirectories: [f.directory],
+    sandboxWriteFiles: [path.join(f.directory, 'qa-calls.jsonl')],
   });
 }
 async function fixtureQaCalls(
@@ -404,6 +407,12 @@ test('resume rejects legacy process containment receipts', async () => {
       hash(
         JSON.stringify({
           processContainment: 'windows-appcontainer-job-v12',
+          ...legacyInput,
+        }),
+      ),
+      hash(
+        JSON.stringify({
+          processContainment: 'windows-appcontainer-job-v13',
           ...legacyInput,
         }),
       ),
@@ -1129,6 +1138,29 @@ test('workflow rejects in-process QA callbacks before any model effects', async 
         'initial',
       );
     }
+    for (const command of [
+      'autocode-nonexistent-codex',
+      path.join(f.root, 'missing-codex.exe'),
+      f.root,
+    ]) {
+      await assert.rejects(
+        () =>
+          runProjectWorkflow(f.root, {
+            ...f.options,
+            codex: { ...f.options.codex, command },
+            qa: createContainedQaAdapter(f.root, {
+              command: 'node',
+              arguments: [],
+            }),
+          }),
+        /Codex executable or resources/,
+      );
+      await assert.rejects(() => f.calls(), { code: 'ENOENT' });
+      assert.equal(
+        await readFile(path.join(f.root, 'result.txt'), 'utf8'),
+        'initial',
+      );
+    }
     const recovered = await runProjectWorkflow(f.root, {
       ...f.options,
       qa: createContainedQaAdapter(f.root, {
@@ -1348,6 +1380,30 @@ test(
       const completed = await runProjectWorkflow(f.root, f.options);
       assert.equal(completed.outcome, 'completed');
       const calls = await f.calls();
+      assert.equal(
+        (await runProjectWorkflow(f.root, { ...f.options, resumeOnly: true }))
+          .outcome,
+        'completed',
+      );
+      assert.deepEqual(await f.calls(), calls);
+      const contents = await readFile(check, 'utf8');
+      await writeFile(check, contents + '\n// changed runtime\n');
+      await assert.rejects(
+        () => runProjectWorkflow(f.root, { ...f.options, resumeOnly: true }),
+        /invalid workflow receipt/,
+      );
+      assert.deepEqual(await f.calls(), calls);
+      await writeFile(check, contents);
+      const saved = path.join(packageDirectory, 'saved-check.mjs');
+      await rename(check, saved);
+      await writeFile(check, contents);
+      await assert.rejects(
+        () => runProjectWorkflow(f.root, { ...f.options, resumeOnly: true }),
+        /invalid workflow receipt/,
+      );
+      assert.deepEqual(await f.calls(), calls);
+      await rm(check);
+      await rename(saved, check);
       assert.equal(
         (await runProjectWorkflow(f.root, { ...f.options, resumeOnly: true }))
           .outcome,

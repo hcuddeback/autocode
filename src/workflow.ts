@@ -6,6 +6,7 @@ import { gitInspectionArguments } from './git-inspection.js';
 import { promisify } from 'node:util';
 import { parse } from 'yaml';
 import { CONFIG_FILE, validateConfig } from './config.js';
+import { snapshotReadResources } from './read-resources.js';
 import { loadTaskCatalog, selectProjectTask } from './tasks.js';
 import { prepareImplementationPlan } from './planning.js';
 import {
@@ -15,6 +16,7 @@ import {
   discoverWorkspaceCredentials,
   redactSecrets,
   runPreparedCodexRole,
+  preflightCodexSession,
   snapshotDirectory,
   type CodexSessionOptions,
   type CodexSessionRecord,
@@ -143,13 +145,12 @@ export async function runProjectWorkflow(
     throw new Error('workflow requires configured deterministic checks');
   const policyText = await optionalRead(root, '.autocode/workflow.json');
   const policy = parsePolicy(policyText);
-  for (const resource of policy.verificationReadResources ?? []) {
-    const info = await lstat(resource);
-    if (!info.isFile() || info.isSymbolicLink())
-      throw new Error('verification read resources must be regular files');
-  }
+  const verificationResources = await snapshotReadResources(
+    policy.verificationReadResources ?? [],
+  );
   if (policy.qa?.kind === 'required' && options.qa)
     await preflightContainedQaAdapter(root, options.qa);
+  const codexOptions = await preflightCodexSession(root, options.codex);
   const taskPolicy = parse(
     /^---\r?\n([\s\S]*?)\r?\n---/.exec(task.contents)![1]!,
   );
@@ -182,7 +183,8 @@ export async function runProjectWorkflow(
   const initialPlan = await safeRead(root, `${preparedRelative}/plan.md`);
   const binding = hash(
     JSON.stringify({
-      processContainment: 'windows-appcontainer-job-v13',
+      processContainment: 'windows-appcontainer-job-v14',
+      verificationResources,
       head,
       branch,
       task: hash(task.contents),
@@ -222,6 +224,9 @@ export async function runProjectWorkflow(
     return hash(
       JSON.stringify({
         worktree: await snapshotWorktree(root),
+        verificationResources: await snapshotReadResources(
+          policy.verificationReadResources ?? [],
+        ),
         credentials: [...credentials.files].sort(([left], [right]) =>
           left.localeCompare(right),
         ),
@@ -398,7 +403,7 @@ export async function runProjectWorkflow(
                 role,
                 `workflow-${phase.id}`,
                 {
-                  ...options.codex,
+                  ...codexOptions,
                   ...(context === undefined ? {} : { fixContext: context }),
                   ...(generatedPlan === undefined
                     ? {}
@@ -454,7 +459,7 @@ export async function runProjectWorkflow(
                   'review',
                   `workflow-${phase.id}`,
                   {
-                    ...options.codex,
+                    ...codexOptions,
                     validateFinalMessage(message) {
                       verdict = parseReview(message);
                     },

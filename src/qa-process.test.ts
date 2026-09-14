@@ -160,6 +160,9 @@ test(
             cwd,
             20000,
             10000,
+            undefined,
+            [],
+            [check],
           );
           assert.equal(result.exitCode, 0, result.stderr);
           assert.match(result.stdout, /executable-resources-private/);
@@ -1240,6 +1243,9 @@ test(
     const directory = await mkdtemp(
       path.join(os.tmpdir(), 'autocode-private-'),
     );
+    const extra = await mkdtemp(
+      path.join(os.tmpdir(), 'autocode-extra-private-'),
+    );
     const keys = [
       'GITHUB_TOKEN',
       'AWS_SECRET_ACCESS_KEY',
@@ -1329,7 +1335,7 @@ test(
         process.execPath,
         [
           '-e',
-          "const fs=require('node:fs');fs.readFileSync('opaque.bin');for(const p of ['release.jks','keystore.properties','gradle.properties']){for(const action of [()=>fs.readFileSync(p),()=>fs.writeFileSync(p,'corrupt'),()=>fs.renameSync(p,p+'.moved'),()=>fs.unlinkSync(p)]){try{action();throw Error('private resource exposed')}catch(e){if(!['EACCES','EPERM'].includes(e.code))throw e}}}console.log('exact-safe-file-grant')",
+          "const fs=require('node:fs');fs.readFileSync('opaque.bin');for(const action of [()=>fs.writeFileSync('opaque.bin','corrupt'),()=>fs.renameSync('opaque.bin','opaque.moved'),()=>fs.unlinkSync('opaque.bin')]){try{action();throw Error('read grant writable')}catch(e){if(!['EACCES','EPERM'].includes(e.code))throw e}}for(const p of ['release.jks','keystore.properties','gradle.properties']){for(const action of [()=>fs.readFileSync(p),()=>fs.writeFileSync(p,'corrupt'),()=>fs.renameSync(p,p+'.moved'),()=>fs.unlinkSync(p)]){try{action();throw Error('private resource exposed')}catch(e){if(!['EACCES','EPERM'].includes(e.code))throw e}}}console.log('exact-safe-file-grant')",
         ],
         directory,
         10_000,
@@ -1350,12 +1356,62 @@ test(
         await readFile(path.join(directory, 'ordinary.txt'), 'utf8'),
         'good',
       );
+      const privateFiles = [
+        'release.jks',
+        'keystore.properties',
+        'opaque.bin',
+      ].map((name) => path.join(extra, name));
+      const counter = path.join(extra, 'counter.txt');
+      for (const file of [...privateFiles, counter])
+        await writeFile(file, 'operator-private');
+      const extraPaths = [extra, ...privateFiles, counter];
+      const extraAcl = await snapshotWindowsAcl(extraPaths);
+      const deny = (files: string[]) =>
+        "const fs=require('node:fs');for(const p of " +
+        JSON.stringify(files) +
+        "){for(const action of [()=>fs.readFileSync(p),()=>fs.writeFileSync(p,'corrupt'),()=>fs.renameSync(p,p+'.moved'),()=>fs.unlinkSync(p)]){try{action();throw Error('generic private file exposed')}catch(e){if(!['EACCES','EPERM'].includes(e.code))throw e}}}";
+      const denied = await runContainedProcess(
+        process.execPath,
+        ['-e', deny([...privateFiles, counter])],
+        directory,
+        10_000,
+        10_000,
+        undefined,
+        [extra],
+      );
+      assert.equal(denied.exitCode, 0, denied.stderr);
+      const mutable = await runContainedProcess(
+        process.execPath,
+        [
+          '-e',
+          deny(privateFiles) +
+            'fs.appendFileSync(' +
+            JSON.stringify(counter) +
+            ",'+observed')",
+        ],
+        directory,
+        10_000,
+        10_000,
+        undefined,
+        [extra],
+        [],
+        [counter],
+      );
+      assert.equal(mutable.exitCode, 0, mutable.stderr);
+      assert.equal(
+        await readFile(counter, 'utf8'),
+        'operator-private+observed',
+      );
+      assert.equal(await snapshotWindowsAcl(extraPaths), extraAcl);
+      for (const file of privateFiles)
+        assert.equal(await readFile(file, 'utf8'), 'operator-private');
     } finally {
       keys.forEach((key, index) => {
         if (previous[index] === undefined) delete process.env[key];
         else process.env[key] = previous[index];
       });
       await rm(directory, { recursive: true, force: true });
+      await rm(extra, { recursive: true, force: true });
     }
   },
 );
@@ -1514,6 +1570,8 @@ test(
             10_000,
             100_000,
             input,
+            [],
+            [echo],
           );
           assert.equal(result.exitCode, 0, result.stderr);
           assert.deepEqual(JSON.parse(result.stdout), {

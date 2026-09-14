@@ -34,6 +34,8 @@ export interface QaProcessOptions {
   sandboxWriteDirectories?: readonly string[];
   /** Read resources explicitly authorized by the trusted operator. */
   sandboxReadResources?: readonly string[];
+  /** Exact mutable files inside authorized writable roots. */
+  sandboxWriteFiles?: readonly string[];
 }
 
 const adapters = new WeakMap<
@@ -74,6 +76,7 @@ export function createContainedQaAdapter(
   const arguments_ = [...options.arguments];
   const sandboxWriteDirectories = [...(options.sandboxWriteDirectories ?? [])];
   const sandboxReadResources = [...(options.sandboxReadResources ?? [])];
+  const sandboxWriteFiles = [...(options.sandboxWriteFiles ?? [])];
   const adapter: QaCallbacks = Object.freeze<QaCallbacks>({
     async run(scenario, context) {
       assertSecureProcessPlatform();
@@ -91,6 +94,7 @@ export function createContainedQaAdapter(
         undefined,
         sandboxWriteDirectories,
         sandboxReadResources,
+        sandboxWriteFiles,
       );
       if (result.exitCode !== 0 || result.timedOut || result.overflowed)
         throw new Error('contained QA process failed');
@@ -106,6 +110,7 @@ export function createContainedQaAdapter(
       maxOutputBytes,
       sandboxWriteDirectories,
       sandboxReadResources,
+      sandboxWriteFiles,
     },
   });
   return adapter;
@@ -128,6 +133,7 @@ export async function runContainedProcess(
   input?: string,
   sandboxWriteDirectories: readonly string[] = [],
   sandboxReadResources: readonly string[] = [],
+  sandboxWriteFiles: readonly string[] = [],
 ) {
   assertSecureProcessPlatform();
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
@@ -150,6 +156,7 @@ export async function runContainedProcess(
     sandboxWriteDirectories,
     batch ? executable : undefined,
     sandboxReadResources,
+    sandboxWriteFiles,
   );
   try {
     const result = await runProcess(
@@ -261,15 +268,42 @@ export async function preflightContainedQaAdapter(
   adapter: QaCallbacks,
 ): Promise<void> {
   assertContainedQaAdapter(root, adapter);
-  assertSecureProcessPlatform();
   const registered = adapters.get(adapter)!;
   const options = registered.options;
-  const executable = await resolveExecutable(options.command, registered.root);
+  await preflightContainedProcess(
+    await resolveExecutable(options.command, registered.root),
+    options.arguments,
+    registered.root,
+    options.maxOutputBytes!,
+    options.sandboxWriteDirectories,
+    options.sandboxReadResources,
+    options.sandboxWriteFiles,
+  );
+}
+
+/** Inspect a fixed process launch without creating any external process effect. */
+export async function preflightContainedProcess(
+  executable: string,
+  arguments_: readonly string[],
+  cwd: string,
+  maxOutputBytes: number,
+  sandboxWriteDirectories: readonly string[] = [],
+  sandboxReadResources: readonly string[] = [],
+  sandboxWriteFiles: readonly string[] = [],
+): Promise<void> {
+  assertSecureProcessPlatform();
+  if (!path.isAbsolute(executable) || !(await lstat(executable)).isFile())
+    throw new Error('contained executable must be an absolute regular file');
   const batch = /\.(?:cmd|bat)$/i.test(executable);
-  if (batch && options.arguments.some((argument) => /[\0\r\n]/.test(argument)))
-    throw new Error('batch arguments cannot contain NUL or line breaks');
-  await resolveExecutable('powershell', registered.root);
-  for (const resource of options.sandboxReadResources ?? []) {
+  if (
+    arguments_.some(
+      (argument) =>
+        argument.includes('\0') || (batch && /[\r\n]/.test(argument)),
+    )
+  )
+    throw new Error('invalid contained process arguments');
+  await resolveExecutable('powershell', cwd);
+  for (const resource of sandboxReadResources) {
     if (!path.isAbsolute(resource))
       throw new Error('sandbox read resources must be absolute');
     if ((await stat(resource)).isDirectory()) {
@@ -281,15 +315,16 @@ export async function preflightContainedQaAdapter(
     }
   }
   const job = await windowsJobScript(
-    batch ? await resolveExecutable('cmd', registered.root) : executable,
-    [...options.arguments],
-    registered.root,
-    options.maxOutputBytes!,
+    batch ? await resolveExecutable('cmd', cwd) : executable,
+    [...arguments_],
+    cwd,
+    maxOutputBytes,
     undefined,
     undefined,
-    options.sandboxWriteDirectories,
+    sandboxWriteDirectories,
     batch ? executable : undefined,
-    options.sandboxReadResources,
+    sandboxReadResources,
+    sandboxWriteFiles,
   );
   try {
     await unlink(job.script);
@@ -308,6 +343,7 @@ async function windowsJobScript(
   sandboxWriteDirectories: readonly string[] = [],
   batchExecutable?: string,
   sandboxReadResources: readonly string[] = [],
+  sandboxWriteFiles: readonly string[] = [],
 ): Promise<{ script: string; directory: string; cleaned: string }> {
   const writeDirectories = await Promise.all(
     sandboxWriteDirectories.map(async (directory) => {
@@ -402,6 +438,33 @@ async function windowsJobScript(
       // Git errors can include private configuration values; retain no raw output.
       throw new Error('Could not inspect sandbox Git metadata safely');
     }
+  }
+  if (sandboxWriteFiles.length > 16)
+    throw new Error('too many mutable file resources');
+  const safeMutableFiles = new Set<string>();
+  for (const resource of sandboxWriteFiles) {
+    if (!path.isAbsolute(resource) || resource.includes('\0'))
+      throw new Error('mutable file resources must be absolute');
+    let target = path.resolve(resource);
+    if (!writableRoots.some((root) => within(root, target)))
+      throw new Error(
+        'mutable file resources require an authorized writable root',
+      );
+    try {
+      const info = await lstat(target);
+      if (!info.isFile() || info.isSymbolicLink())
+        throw new Error('mutable resources must be regular files');
+      target = await realpath(target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+        // eslint-disable-next-line preserve-caught-error -- never retain raw resource paths
+        throw new Error('could not inspect mutable file resource safely');
+    }
+    if (!writableRoots.some((root) => within(root, target)))
+      throw new Error('mutable file resources must stay inside writable roots');
+    if (safeIgnoredFiles.has(target.toLowerCase()))
+      throw new Error('mutable file resource conflicts with a read grant');
+    safeMutableFiles.add(target.toLowerCase());
   }
   const configIncludes = new Set<string>();
   const configFileReferences = new Map<
@@ -683,7 +746,10 @@ async function windowsJobScript(
           if (!info.isFile() || info.isSymbolicLink())
             throw new Error('ignored resources must be regular files');
           const canonical = await realpath(target);
-          if (!safeIgnoredFiles.has(canonical.toLowerCase()))
+          if (
+            !safeIgnoredFiles.has(canonical.toLowerCase()) &&
+            !safeMutableFiles.has(canonical.toLowerCase())
+          )
             blocked.add(canonical);
         }
         const stdout = await inspectGit(directory, [
@@ -711,6 +777,18 @@ async function windowsJobScript(
       const candidate = path.join(directory, entry.name);
       const info = await lstat(candidate);
       const reserved = ['.git', '.autocode'].includes(entry.name.toLowerCase());
+      if (!inRepository && !metadata && !reserved) {
+        if (info.isSymbolicLink())
+          throw new Error('generic writable resources must not contain links');
+        if (info.isFile()) {
+          const canonical = await realpath(candidate);
+          if (
+            !safeIgnoredFiles.has(canonical.toLowerCase()) &&
+            !safeMutableFiles.has(canonical.toLowerCase())
+          )
+            blocked.add(canonical);
+        }
+      }
       if (reserved) {
         if (info.isSymbolicLink())
           throw new Error('protected metadata must not contain links');

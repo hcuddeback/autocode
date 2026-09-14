@@ -20,6 +20,7 @@ import { snapshotWorktree } from './verification.js';
 import { resolveExecutable } from './verification.js';
 import {
   runContainedProcess,
+  preflightContainedProcess,
   assertSecureProcessPlatform,
 } from './qa-process.js';
 
@@ -53,6 +54,8 @@ export interface CodexSessionOptions {
   maxOutputBytes?: number;
   /** Additional directories explicitly authorized by the trusted operator. */
   sandboxWriteDirectories?: readonly string[];
+  /** Exact mutable files inside authorized writable roots. */
+  sandboxWriteFiles?: readonly string[];
   /** Internal integrated execution: one fresh role, immutable artifact directory. */
   role?: CodexSessionRecord['role'];
   artifactName?: string;
@@ -89,6 +92,41 @@ interface ProcessResult {
 export interface WorkspaceCredentials {
   secrets: string[];
   files: Map<string, string>;
+}
+
+/** Resolve and inspect copied fixed Codex resources before durable execution. */
+export async function preflightCodexSession(
+  root: string,
+  options: CodexSessionOptions = {},
+): Promise<CodexSessionOptions> {
+  const copied = {
+    ...options,
+    commandPrefixArguments: [...(options.commandPrefixArguments ?? [])],
+    sandboxWriteDirectories: [...(options.sandboxWriteDirectories ?? [])],
+    sandboxWriteFiles: [...(options.sandboxWriteFiles ?? [])],
+  };
+  try {
+    const command = copied.command ?? 'codex';
+    copied.command = path.isAbsolute(command)
+      ? await realpath(command)
+      : await resolveExecutable(command, root);
+    await preflightContainedProcess(
+      copied.command,
+      copied.commandPrefixArguments,
+      root,
+      copied.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
+      copied.sandboxWriteDirectories,
+      copied.commandPrefixArguments.filter((argument) =>
+        path.isAbsolute(argument),
+      ),
+      copied.sandboxWriteFiles,
+    );
+    return copied;
+  } catch {
+    throw new Error(
+      'Codex executable or resources could not be resolved safely',
+    );
+  }
 }
 
 export async function runRoleSeparatedCodexSessions(
@@ -353,6 +391,7 @@ async function runRole(
     (options.commandPrefixArguments ?? []).filter((argument) =>
       path.isAbsolute(argument),
     ),
+    options.sandboxWriteFiles,
   );
   const completedAt = new Date().toISOString();
   const sessionId = parseSessionId(result.stdout);

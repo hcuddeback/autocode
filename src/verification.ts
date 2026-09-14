@@ -29,6 +29,7 @@ import {
   snapshotDirectory,
 } from './codex.js';
 import { CONFIG_FILE, validateConfig } from './config.js';
+import { snapshotReadResources } from './read-resources.js';
 import { loadTaskCatalog, selectProjectTask } from './tasks.js';
 
 const execFileAsync = promisify(execFile);
@@ -100,6 +101,8 @@ export async function runDeterministicVerification(
 ): Promise<VerificationResult> {
   assertSecureProcessPlatform();
   const sandboxReadResources = [...(options.sandboxReadResources ?? [])];
+  const initialReadResources =
+    await snapshotReadResources(sandboxReadResources);
   const evidenceName = options.evidenceName ?? 'evidence';
   if (!/^[a-z][a-z0-9-]{0,63}$/.test(evidenceName))
     throw new Error('invalid verification evidence name');
@@ -276,6 +279,11 @@ export async function runDeterministicVerification(
       currentStatus === initialStatus &&
       currentWorktreeSnapshot === initialWorktreeSnapshot;
     const protectedStateUnchanged =
+      (await safeInspection(
+        async () =>
+          JSON.stringify(await snapshotReadResources(sandboxReadResources)) ===
+          JSON.stringify(initialReadResources),
+      )) === true &&
       (await safeInspection(async () => {
         await assertDirectoryIdentity(stateIdentity, 'state directory');
         await assertDirectoryUnchanged(

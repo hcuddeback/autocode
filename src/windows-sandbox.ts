@@ -74,6 +74,16 @@ public sealed class AutoCodeSandbox : IDisposable {
   }
   void Grant(string target,bool write,bool inherit) {
     bool directory=Directory.Exists(target);
+    if(!write) {
+      FileSystemSecurity current=directory ? (FileSystemSecurity)Directory.GetAccessControl(target) : File.GetAccessControl(target);
+      var descriptor=new RawSecurityDescriptor(current.GetSecurityDescriptorBinaryForm(),0);
+      if(descriptor.DiscretionaryAcl!=null) foreach(GenericAce entry in descriptor.DiscretionaryAcl) {
+        var allowed=entry as QualifiedAce;
+        if(allowed!=null && allowed.AceQualifier==AceQualifier.AccessAllowed && allowed.SecurityIdentifier.Equals(identity) && (unchecked((uint)allowed.AccessMask)&0x500d0156u)!=0) {
+          ProtectMetadata(target,true); return;
+        }
+      }
+    }
     var rights=write ? FileSystemRights.Modify : FileSystemRights.ReadAndExecute;
     var inheritance=directory && inherit ? InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit : InheritanceFlags.None;
     var rule=new FileSystemAccessRule(identity,rights,inheritance,PropagationFlags.None,AccessControlType.Allow);

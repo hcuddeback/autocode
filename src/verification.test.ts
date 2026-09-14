@@ -8,6 +8,7 @@ import {
   open,
   readFile,
   rm,
+  stat,
   symlink,
   writeFile,
 } from 'node:fs/promises';
@@ -320,6 +321,58 @@ test('verification redacts workspace secrets and detects worktree drift', async 
     assert.equal(record.passed, false);
   } finally {
     await cleanup(drift);
+  }
+  const runtime = await createFixture([
+    {
+      name: 'runtime',
+      command: 'node',
+      args: [
+        '-e',
+        "const fs=require('node:fs');const before=fs.readFileSync('approved-runtime.bin','utf8');fs.utimesSync('signal.txt',1,1);setInterval(()=>{if(fs.readFileSync('approved-runtime.bin','utf8')!==before)process.exit(0)},10);",
+      ],
+    },
+  ]);
+  try {
+    const resource = path.join(runtime.worktree, 'approved-runtime.bin');
+    const signal = path.join(runtime.worktree, 'signal.txt');
+    await writeFile(resource, 'original runtime');
+    await writeFile(signal, 'unchanged bytes');
+    await writeFile(
+      path.join(runtime.worktree, '.gitignore'),
+      'approved-runtime.bin\n',
+      { flag: 'a' },
+    );
+    const verification = runDeterministicVerification(runtime.worktree, {
+      sandboxReadResources: [resource],
+    });
+    const mutation = (async () => {
+      const deadline = Date.now() + 30_000;
+      while ((await stat(signal)).mtimeMs !== 1000) {
+        if (Date.now() >= deadline)
+          throw new Error('runtime check did not start');
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      // The trusted owner can change a file that is read-only to the child.
+      await writeFile(resource, 'changed runtime');
+    })();
+    const [checked, mutated] = await Promise.allSettled([
+      verification,
+      mutation,
+    ]);
+    assert.equal(mutated.status, 'fulfilled');
+    assert.equal(checked.status, 'rejected');
+    const record = JSON.parse(
+      await readFile(
+        path.join(runtime.runDirectory, 'evidence', 'runtime', 'check.json'),
+        'utf8',
+      ),
+    );
+    assert.equal(record.exitCode, 0);
+    assert.equal(record.worktreeUnchanged, true);
+    assert.equal(record.protectedStateUnchanged, false);
+    assert.equal(record.passed, false);
+  } finally {
+    await cleanup(runtime);
   }
 });
 
