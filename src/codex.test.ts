@@ -23,6 +23,8 @@ test('discovers standard ignored credential formats and retains redaction and fr
     await writeFile(path.join(root, '.gitignore'), '*\n');
     const credentials: Record<string, string> = {
       '.npmrc': '//registry.example.invalid/:_authToken=npm-private-token',
+      '.yarnrc.yml':
+        'npmAuthToken: yarn-private-token=\nnpmRegistries:\n  "//registry.example.invalid":\n    npmAuthToken: yarn-nested-token\n',
       '.netrc':
         'machine example.invalid login fixture password netrc-private-token',
       _netrc: 'machine example.invalid password windows-netrc-token',
@@ -68,6 +70,8 @@ test('discovers standard ignored credential formats and retains redaction and fr
     );
     for (const token of [
       'npm-private-token',
+      'yarn-private-token=',
+      'yarn-nested-token',
       'netrc-private-token',
       'windows-netrc-token',
       'pypi-private-token',
@@ -96,6 +100,18 @@ test('discovers standard ignored credential formats and retains redaction and fr
     await writeFile(
       path.join(root, 'nested', 'client.p12'),
       Buffer.from([0xff, 0x00]),
+    );
+    await writeFile(
+      path.join(root, '.yarnrc.yml'),
+      'npmAuthToken: replaced-yarn-token\n',
+    );
+    await assert.rejects(
+      () => assertCredentialFilesUnchanged(root, before.files),
+      /changed protected credential state/,
+    );
+    await writeFile(
+      path.join(root, '.yarnrc.yml'),
+      credentials['.yarnrc.yml']!,
     );
     await writeFile(
       path.join(root, '.npmrc'),

@@ -600,7 +600,7 @@ test('verification retains spawn errors and detects protected-input drift', asyn
       command: 'node',
       args: [
         '-e',
-        "const fs=require('node:fs');fs.writeFileSync('operator-ready','ready');const timer=setInterval(()=>{if(fs.readFileSync('.autocode/config.yaml','utf8').endsWith('# changed'))clearInterval(timer);},20)",
+        "const fs=require('node:fs');fs.writeFileSync('operator-ready','ready');const timer=setInterval(()=>{if(fs.existsSync('operator-config-changed'))clearInterval(timer);},20)",
       ],
     },
   ]);
@@ -629,6 +629,10 @@ test('verification retains spawn errors and detects protected-input drift', asyn
     await writeFile(
       configPath,
       (await readFile(configPath, 'utf8')) + '# changed',
+    );
+    await writeFile(
+      path.join(protectedDrift.worktree, 'operator-config-changed'),
+      'changed',
     );
     await execution;
     const record = JSON.parse(

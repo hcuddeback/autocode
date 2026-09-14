@@ -295,6 +295,7 @@ async function windowsJobScript(
   const protectedPaths = new Set<string>();
   const seenDirectories = new Set<string>();
   const repositories = new Set<string>();
+  const gitMetadataRoots = new Set<string>();
   const authorizedReadRoots = [...writableRoots];
   for (const resource of readFiles)
     if ((await stat(resource)).isDirectory())
@@ -373,6 +374,18 @@ async function windowsJobScript(
       }
       if (key === 'core.sshcommand') {
         // Inspect literal arguments only; never execute or expand the command.
+        let quote: string | undefined;
+        for (const character of value) {
+          if (character === '"' || character === "'") {
+            if (!quote) quote = character;
+            else if (quote === character) quote = undefined;
+          } else if (!/[A-Za-z0-9_./:=@+\- \t]/.test(character))
+            throw new Error(
+              'SSH escaping, expansion and nonliteral arguments are unsupported',
+            );
+        }
+        if (quote)
+          throw new Error('SSH unbalanced literal arguments are unsupported');
         const arguments_ = (
           value.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []
         ).map((argument) =>
@@ -556,6 +569,9 @@ async function windowsJobScript(
               : '|generic');
     if (seenDirectories.has(key)) return;
     seenDirectories.add(key);
+    // Durable transcripts and evidence are host-private. Phase inputs are
+    // supplied by the trusted driver, not read from earlier run artifacts.
+    if (metadata && !gitMetadata) blocked.add(await realpath(directory));
     let dotGit;
     try {
       dotGit = await lstat(path.join(directory, '.git'));
@@ -584,6 +600,7 @@ async function windowsJobScript(
             );
         }
         protectedPaths.add(common);
+        gitMetadataRoots.add(common.toLowerCase());
         readFiles.push(common);
         await discover(common, common, false, true, false, true);
       }
@@ -614,7 +631,9 @@ async function windowsJobScript(
       // Submodule metadata is private by default: configs, include fragments
       // and nested modules need not use recognizable credential filenames.
       const privateEntry =
-        privateMetadata || (gitMetadata && namespace === 'modules');
+        privateMetadata ||
+        (metadata && !gitMetadata) ||
+        (gitMetadata && namespace === 'modules');
       if (privateEntry) {
         if (info.isSymbolicLink())
           throw new Error('credential paths must not be links');
@@ -661,7 +680,10 @@ async function windowsJobScript(
           inRepository,
           metadata || reserved,
           privateEntry,
-          reserved ? entry.name.toLowerCase() === '.git' : gitMetadata,
+          reserved
+            ? entry.name.toLowerCase() === '.git' ||
+                gitMetadataRoots.has(candidate.toLowerCase())
+            : gitMetadata,
         );
     }
   }
@@ -720,10 +742,17 @@ async function windowsJobScript(
     }
   }
   for (const target of referenceTargets.values()) {
+    if (
+      !grantedFiles.has(target.toLowerCase()) &&
+      !grantedDirectories.some((root) => within(root, target))
+    )
+      continue;
     let info;
     let canonical;
     try {
       info = await lstat(target);
+      if (!info.isFile() || info.isSymbolicLink())
+        throw new Error('Git private file references must be regular files');
       canonical = await realpath(target);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
@@ -736,8 +765,6 @@ async function windowsJobScript(
       !grantedDirectories.some((root) => within(root, canonical))
     )
       continue;
-    if (!info.isFile() || info.isSymbolicLink())
-      throw new Error('Git private file references must be regular files');
     blocked.add(canonical);
   }
   for (const metadata of protectedPaths)

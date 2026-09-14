@@ -54,7 +54,7 @@ async function editWindowsAcl(
 }
 
 test(
-  'Windows refuses SSH configuration indirection before launch',
+  'Windows refuses unsupported SSH syntax before launch',
   { skip: process.platform !== 'win32' },
   async () => {
     const cwd = await mkdtemp(path.join(os.tmpdir(), 'autocode-ssh-config-'));
@@ -69,12 +69,23 @@ test(
         config,
         privateConfig,
       ]);
-      for (const option of ['-F ', '-F']) {
-        await exec(
-          'git',
-          ['config', 'core.sshCommand', `ssh ${option}./.git/opaque-config`],
-          { cwd, windowsHide: true },
-        );
+      for (const command of [
+        'ssh -F ./.git/opaque-config',
+        'ssh -F./.git/opaque-config',
+        'ssh -i ./.git/private\\ key',
+        'ssh -i ./.git/key*',
+        'ssh -i "$PWD/.git/key"',
+        "ssh -i '${KEYFILE}'",
+        'ssh -i %CD%/.git/key',
+        'ssh -i ~/.ssh/key',
+        'ssh -i `echo key`',
+        'ssh -i key; echo extra',
+        'ssh -i "unterminated',
+      ]) {
+        await exec('git', ['config', 'core.sshCommand', command], {
+          cwd,
+          windowsHide: true,
+        });
         const original = await readFile(config);
         await assert.rejects(
           runContainedProcess(
@@ -84,7 +95,7 @@ test(
             20000,
             10000,
           ),
-          /SSH configuration indirection/,
+          /SSH .*unsupported/,
         );
         assert.deepEqual(await readFile(config), original);
         assert.equal(
@@ -259,8 +270,11 @@ test(
         10000,
         10000,
       );
-      assert.equal(readOnly.exitCode, 0, readOnly.stderr);
-      assert.match(readOnly.stdout, /operator-state/);
+      assert.notEqual(readOnly.exitCode, 0);
+      assert.match(
+        readOnly.stderr,
+        /credential ACL already grants application-package access/,
+      );
       assert.equal(
         await snapshotWindowsAcl([directory, path.dirname(target), target]),
         readOnlyAcl,
@@ -1156,7 +1170,7 @@ test(
           `const fs=require('node:fs');
 const attempts=[()=>fs.writeFileSync('.autocode/events.jsonl','forged'),()=>fs.writeFileSync('.autocode/completion.json','forged'),()=>fs.unlinkSync('.autocode/events.jsonl'),()=>fs.renameSync('.autocode','moved-state'),()=>fs.writeFileSync('.git/HEAD','forged'),()=>fs.renameSync('.git','moved-git')];
 for(const [index,attempt] of attempts.entries()){try{attempt();console.error("allowed mutation",index);process.exit(9)}catch(error){if(!['EACCES','EPERM'].includes(error.code))throw error}}
-fs.writeFileSync('result.txt','initial');fs.writeFileSync('result.txt',fs.readFileSync('result.txt','utf8')==='initial'?'good':'bad');console.log(fs.readFileSync('.autocode/events.jsonl','utf8'));`,
+fs.writeFileSync('result.txt','initial');fs.writeFileSync('result.txt',fs.readFileSync('result.txt','utf8')==='initial'?'good':'bad');try{fs.readFileSync('.autocode/events.jsonl');throw Error('durable evidence readable')}catch(e){if(!['EACCES','EPERM'].includes(e.code))throw e}console.log('private-state-protected');`,
         ],
         directory,
         10_000,
@@ -1168,7 +1182,7 @@ fs.writeFileSync('result.txt','initial');fs.writeFileSync('result.txt',fs.readFi
         originalAcl,
         'metadata and worktree ACLs must be restored',
       );
-      assert.match(result.stdout, /trusted/);
+      assert.match(result.stdout, /private-state-protected/);
       assert.equal(
         await readFile(
           path.join(directory, '.autocode', 'events.jsonl'),
@@ -1215,7 +1229,7 @@ test(
       });
       await writeFile(
         path.join(directory, '.gitignore'),
-        '.env*\n*credentials*\n.npmrc\n.netrc\n_netrc\nauth.json\nid_rsa\n.pypirc\n.git-credentials\n*.pem\n.aws/\n.docker/\n',
+        '.env*\n*credentials*\n.npmrc\n.yarnrc.yml\n.netrc\n_netrc\nauth.json\nid_rsa\n.pypirc\n.git-credentials\n*.pem\n.aws/\n.docker/\n',
       );
       await mkdir(path.join(directory, 'nested'));
       await mkdir(path.join(directory, '.aws'));
@@ -1225,6 +1239,7 @@ test(
         '.credentials.json',
         'nested/service.credentials.json',
         '.npmrc',
+        '.yarnrc.yml',
         '.netrc',
         '_netrc',
         'nested/auth.json',
@@ -1240,7 +1255,9 @@ test(
           path.join(directory, credential),
           credential === '.env'
             ? 'PRIVATE_VALUE=operator-private'
-            : '{"private":"operator-private"}',
+            : credential === '.yarnrc.yml'
+              ? 'npmAuthToken: operator-private\n'
+              : '{"private":"operator-private"}',
         );
       const paths = credentialPaths.map((credential) =>
         path.join(directory, credential),
