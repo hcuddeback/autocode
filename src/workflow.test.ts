@@ -371,6 +371,12 @@ test('resume rejects legacy process containment receipts', async () => {
           ...legacyInput,
         }),
       ),
+      hash(
+        JSON.stringify({
+          processContainment: 'windows-appcontainer-job-v7',
+          ...legacyInput,
+        }),
+      ),
     ]) {
       assert.notEqual(currentBinding, legacy);
       receipt.binding = legacy;
@@ -1231,7 +1237,13 @@ test(
     try {
       const bin = path.join(f.directory, 'package-bin');
       await mkdir(bin);
-      const check = path.join(bin, 'check.mjs');
+      const packageDirectory = path.join(
+        f.root,
+        'node_modules',
+        'fixture-package',
+      );
+      await mkdir(packageDirectory, { recursive: true });
+      const check = path.join(packageDirectory, 'check.mjs');
       await writeFile(
         check,
         "import assert from 'node:assert/strict';import fs from 'node:fs';assert.deepEqual(process.argv.slice(2),['run','check']);process.exit(fs.readFileSync('result.txt','utf8')==='good'?0:1);",

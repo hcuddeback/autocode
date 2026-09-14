@@ -36,13 +36,12 @@ public sealed class AutoCodeSandbox : IDisposable {
       Command=command;
       Grant(cwd,true,true);
       foreach(string directory in writeDirectories) Grant(directory,true,true);
-      // Installed executable directories provide the binary and its runtime DLLs.
-      // System installations already grant package read access and may deny ACL edits.
-      try { Grant(Path.GetDirectoryName(command),false,true); } catch(UnauthorizedAccessException) {
+      // Executable selection authorizes this file, never its parent directory.
+      // Additional runtime resources require explicit trusted-host authorization.
+      try { Grant(command,false,false); } catch(UnauthorizedAccessException) {
         if(!command.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.Windows)+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase)) {
           string bin=Path.Combine(cache,"bin"); Directory.CreateDirectory(bin);
           Command=Path.Combine(bin,Path.GetFileName(command)); File.Copy(command,Command,false);
-          foreach(string dll in Directory.GetFiles(Path.GetDirectoryName(command),"*.dll")) File.Copy(dll,Path.Combine(bin,Path.GetFileName(dll)),false);
         }
       }
       foreach(string file in readFiles) Grant(file,false,Directory.Exists(file));

@@ -371,14 +371,37 @@ async function windowsJobScript(
             : null;
         privateFileReference(file, quoted ? (quoted[1] ?? quoted[2]!) : value);
       }
-      if (key === 'core.sshcommand')
-        for (const identity of value.matchAll(
-          /(?:^|\s)-i\s*(?:"([^"]+)"|'([^']+)'|(\S+))/g,
-        ))
-          privateFileReference(
-            file,
-            identity[1] ?? identity[2] ?? identity[3]!,
-          );
+      if (key === 'core.sshcommand') {
+        // Inspect literal arguments only; never execute or expand the command.
+        const arguments_ = (
+          value.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []
+        ).map((argument) =>
+          argument.replace(
+            /"([^"]*)"|'([^']*)'/g,
+            (_match, double: string | undefined, single: string | undefined) =>
+              double ?? single ?? '',
+          ),
+        );
+        for (let index = 0; index < arguments_.length; index++) {
+          const argument = arguments_[index]!;
+          if (argument.startsWith('-F'))
+            throw new Error(
+              'SSH configuration indirection requires unsupported private-resource discovery',
+            );
+          if (argument === '-i')
+            privateFileReference(file, arguments_[++index] ?? '');
+          else if (argument.startsWith('-i'))
+            privateFileReference(file, argument.slice(2));
+          else if (argument.startsWith('-o')) {
+            const option =
+              argument === '-o'
+                ? (arguments_[++index] ?? '')
+                : argument.slice(2);
+            const identity = option.match(/^identityfile(?:\s*=\s*|\s+)(.+)$/i);
+            if (identity) privateFileReference(file, identity[1]!);
+          }
+        }
+      }
       if (/^credential(?:\..*)?\.helper$/.test(key)) {
         const store = value.match(
           /^(?:!\s*)?(?:git\s+credential-)?store\s+--file(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))\s*$/,
@@ -725,8 +748,7 @@ async function windowsJobScript(
         );
   const blockedCredentials = [...blocked];
   const protectedResources = [...protectedPaths];
-  if (batchExecutable)
-    readFiles.push(await realpath(path.dirname(batchExecutable)));
+  if (batchExecutable) readFiles.push(await realpath(batchExecutable));
   const directory = await mkdtemp(path.join(os.tmpdir(), 'autocode-qa-job-'));
   for (const writable of [await realpath(cwd), ...writeDirectories]) {
     const relative = path.relative(writable, await realpath(directory));
@@ -757,7 +779,7 @@ async function windowsJobScript(
       cleanupTargets: [
         cwd,
         ...writeDirectories,
-        path.dirname(command),
+        command,
         ...readFiles,
         ...protectedResources,
         ...blockedCredentials,

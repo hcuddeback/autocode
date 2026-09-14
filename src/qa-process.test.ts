@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, rm, mkdir } from 'node:fs/promises';
+import {
+  mkdtemp,
+  readFile,
+  writeFile,
+  rm,
+  mkdir,
+  copyFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -45,6 +52,121 @@ async function editWindowsAcl(
     { windowsHide: true },
   );
 }
+
+test(
+  'Windows refuses SSH configuration indirection before launch',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), 'autocode-ssh-config-'));
+    try {
+      const exec = promisify(execFile);
+      await exec('git', ['init', '-b', 'main'], { cwd, windowsHide: true });
+      const config = path.join(cwd, '.git', 'config');
+      const privateConfig = path.join(cwd, '.git', 'opaque-config');
+      await writeFile(privateConfig, 'IdentityFile ./assets/opaque\n');
+      const originalAcl = await snapshotWindowsAcl([
+        cwd,
+        config,
+        privateConfig,
+      ]);
+      for (const option of ['-F ', '-F']) {
+        await exec(
+          'git',
+          ['config', 'core.sshCommand', `ssh ${option}./.git/opaque-config`],
+          { cwd, windowsHide: true },
+        );
+        const original = await readFile(config);
+        await assert.rejects(
+          runContainedProcess(
+            process.execPath,
+            ['-e', "require('node:fs').writeFileSync('launched','unsafe')"],
+            cwd,
+            20000,
+            10000,
+          ),
+          /SSH configuration indirection/,
+        );
+        assert.deepEqual(await readFile(config), original);
+        assert.equal(
+          await snapshotWindowsAcl([cwd, config, privateConfig]),
+          originalAcl,
+        );
+        await assert.rejects(readFile(path.join(cwd, 'launched')), {
+          code: 'ENOENT',
+        });
+      }
+      assert.equal(
+        await readFile(privateConfig, 'utf8'),
+        'IdentityFile ./assets/opaque\n',
+      );
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'Windows executable and shim selection does not expose their parent directories',
+  { skip: process.platform !== 'win32' },
+  async (t) => {
+    for (const mode of ['native', 'shim'])
+      await t.test(mode, async () => {
+        const base = await mkdtemp(
+          path.join(os.tmpdir(), 'autocode-executable-resource-'),
+        );
+        try {
+          const cwd = path.join(base, 'workspace');
+          const bin = path.join(base, 'bin');
+          await mkdir(cwd);
+          await mkdir(bin);
+          const executable = path.join(bin, 'fixture.exe');
+          const shim = path.join(bin, 'fixture.cmd');
+          await copyFile(process.execPath, executable);
+          const state = path.join(bin, '.autocode');
+          await mkdir(state);
+          const targets = [
+            path.join(bin, '.npmrc'),
+            path.join(bin, 'opaque-token'),
+            path.join(state, 'private.json'),
+          ];
+          for (const target of targets)
+            await writeFile(target, 'synthetic-private');
+          const script = `const fs=require('node:fs');for(const p of ${JSON.stringify(targets)}){try{fs.readFileSync(p);throw Error('executable parent exposed')}catch(e){if(!['EACCES','EPERM'].includes(e.code))throw e}}fs.writeFileSync('ordinary.txt','allowed');console.log('executable-resources-private')`;
+          const check = path.join(cwd, 'check.js');
+          await writeFile(check, script);
+          await writeFile(
+            shim,
+            `@echo off\r\n"%AUTOCODE_NODE%" "${check}"\r\n`,
+          );
+          const paths = [bin, executable, shim, state, ...targets];
+          const originalAcl = await snapshotWindowsAcl(paths);
+          const originals = await Promise.all(
+            targets.map((file) => readFile(file)),
+          );
+          const result = await runContainedProcess(
+            mode === 'native' ? executable : shim,
+            mode === 'native' ? [check] : [],
+            cwd,
+            20000,
+            10000,
+          );
+          assert.equal(result.exitCode, 0, result.stderr);
+          assert.match(result.stdout, /executable-resources-private/);
+          assert.equal(
+            await readFile(path.join(cwd, 'ordinary.txt'), 'utf8'),
+            'allowed',
+          );
+          assert.equal(await snapshotWindowsAcl(paths), originalAcl);
+          assert.deepEqual(
+            await Promise.all(targets.map((file) => readFile(file))),
+            originals,
+          );
+        } finally {
+          await rm(base, { recursive: true, force: true });
+        }
+      });
+  },
+);
 
 test(
   'Windows refuses existing package credential grants without changing them',
@@ -492,6 +614,35 @@ test(
                   cwd: root,
                   windowsHide: true,
                 });
+              }
+              for (const [index, option] of [
+                '-o IdentityFile=',
+                '-oIdentityFile=',
+                '-o "IdentityFile ',
+                "-o'identityfile=",
+              ].entries()) {
+                const target = path.join(root, '.git', `opaque-ssh-${index}`);
+                await writeFile(target, 'synthetic-private-identity');
+                privateReferences.push(target);
+                const reference = `./.git/opaque-ssh-${index}`;
+                const command =
+                  index === 2
+                    ? `ssh ${option}${reference}"`
+                    : index === 3
+                      ? `ssh ${option}${reference}'`
+                      : `ssh ${option}"${reference}"`;
+                await exec(
+                  'git',
+                  [
+                    'config',
+                    '--file',
+                    config,
+                    '--add',
+                    'core.sshCommand',
+                    command,
+                  ],
+                  { cwd: root, windowsHide: true },
+                );
               }
             }
             configs.push(config);
