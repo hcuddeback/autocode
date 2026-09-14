@@ -27,6 +27,10 @@ test('discovers standard ignored credential formats and retains redaction and fr
         '# Yarn Classic\n_authToken yarn-classic-plain # comment\n"//registry.example.invalid/:_authToken" "yarn-classic-token=" # comment\n_authToken=\'yarn-classic-assigned=\'\n"//other.example.invalid/:_authToken" \'yarn-classic-single\'\n',
       '.yarnrc.yml':
         'npmAuthToken: yarn-private-token=\nnpmRegistries:\n  "//registry.example.invalid":\n    npmAuthToken: yarn-nested-token\n',
+      'NuGet.Config':
+        '<configuration><packageSourceCredentials><fixture><add key="ClearTextPassword" value="nuget-private-token" /></fixture></packageSourceCredentials></configuration>',
+      'nested/nuget.config':
+        '<configuration><apikeys><add key="fixture" value="nuget&amp;encoded&#x2d;&#116;oken" /></apikeys></configuration>',
       '.netrc':
         'machine example.invalid login fixture password netrc-private-token',
       _netrc: 'machine example.invalid password windows-netrc-token',
@@ -83,6 +87,8 @@ test('discovers standard ignored credential formats and retains redaction and fr
       'yarn-private-token=',
       'yarn-nested-token',
       'netrc-private-token',
+      'nuget-private-token',
+      'nuget&encoded-token',
       'windows-netrc-token',
       'pypi-private-token',
       'https://fixture:pip-private-token@example.invalid/simple',
@@ -145,6 +151,18 @@ test('discovers standard ignored credential formats and retains redaction and fr
     await writeFile(
       path.join(root, '.venv/pip.ini'),
       credentials['.venv/pip.ini']!,
+    );
+    await writeFile(
+      path.join(root, 'NuGet.Config'),
+      '<configuration><add value="replaced-nuget-token" /></configuration>',
+    );
+    await assert.rejects(
+      () => assertCredentialFilesUnchanged(root, before.files),
+      /changed protected credential state/,
+    );
+    await writeFile(
+      path.join(root, 'NuGet.Config'),
+      credentials['NuGet.Config']!,
     );
     await writeFile(
       path.join(root, '.npmrc'),

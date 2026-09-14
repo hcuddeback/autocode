@@ -610,6 +610,7 @@ test(
                 'credential.helper',
                 'core.sshCommand',
                 'core.askPass',
+                'user.signingKey',
               ];
               for (const [index, field] of fields.entries()) {
                 const reference = `./.git/opaque-${index}`;
@@ -629,6 +630,30 @@ test(
                   windowsHide: true,
                 });
               }
+              const signingKey = path.join(root, 'opaque-signing');
+              await writeFile(
+                path.join(root, '.gitignore'),
+                'opaque-signing\n',
+              );
+              await writeFile(signingKey, 'synthetic-private-signing-key');
+              privateReferences.push(signingKey);
+              await exec(
+                'git',
+                ['config', '--file', config, 'gpg.format', 'ssh'],
+                { cwd: root, windowsHide: true },
+              );
+              await exec(
+                'git',
+                [
+                  'config',
+                  '--file',
+                  config,
+                  '--add',
+                  'user.signingKey',
+                  './opaque-signing',
+                ],
+                { cwd: root, windowsHide: true },
+              );
               for (const [index, option] of [
                 '-o IdentityFile=',
                 '-oIdentityFile=',
@@ -1229,7 +1254,7 @@ test(
       });
       await writeFile(
         path.join(directory, '.gitignore'),
-        '.env*\n*credentials*\n.npmrc\n.yarnrc\n.yarnrc.yml\n.netrc\n_netrc\nauth.json\nid_rsa\n.pypirc\n.venv/pip.ini\nnested/pip.conf\n.git-credentials\n*.pem\n.aws/\n.docker/\n',
+        '.env*\n*credentials*\n.npmrc\n.yarnrc\n.yarnrc.yml\n.netrc\n_netrc\nauth.json\nid_rsa\n.pypirc\n.venv/pip.ini\nNuGet.Config\nnested/pip.conf\n.git-credentials\n*.pem\n.aws/\n.docker/\n',
       );
       await mkdir(path.join(directory, 'nested'));
       await mkdir(path.join(directory, '.venv'));
@@ -1243,6 +1268,7 @@ test(
         '.yarnrc',
         '.yarnrc.yml',
         '.venv/pip.ini',
+        'NuGet.Config',
         'nested/pip.conf',
         '.netrc',
         '_netrc',
@@ -1259,13 +1285,15 @@ test(
           path.join(directory, credential),
           credential === '.env'
             ? 'PRIVATE_VALUE=operator-private'
-            : /pip\.(?:ini|conf)$/.test(credential)
-              ? '[global]\nindex-url=https://fixture:operator-private@example.invalid/simple\n'
-              : credential === '.yarnrc.yml'
-                ? 'npmAuthToken: operator-private\n'
-                : credential === '.yarnrc'
-                  ? '_authToken "operator-private"\n'
-                  : '{"private":"operator-private"}',
+            : credential === 'NuGet.Config'
+              ? '<configuration><packageSourceCredentials><fixture><add key="ClearTextPassword" value="operator-private" /></fixture></packageSourceCredentials></configuration>'
+              : /pip\.(?:ini|conf)$/.test(credential)
+                ? '[global]\nindex-url=https://fixture:operator-private@example.invalid/simple\n'
+                : credential === '.yarnrc.yml'
+                  ? 'npmAuthToken: operator-private\n'
+                  : credential === '.yarnrc'
+                    ? '_authToken "operator-private"\n'
+                    : '{"private":"operator-private"}',
         );
       const paths = credentialPaths.map((credential) =>
         path.join(directory, credential),

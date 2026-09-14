@@ -664,6 +664,50 @@ function collectCredentialScalars(
     }
     return;
   }
+  if (name.toLowerCase() === 'nuget.config') {
+    if (/\0|<!DOCTYPE|<!ENTITY|<!\[CDATA\[/i.test(contents))
+      throw new Error(
+        'ignored NuGet credential file has unsupported XML syntax',
+      );
+    for (const match of contents.matchAll(
+      /[A-Za-z_:][\w:.-]*\s*=\s*(?:"([^"<]*)"|'([^'<]*)')/g,
+    )) {
+      const raw = match[1] ?? match[2]!;
+      if (/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\da-fA-F]+);)/.test(raw))
+        throw new Error(
+          'ignored NuGet credential file has unsupported XML syntax',
+        );
+      const scalar = raw.replace(
+        /&(?:amp|lt|gt|quot|apos|#\d+|#x[\da-fA-F]+);/g,
+        (entity) => {
+          const named: Record<string, string> = {
+            '&amp;': '&',
+            '&lt;': '<',
+            '&gt;': '>',
+            '&quot;': '"',
+            '&apos;': "'",
+          };
+          if (named[entity] !== undefined) return named[entity]!;
+          const hexadecimal = entity.startsWith('&#x');
+          const point = Number.parseInt(
+            entity.slice(hexadecimal ? 3 : 2, -1),
+            hexadecimal ? 16 : 10,
+          );
+          if (
+            point < 1 ||
+            point > 0x10ffff ||
+            (point >= 0xd800 && point <= 0xdfff)
+          )
+            throw new Error(
+              'ignored NuGet credential file has unsupported XML syntax',
+            );
+          return String.fromCodePoint(point);
+        },
+      );
+      addSecretScalar(scalar, secrets);
+    }
+    return;
+  }
   if (name.toLowerCase() === '.git-credentials') {
     for (const line of contents.split(/\r?\n/).filter(Boolean)) {
       addSecretScalar(line, secrets);

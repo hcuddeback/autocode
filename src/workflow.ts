@@ -41,7 +41,7 @@ import {
   type CompletionGateInput,
 } from './completion-gates.js';
 import {
-  assertContainedQaAdapter,
+  preflightContainedQaAdapter,
   assertSecureProcessPlatform,
 } from './qa-process.js';
 
@@ -142,7 +142,7 @@ export async function runProjectWorkflow(
   const policyText = await optionalRead(root, '.autocode/workflow.json');
   const policy = parsePolicy(policyText);
   if (policy.qa?.kind === 'required' && options.qa)
-    assertContainedQaAdapter(root, options.qa);
+    await preflightContainedQaAdapter(root, options.qa);
   const taskPolicy = parse(
     /^---\r?\n([\s\S]*?)\r?\n---/.exec(task.contents)![1]!,
   );
@@ -175,7 +175,7 @@ export async function runProjectWorkflow(
   const initialPlan = await safeRead(root, `${preparedRelative}/plan.md`);
   const binding = hash(
     JSON.stringify({
-      processContainment: 'windows-appcontainer-job-v10',
+      processContainment: 'windows-appcontainer-job-v11',
       head,
       branch,
       task: hash(task.contents),

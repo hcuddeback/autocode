@@ -13,6 +13,7 @@ import {
   readFile,
   opendir,
   lstat,
+  open,
 } from 'node:fs/promises';
 import { discoverWorkspaceCredentials } from './codex.js';
 import {
@@ -35,7 +36,10 @@ export interface QaProcessOptions {
   sandboxReadResources?: readonly string[];
 }
 
-const adapters = new WeakMap<QaCallbacks, string>();
+const adapters = new WeakMap<
+  QaCallbacks,
+  { root: string; options: QaProcessOptions }
+>();
 
 /** Only fixed host callbacks invoking a contained process are accepted by the workflow. */
 export function createContainedQaAdapter(
@@ -93,7 +97,17 @@ export function createContainedQaAdapter(
       return JSON.parse(result.stdout);
     },
   });
-  adapters.set(adapter, cwd);
+  adapters.set(adapter, {
+    root: cwd,
+    options: {
+      command,
+      arguments: arguments_,
+      timeoutMs,
+      maxOutputBytes,
+      sandboxWriteDirectories,
+      sandboxReadResources,
+    },
+  });
   return adapter;
 }
 
@@ -235,10 +249,53 @@ export function assertContainedQaAdapter(
   root: string,
   adapter: QaCallbacks,
 ): void {
-  if (adapters.get(adapter) !== path.resolve(root))
+  if (adapters.get(adapter)?.root !== path.resolve(root))
     throw new Error(
       'workflow QA requires a contained process adapter; in-process callbacks are unsafe',
     );
+}
+
+/** Validate fixed QA resources without launching the adapter or changing ACLs. */
+export async function preflightContainedQaAdapter(
+  root: string,
+  adapter: QaCallbacks,
+): Promise<void> {
+  assertContainedQaAdapter(root, adapter);
+  assertSecureProcessPlatform();
+  const registered = adapters.get(adapter)!;
+  const options = registered.options;
+  const executable = await resolveExecutable(options.command, registered.root);
+  const batch = /\.(?:cmd|bat)$/i.test(executable);
+  if (batch && options.arguments.some((argument) => /[\0\r\n]/.test(argument)))
+    throw new Error('batch arguments cannot contain NUL or line breaks');
+  await resolveExecutable('powershell', registered.root);
+  for (const resource of options.sandboxReadResources ?? []) {
+    if (!path.isAbsolute(resource))
+      throw new Error('sandbox read resources must be absolute');
+    if ((await stat(resource)).isDirectory()) {
+      const directory = await opendir(resource);
+      await directory.close();
+    } else {
+      const file = await open(resource, 'r');
+      await file.close();
+    }
+  }
+  const job = await windowsJobScript(
+    batch ? await resolveExecutable('cmd', registered.root) : executable,
+    [...options.arguments],
+    registered.root,
+    options.maxOutputBytes!,
+    undefined,
+    undefined,
+    options.sandboxWriteDirectories,
+    batch ? executable : undefined,
+    options.sandboxReadResources,
+  );
+  try {
+    await unlink(job.script);
+  } finally {
+    await rmdir(job.directory);
+  }
 }
 
 async function windowsJobScript(
@@ -364,7 +421,8 @@ async function windowsJobScript(
       if (
         /(?:^|\.)(?:sslkey|sslcert|cookiefile)$/.test(key) ||
         /^credential(?:\..*)?\.(?:file|path)$/.test(key) ||
-        key === 'core.askpass'
+        key === 'core.askpass' ||
+        key === 'user.signingkey'
       ) {
         const quoted =
           key === 'core.askpass'
@@ -444,7 +502,7 @@ async function windowsJobScript(
           key,
         ) ||
         /^filter\..*\.(?:clean|smudge|process)$/.test(key) ||
-        ['core.sshcommand', 'core.askpass'].includes(key) ||
+        ['core.sshcommand', 'core.askpass', 'user.signingkey'].includes(key) ||
         /[a-z][a-z0-9+.-]*:\/\/[^/\s]*@/i.test(key + '\n' + value)
       )
         credential = true;

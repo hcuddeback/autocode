@@ -389,6 +389,12 @@ test('resume rejects legacy process containment receipts', async () => {
           ...legacyInput,
         }),
       ),
+      hash(
+        JSON.stringify({
+          processContainment: 'windows-appcontainer-job-v10',
+          ...legacyInput,
+        }),
+      ),
     ]) {
       assert.notEqual(currentBinding, legacy);
       receipt.binding = legacy;
@@ -1069,6 +1075,59 @@ test('workflow rejects in-process QA callbacks before any model effects', async 
       await readFile(path.join(f.root, 'result.txt'), 'utf8'),
       'initial',
     );
+    for (const options of [
+      { command: 'autocode-nonexistent-qa-executable', arguments: [] },
+      {
+        command: 'node',
+        arguments: [],
+        sandboxWriteDirectories: ['relative-write'],
+      },
+      {
+        command: 'node',
+        arguments: [],
+        sandboxWriteDirectories: [path.join(f.root, 'missing-write')],
+      },
+      {
+        command: 'node',
+        arguments: [],
+        sandboxWriteDirectories: [path.join(f.root, 'result.txt')],
+      },
+      {
+        command: 'node',
+        arguments: [],
+        sandboxReadResources: ['relative-read'],
+      },
+      {
+        command: 'node',
+        arguments: [],
+        sandboxReadResources: [path.join(f.root, 'missing-read')],
+      },
+    ]) {
+      await assert.rejects(
+        () =>
+          runProjectWorkflow(f.root, {
+            ...f.options,
+            qa: createContainedQaAdapter(f.root, options),
+          }),
+        /not found|absolute|ENOENT/,
+      );
+      await assert.rejects(() => f.calls(), { code: 'ENOENT' });
+      assert.equal(
+        await readFile(path.join(f.root, 'result.txt'), 'utf8'),
+        'initial',
+      );
+    }
+    const recovered = await runProjectWorkflow(f.root, {
+      ...f.options,
+      qa: createContainedQaAdapter(f.root, {
+        command: 'node',
+        arguments: [
+          '-e',
+          'console.log(JSON.stringify({kind:"passed",reason:"Observed corrected QA adapter."}))',
+        ],
+      }),
+    });
+    assert.equal(recovered.outcome, 'completed');
   } finally {
     await f.cleanup();
   }
