@@ -40,7 +40,7 @@
 - Linux and macOS subprocess execution fail closed; PRODUCT's three-platform acceptance remains open.
 - License has not been selected and added.
 
-See `docs/MVP_AUDIT.md` for requirement-by-requirement code evidence and the remaining acceptance/release gaps. The complete MVP is not yet accepted or released.
+See [the MVP audit](docs/MVP_AUDIT.md), refreshed against merged source 6d72cfd on 2026-09-14, for requirement-by-requirement code evidence and remaining acceptance/release gaps. Its final completion evidence is distinguished from historical pre-merge checks; runtime checks were not rerun for the documentation refresh. The complete MVP is not yet accepted or released.
 
 ## AC-012 completion, 2026-09-14
 
