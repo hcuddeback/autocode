@@ -1,8 +1,8 @@
 # AutoCode workflow
 
-**Status:** Local workflow integrated in AC-012; external lifecycle remains adapter work
+**Status:** MVP 1 local lifecycle selected by D-007; remote automation deferred
 
-**Last updated:** 2026-09-12
+**Last updated:** 2026-09-14
 
 ## Planning hierarchy
 
@@ -20,25 +20,32 @@ Later tasks stay coarse until dependencies and current reality are known. The ta
 
 Before implementation begins, create the task's feature branch from current `main`, attach it to an isolated worktree, and verify that worktree is not on `main`. After deterministic verification and applicable QA pass, agents may commit scoped changes, push the feature branch, and open the required PR without a separate manual review or permission request. Independent critical review remains required for task completion and may be recorded in the current review chat when accepted by the owner; a separate external review session is not a publication prerequisite. See D-005 in `DECISIONS.md`.
 
-## Lifecycle
+## Lifecycle and release scope
 
-| Phase                       | Purpose                                                          | Required exit evidence                                                      |
-| --------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Intake                      | Validate task, dependencies, repository, and authority           | Ready task and policy decision                                              |
-| JIT task refinement         | Turn the next outcome into an executable contract                | Scope, criteria, risk, relevant docs, validation                            |
-| JIT implementation plan     | Plan against the current commit                                  | Intended changes, sequence, risks, verification plan                        |
-| Implementation              | Change an isolated feature-branch worktree                       | Diff, summary, assumptions, session identity                                |
-| Deterministic verification  | Run configured checks                                            | Commands, exits, duration, bounded output, commit                           |
-| Independent critical review | Challenge correctness in a separate session                      | Structured findings with severity/evidence                                  |
-| Fix and re-verify           | Address actionable failures/findings                             | Updated diff, dispositions, fresh verification                              |
-| QA applicability            | Decide whether runtime/browser QA is needed                      | Required scenarios or recorded not-applicable reason                        |
-| QA                          | Exercise applicable user-visible behavior                        | Scenario evidence, screenshots/logs, findings                               |
-| Pull request                | Push the verified feature branch and publish a PR                | PR identity and exact head commit, or a documented not-applicable exception |
-| Codex PR review             | Observe and address actionable review                            | Resolved findings, evidenced disputes, or escalation                        |
-| Merge gate                  | Evaluate configured CI, approvals, risk, findings, and freshness | Recorded authorization; merge is prohibited outside configured gates        |
-| Production applicability    | Decide whether deployment verification applies                   | Target/checks or recorded not-applicable reason                             |
-| Production verification     | Confirm deployed behavior                                        | Deployment identity, smoke results, rollback signal                         |
-| Complete                    | Update task/system state and select next work                    | Immutable run summary                                                       |
+MVP 1 requires the local phases through QA and a durable verified operator handoff (D-007). The table also describes the later remote lifecycle and the repository contribution gates that operators must follow today. Listing a remote phase does not make its automation an MVP 1 requirement. Publication through production verification is operator-managed in MVP 1; task completion updates are also currently operator-managed. Durable ownership and an immutable local summary remain unimplemented acceptance work.
+
+A verified handoff retains task/branch/base identity, current implementation workspace digest, planning and check/review/QA evidence, findings/dispositions and the remaining external gates. It must distinguish a clean local result from missing QA, stale evidence and ambiguous interrupted effects. The current CLI represents the PR boundary as `blocked`, not a new handoff status. It does not yet produce a final immutable handoff summary.
+
+## Lifecycle phases
+
+| Phase                                                                     | Purpose                                                               | Required exit evidence                                                      |
+| ------------------------------------------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Intake                                                                    | Validate task, dependencies, repository, and authority                | Ready task and policy decision                                              |
+| JIT task refinement                                                       | Turn the next outcome into an executable contract                     | Scope, criteria, risk, relevant docs, validation                            |
+| JIT implementation plan                                                   | Plan against the current commit                                       | Intended changes, sequence, risks, verification plan                        |
+| Implementation                                                            | Change an isolated feature-branch worktree                            | Diff, summary, assumptions, session identity                                |
+| Deterministic verification                                                | Run configured checks                                                 | Commands, exits, duration, bounded output, commit                           |
+| Independent critical review                                               | Challenge correctness in a separate session                           | Structured findings with severity/evidence                                  |
+| Fix and re-verify                                                         | Address actionable failures/findings                                  | Updated diff, dispositions, fresh verification                              |
+| QA applicability                                                          | Decide whether runtime/browser QA is needed                           | Required scenarios or recorded not-applicable reason                        |
+| QA                                                                        | Exercise applicable user-visible behavior                             | Scenario evidence, screenshots/logs, findings                               |
+| Local handoff/summary (MVP target)                                        | Retain current local evidence and remaining operator responsibilities | Immutable local summary; no claim of remote task completion                 |
+| Pull request (operator; later automation)                                 | Push the verified feature branch and publish a PR                     | PR identity and exact head commit, or a documented not-applicable exception |
+| Codex PR review (operator; later automation)                              | Observe and address actionable review                                 | Resolved findings, evidenced disputes, or escalation                        |
+| Merge gate (operator; later automation)                                   | Evaluate configured CI, approvals, risk, findings, and freshness      | Recorded authorization; merge is prohibited outside configured gates        |
+| Production applicability (explicit local policy; operator for deployment) | Decide whether deployment verification applies                        | Target/checks or recorded not-applicable reason                             |
+| Production verification (operator; later automation)                      | Confirm deployed behavior                                             | Deployment identity, smoke results, rollback signal                         |
+| Repository task complete (operator today)                                 | Update task/system state after applicable repository gates            | Merge/production evidence or genuine exceptions; completed task record      |
 
 ## Implemented local execution
 
@@ -46,7 +53,7 @@ Before implementation begins, create the task's feature branch from current `mai
 
 `.autocode/workflow.json` is protected operator policy: version 1, an explicit `qa` decision accepted by `runQaPhase`, and optional `pullRequest`/`completion` policy. Missing QA blocks. Required QA needs the workflow API's scenario adapter; the CLI has no browser/runtime adapter. A scenario that changes the workspace blocks because checks and review are stale. QA failures currently require operator disposition rather than automatic QA-fix rounds.
 
-PR-required tasks stop as blocked at the external boundary. This runner does not commit, push, publish, poll reviews, merge, deploy, mark task contracts done, or advance the queue. Disposable local workflows may complete only when the task explicitly declares `pull_request: not_applicable`, operator policy records a substantive `pullRequest: {kind: "not-applicable", reason: "..."}` exception, and `completion` passes `evaluateCompletionGates` for the prepared commit with explicit production applicability. Such completion is local run completion, not proof of a published or merged task.
+PR-required tasks stop as blocked at the external boundary. After current local checks, review and applicable QA pass, this is the MVP 1 operator handoff boundary; remote automation is deferred and the handoff remains `blocked`, without claiming local or repository completion. Missing or failed local phases are unresolved blockers, not verified handoffs. This runner does not commit, push, publish, poll reviews, merge, deploy, mark task contracts done, or advance the queue. Disposable local workflows may complete only when the task explicitly declares `pull_request: not_applicable`, operator policy records a substantive `pullRequest: {kind: "not-applicable", reason: "..."}` exception, and `completion` passes `evaluateCompletionGates` for the prepared commit with explicit production applicability. Such completion is local run completion, not proof of a published or merged task.
 
 Required production verification also blocks until a deployment adapter can bind observed behavior to committed implementation. Passing static signals for the prepared base commit cannot prove the uncommitted implementation was deployed. Local-only completion therefore requires production to be explicitly not applicable.
 
@@ -65,6 +72,8 @@ QA is an explicit phase, not an implied part of unit tests. It is normally requi
 Pure internal changes may record QA as not applicable when deterministic tests cover the outcome. QA findings enter the bounded fix/reverify loop, and subsequent code changes invalidate affected QA evidence.
 
 ## Transition rules
+
+Publication, remote review, merge and repository task updates below describe operator/contributor policy under D-005. They are not claims that the MVP 1 runner performs remote effects.
 
 - Persist required evidence before advancing.
 - Agent prose cannot override failed deterministic checks.
@@ -95,7 +104,7 @@ Pacing may enforce cooldowns, quiet hours, attempt/time ceilings, stop-after-cur
 
 ## Terminal outcomes
 
-- `done`: every required gate passed.
+- Repository task `done`: every applicable repository gate passed; never implied by local handoff. The durable engine reports local `completed` only for explicitly permitted local exceptions, not repository task completion.
 - `paused`: deliberately stopped at a resumable boundary.
 - `blocked`: input, authority, or an external condition is required.
 - `failed`: recovery policy is exhausted.

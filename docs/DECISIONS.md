@@ -11,6 +11,7 @@ Record durable choices with meaningful alternatives; do not duplicate task histo
 | D-003 | 2026-09-02 | accepted | QA as an explicit applicability-gated phase                        | Evidence shows it belongs outside orchestration                             |
 | D-004 | 2026-09-11 | accepted | Fresh scoped sessions with durable phase receipts                  | Stable continuation/reconciliation evidence justifies a different interface |
 | D-005 | 2026-09-12 | accepted | Autonomous commit, push, and PR creation after local checks and QA | Owner changes publication authority or required merge gates                 |
+| D-007 | 2026-09-14 | accepted | MVP 1 ends at verified local operator handoff                      | Accepted local release and a selected remote lifecycle outcome              |
 
 ## D-001 — Local TypeScript CLI
 
@@ -49,7 +50,7 @@ Record durable choices with meaningful alternatives; do not duplicate task histo
 
 **Alternatives:** Automatically retrying uncertain model work can repeat changes or external effects. Requiring native session continuation would prevent the local slice without improving deterministic evidence today.
 
-**Consequence:** Workflow resume is implemented without claiming native session continuation. Configuration/workspace drift requires fresh evidence. This decision does not narrow PRODUCT's still-open PR/production or supported-platform requirements.
+**Consequence:** Workflow resume is implemented without claiming native session continuation. Configuration/workspace drift requires fresh evidence. This decision does not narrow supported-platform requirements. D-007 subsequently settles PR/production scope.
 
 ## D-005 — Publication authority and review evidence
 
@@ -122,3 +123,15 @@ AC-012 receipt version 17 additionally binds required-QA and completion evidence
 AC-012 receipt version 18 adds resolved verification executable identity/content to binding and live freshness, including trusted PATH selection. Shared contained read grants now require exact regular files rather than directories. The snapshot backend supports the configured 32-command bound with deduplication and a 512-MiB aggregate data budget; QA remains limited to 16 explicit read files plus its executable.
 
 **AC-012 review cutoff (2026-09-14):** The owner ended further continuous bot-review requests for PR #14. Finish and verify the two existing findings, record dispositions in the D-005 accepted critical review chat, and resolve their conversations. Further bot reviews are not a configured merge requirement. Nonblocking maintainability improvements belong in a bounded later audit and small separate tasks. Existing security exposures and correctness defects are not deferred. Required GitGuardian, resolved conversations, current-base checks and human merge authorization remain in force.
+
+## D-007 — MVP 1 local lifecycle and operator handoff
+
+**Context:** AC-012 proves the durable local fixture slice. PRODUCT left PR/production scope open while WORKFLOW listed the whole remote journey. Requiring every remote adapter before local release would combine several independent outcomes and obscure remaining local acceptance gaps.
+
+**Decision:** MVP 1 requires one task through verified local implementation, review, applicable QA and durable operator handoff, plus explicit local-only run completion when genuinely applicable. Automated publication, Codex PR-review observation/repair, merge, deployment and production verification belong to a later release. AC-008 and AC-009 remote orchestration are deferred; reusable review/completion policies and fail-closed handling remain intact.
+
+**Alternatives:** Full remote automation now would require durable exact-head publication/review/merge reconciliation and deployment evidence before release. Treating disposable local completion as full task completion would conceal missing external gates. The bounded local handoff retains useful evidence without either claim.
+
+**Safety boundary:** A PR-required run stops at the external boundary, currently as `blocked`. It is a verified handoff only after local checks, review and applicable QA pass with current identity/digest evidence. Missing QA, actionable findings, stale evidence or ambiguous effects remain unresolved blockers. A prepared base commit is not a committed implementation head or proof of deployment. Operators retain responsibility for exact-head remote checks/review, authorized merge, applicable production verification and task/system updates. Required external gates cannot be bypassed by supplying a fixture exception.
+
+**Consequence:** PRODUCT and WORKFLOW distinguish release scope, current implementation and repository contribution policy. D-005 publication authority is unchanged, and this decision grants no autonomous merge/deployment authority. Durable ownership, immutable handoff summaries, QA recovery, platform/live compatibility and release/security acceptance remain MVP work. No runtime state, schema or policy is changed by AC-013. Revisit remote automation only through a selected bounded task and updated acceptance evidence.

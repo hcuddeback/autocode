@@ -8,9 +8,9 @@ AutoCode will be a local-first TypeScript CLI that runs durable software-enginee
 
 **Production:** Not deployed; planned as a locally installed CLI
 
-**Last updated:** 2026-09-11
+**Last updated:** 2026-09-14
 
-> Current reality: AC-012 connects initialization/selection/preparation boundaries to scoped planning, implementation, deterministic checks, independent review, bounded fixes, explicit QA, and durable run/resume. Required remote phases block pending integrations. MVP release acceptance is still open; see [the code audit](docs/MVP_AUDIT.md).
+> Current reality: AC-012 connects initialization/selection/preparation boundaries to scoped planning, implementation, deterministic checks, independent review, bounded fixes, explicit QA, and durable run/resume. D-007 selects verified local operator handoff for MVP 1; remote automation is deferred and required external phases still block local completion. MVP release acceptance is still open; see [the code audit](docs/MVP_AUDIT.md).
 
 ## Who it is for
 
@@ -136,9 +136,9 @@ node dist/cli.js run path/to/worktree
 node dist/cli.js resume path/to/worktree
 ```
 
-Both commands use the same persisted run. The workflow generates a scoped plan before implementation and runs deterministic checks before structured independent review. It allows bounded fix rounds and retains fresh phase evidence. A task requiring a PR stops as blocked until an external integration is implemented. The CLI cannot execute required QA without an API scenario adapter. Local-only completion requires both a task-authored PR exception and substantive operator policy plus configured completion evidence. See [implemented workflow and policy details](docs/WORKFLOW.md).
+Both commands use the same persisted run. The workflow generates a scoped plan before implementation and runs deterministic checks before structured independent review. It allows bounded fix rounds and retains fresh phase evidence. A task requiring a PR stops as blocked at the MVP 1 operator handoff boundary after local gates pass. Missing local evidence remains a blocker; operators handle remote publication, review, merge and applicable production verification. The CLI cannot execute required QA without an API scenario adapter. Local-only completion requires both a task-authored PR exception and substantive operator policy plus configured completion evidence. See [implemented workflow and policy details](docs/WORKFLOW.md).
 
-Existing `sessions`, `verify`, and policy APIs remain individual boundaries; their descriptions above do not imply remote lifecycle automation. Required QA fixes, remote PR/review/merge/deployment adapters, task completion updates, and release packaging remain gaps documented in the audit.
+Existing `sessions`, `verify`, and policy APIs remain individual boundaries; their descriptions above do not imply remote lifecycle automation. Required QA fixes, durable ownership/final summaries, platform/live compatibility and release packaging remain MVP gaps documented in the audit. Remote PR/review/merge/deployment automation is later scope; task completion updates are operator-managed.
 
 ## Documentation map
 
@@ -154,7 +154,7 @@ Existing `sessions`, `verify`, and policy APIs remain individual boundaries; the
 
 ## Current next step
 
-Complete AC-012 remote PR review and merge gates in [PR #14](https://github.com/hcuddeback/autocode/pull/14). Local verification, fixture QA, and the owner-accepted chat review are recorded in the task. Then select the next audited MVP gap.
+AC-012 is merged in [PR #14](https://github.com/hcuddeback/autocode/pull/14). [AC-013](tasks/AC-013.md) settles the lifecycle boundary and awaits its PR/merge gates. Select remaining local acceptance outcomes just in time from [the audit](docs/MVP_AUDIT.md).
 
 ## Guardrail
 
