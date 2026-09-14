@@ -44,7 +44,7 @@ See [the MVP audit](docs/MVP_AUDIT.md), refreshed against merged source 6d72cfd 
 
 ## AC-013 lifecycle boundary, 2026-09-14
 
-D-007 selects durable local execution through verified operator handoff for MVP 1. Remote PR/review/merge/deployment automation is later scope; required repository gates and D-005 contribution authority remain intact. PR-required runs still block at the external boundary; no runtime or CLI state changed. Ownership/summary, QA recovery, supported platforms/live Codex and release/security acceptance remain open. AC-013 is not done until its PR/merge gates pass.
+D-007 selects durable local execution through verified operator handoff for MVP 1. Remote PR/review/merge/deployment automation is later scope; required repository gates and D-005 contribution authority remain intact. PR-required runs still block at the external boundary; no runtime or CLI state changed. Ownership/summary, QA recovery, supported platforms/live Codex and release/security acceptance remain open. AC-013 is published in [PR #16](https://github.com/hcuddeback/autocode/pull/16) at implementation commit 188b782 and is not done until its PR/merge gates pass. Scoped formatting, lint, typecheck, fresh build, CLI help, local document links and diff checks pass; runtime tests were not rerun for the documentation-only change. Current-chat critical-review dispositions are in tasks/AC-013.md for owner acceptance; no separate independent session is claimed.
 
 ## AC-012 completion, 2026-09-14
 
