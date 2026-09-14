@@ -2,7 +2,7 @@
 
 **Last verified:** 2026-09-14
 
-**Stage:** AC-001 through AC-011 and PR #13 merged; AC-012 local workflow integration is published in PR #14 and unmerged
+**Stage:** AC-001 through AC-012 merged; integrated local fixture workflow complete; next task awaits JIT selection
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -35,14 +35,18 @@
 ## Known gaps and blockers
 
 - CI, required CLI QA adapters/QA-fix rounds, remote lifecycle adapters, and task completion updates are absent. Native Codex continuation is unused; fresh scoped roles provide the documented fallback.
-- PR #13 merged as `63e8a49`. AC-012 is published in PR #14 from its isolated feature worktree. Integrated Codex, QA and verification share Windows AppContainer/Job containment; protected metadata writes and credential access are denied before execution, sanitized environments omit operator tokens, and tampering durably terminates runs. Fresh receipts cannot be pre-created; interrupted QA/completion require operator reconciliation. The latest boundary corrections below preserve concurrent ACL hardening and prevent trusted-host Git helpers from escaping containment. AC-012 remains in review under the required current-head remote review and human merge gates. Node captured-child pipes, cross-volume batch execution and live authenticated compatibility remain unaccepted; unsupported commands fail closed.
-- The owner accepts the current chat as AC-012 independent review and authorizes commit, push, and PR creation without a separate manual review (D-005). Exact-head remote PR review and human merge authorization remain merge gates.
+- PR #13 merged as `63e8a49`. AC-012 merged in PR #14 as 6d72cfd after verified head 0a4e877. Integrated Codex, QA and verification share Windows AppContainer/Job containment; protected metadata writes and credential access are denied before execution, sanitized environments omit operator tokens, and tampering durably terminates runs. Fresh receipts cannot be pre-created; interrupted QA/completion require operator reconciliation. The latest boundary corrections below preserve concurrent ACL hardening and prevent trusted-host Git helpers from escaping containment. All review conversations and configured GitGuardian gates passed; the owner merged the PR. Node captured-child pipes, cross-volume batch execution and live authenticated compatibility remain unaccepted; unsupported commands fail closed.
+- D-005 permits owner-accepted critical chat review and scoped publication after checks/QA. The owner ended further continuous bot-review requests for PR #14; final verified dispositions and configured merge gates passed before human merge.
 - Linux and macOS subprocess execution fail closed; PRODUCT's three-platform acceptance remains open.
 - License has not been selected and added.
 
-See `docs/MVP_AUDIT.md` for requirement-by-requirement code evidence and the remaining acceptance/release gaps. The complete MVP is not yet accepted or released.
+See [the MVP audit](docs/MVP_AUDIT.md), refreshed against merged source 6d72cfd on 2026-09-14, for requirement-by-requirement code evidence and remaining acceptance/release gaps. Its final completion evidence is distinguished from historical pre-merge checks; runtime checks were not rerun for the documentation refresh. The complete MVP is not yet accepted or released.
 
-## Latest AC-012 boundary checkpoint
+## AC-012 completion, 2026-09-14
+
+PR #14 merged as 6d72cfd2b3994eaaf71cca9ff4508f9a712753e6 at 17:59:09 UTC. Final head 0a4e877 passed GitGuardian; all 49 review conversations were resolved and GitHub reported CLEAN. Verification: 306 source passes and four platform skips, all 62 production-JavaScript checks and eleven privacy controls pass, plus configured format/lint/typecheck/build and CLI smoke. The completed contract is tasks/completed/AC-012.md. This is completion of the bounded local fixture outcome, with broader MVP/live compatibility gaps still recorded above and in docs/MVP_AUDIT.md. No implementation task is active. Nonblocking maintainability follow-up stays separate.
+
+## Historical AC-012 boundary checkpoints
 
 ### Direnv credential coverage, 2026-09-14
 

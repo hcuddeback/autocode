@@ -24,7 +24,7 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 
 ## Immediate queue
 
-`AC-010`, `AC-011`, and the AC-010 corrections in PR #13 are merged. `AC-012.md` is the active integration contract on `feat/AC-012-integrated-workflow`, based on main `63e8a49`. Current boundary corrections, verification, fixture QA, and the owner-accepted chat review are recorded in the task. The branch is published as [PR #14](https://github.com/hcuddeback/autocode/pull/14). Existing PR findings must be dispositioned and configured merge gates and human-authorized merge must pass before marking it done. The owner ended further continuous bot-review requests on 2026-09-14; D-005 permits the accepted critical review chat as review evidence. The MVP code audit lives in `docs/MVP_AUDIT.md`; remaining release or external-integration outcomes must be selected JIT after this task rather than implemented on this branch.
+AC-001 through AC-012 are complete and merged. [AC-012](completed/AC-012.md) completed the integrated local fixture outcome in [PR #14](https://github.com/hcuddeback/autocode/pull/14), merged as 6d72cfd on 2026-09-14. There is no active implementation task. The next outcome must be selected and refined JIT against current main; [the MVP audit](../docs/MVP_AUDIT.md), refreshed against merge 6d72cfd on 2026-09-14, records remaining release and external-integration gaps. Recheck current code and dependencies when selecting each outcome.
 
 ## Later review follow-up
 
