@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-Use Node.js 24 or newer, Git, and the repository's declared pnpm version (`11.25.0`). Contained execution currently requires Windows; see the [compatibility limits](README.md). Codex CLI must be available on the operator's PATH for `run` and `sessions`. Existing host login credentials and tokens are not automatically inherited by sandboxed processes. A successful host login does not establish AutoCode compatibility.
+Use Node.js 24 or newer, Git, and the repository's declared pnpm version (`12.4.1`). Contained execution currently requires Windows; see the [compatibility limits](README.md). Codex CLI must be available on the operator's PATH for `run` and `sessions`. Existing host login credentials and tokens are not automatically inherited by sandboxed processes. A successful host login does not establish AutoCode compatibility.
 
 Choose a disposable project first. Approve the task scope and source sharing before model execution. Keep secrets out of task text, command arguments and tracked files. Local evidence under `.autocode/` stays private and uncommitted.
 
