@@ -23,6 +23,7 @@ import {
 } from './codex.js';
 import {
   runDeterministicVerification,
+  resolveExecutable,
   snapshotWorktree,
   VerificationStateTamperingError,
 } from './verification.js';
@@ -44,6 +45,7 @@ import {
 } from './completion-gates.js';
 import {
   preflightContainedQaAdapter,
+  preflightContainedProcess,
   assertSecureProcessPlatform,
 } from './qa-process.js';
 
@@ -148,6 +150,22 @@ export async function runProjectWorkflow(
   const verificationResources = await snapshotReadResources(
     policy.verificationReadResources ?? [],
   );
+  try {
+    for (const configured of config.verification.commands) {
+      await preflightContainedProcess(
+        await resolveExecutable(configured.command, root),
+        configured.args,
+        root,
+        config.verification.maxOutputBytes,
+        [],
+        policy.verificationReadResources,
+      );
+    }
+  } catch {
+    throw new Error(
+      'verification executable or resources could not be resolved safely',
+    );
+  }
   if (policy.qa?.kind === 'required' && options.qa)
     await preflightContainedQaAdapter(root, options.qa);
   const codexOptions = await preflightCodexSession(root, options.codex);
@@ -183,7 +201,7 @@ export async function runProjectWorkflow(
   const initialPlan = await safeRead(root, `${preparedRelative}/plan.md`);
   const binding = hash(
     JSON.stringify({
-      processContainment: 'windows-appcontainer-job-v14',
+      processContainment: 'windows-appcontainer-job-v15',
       verificationResources,
       head,
       branch,

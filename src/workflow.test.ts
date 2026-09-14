@@ -416,6 +416,12 @@ test('resume rejects legacy process containment receipts', async () => {
           ...legacyInput,
         }),
       ),
+      hash(
+        JSON.stringify({
+          processContainment: 'windows-appcontainer-job-v14',
+          ...legacyInput,
+        }),
+      ),
     ]) {
       assert.notEqual(currentBinding, legacy);
       receipt.binding = legacy;
@@ -1161,6 +1167,38 @@ test('workflow rejects in-process QA callbacks before any model effects', async 
         'initial',
       );
     }
+    const configPath = path.join(f.root, '.autocode', 'config.yaml');
+    const configText = await readFile(configPath, 'utf8');
+    const configured = parse(configText);
+    const valid = configured.verification.commands[0];
+    const missing = {
+      ...valid,
+      name: 'missing-command',
+      command: 'autocode-nonexistent-verification',
+    };
+    const head = await git(f.root, ['rev-parse', 'HEAD']);
+    const events = path.join(
+      f.root,
+      '.autocode',
+      'runs',
+      `durable-workflow-ac-001-${head.slice(0, 12)}`,
+      'events.jsonl',
+    );
+    for (const commands of [[missing], [valid, missing]]) {
+      configured.verification.commands = commands;
+      await writeFile(configPath, stringify(configured));
+      await assert.rejects(
+        () => runProjectWorkflow(f.root, f.options),
+        /verification executable or resources/,
+      );
+      await assert.rejects(() => f.calls(), { code: 'ENOENT' });
+      await assert.rejects(() => readFile(events), { code: 'ENOENT' });
+      assert.equal(
+        await readFile(path.join(f.root, 'result.txt'), 'utf8'),
+        'initial',
+      );
+    }
+    await writeFile(configPath, configText);
     const recovered = await runProjectWorkflow(f.root, {
       ...f.options,
       qa: createContainedQaAdapter(f.root, {
