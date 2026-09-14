@@ -4,7 +4,7 @@ export function isCredentialPath(relative: string): boolean {
   const name = segments.at(-1) ?? '';
   // Run names must not make discovery ingest its own growing event history.
   // Explicit credential filenames in state remain protected as before.
-  const sensitiveSegments = segments[0] === '.autocode' ? [name] : segments;
+  const sensitiveSegments = segments.includes('.autocode') ? [name] : segments;
   return (
     /^\.env(?:\.|$)/.test(name) ||
     sensitiveSegments.some((segment) =>
@@ -14,14 +14,18 @@ export function isCredentialPath(relative: string): boolean {
       name,
     ) ||
     /\.(?:pem|key|p12|pfx)$/.test(name) ||
-    sensitiveSegments.some((segment) =>
-      ['.aws', '.ssh', '.azure', '.kube', '.docker'].includes(segment),
-    )
+    segments.some(isCredentialDirectoryName)
   );
 }
 
 export function isIniCredentialPath(name: string): boolean {
   return /^(?:\.env(?:\.|$)|\.?npmrc$|\.pypirc$|config$|credentials$)/i.test(
     name,
+  );
+}
+
+export function isCredentialDirectoryName(name: string): boolean {
+  return ['.aws', '.ssh', '.azure', '.kube', '.docker'].includes(
+    name.toLowerCase(),
   );
 }

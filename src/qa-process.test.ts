@@ -183,6 +183,216 @@ test(
 );
 
 test(
+  'Windows excludes credentials and metadata in every writable root',
+  { skip: process.platform !== 'win32' },
+  async (t) => {
+    for (const mode of ['sibling', 'parent', 'nested', 'linked', 'aliases'])
+      await t.test(mode, async () => {
+        const base = await mkdtemp(
+          path.join(os.tmpdir(), 'autocode-extra-boundary-'),
+        );
+        const cwd = path.join(base, 'cwd');
+        const extra =
+          mode === 'nested'
+            ? path.join(cwd, 'extra')
+            : path.join(base, 'extra');
+        const exec = promisify(execFile);
+        try {
+          await mkdir(cwd, { recursive: true });
+          await mkdir(extra, { recursive: true });
+          const repository = path.join(extra, 'nested');
+          let common: string;
+          if (mode === 'linked') {
+            const source = path.join(base, 'source');
+            await mkdir(source);
+            const git = (args: string[]) =>
+              exec('git', args, { cwd: source, windowsHide: true });
+            await git(['init', '-b', 'main']);
+            await git(['config', 'user.email', 'fixture@example.invalid']);
+            await git(['config', 'user.name', 'Fixture']);
+            await writeFile(path.join(source, 'ordinary.txt'), 'tracked');
+            await git(['add', '.']);
+            await git(['commit', '-m', 'fixture']);
+            await git([
+              'worktree',
+              'add',
+              '-b',
+              'credential-boundary',
+              repository,
+            ]);
+            common = path.join(source, '.git');
+          } else {
+            await mkdir(repository);
+            await exec('git', ['init', '-b', 'main'], {
+              cwd: repository,
+              windowsHide: true,
+            });
+            common = path.join(repository, '.git');
+          }
+          await writeFile(
+            path.join(repository, '.gitignore'),
+            '.netrc\n.autocode/\n',
+          );
+          const credentials = [
+            path.join(base, '.env'),
+            path.join(extra, '.npmrc'),
+            path.join(extra, '.aws', 'config'),
+            path.join(extra, 'id_rsa'),
+            path.join(repository, '.netrc'),
+            path.join(common, 'secrets.json'),
+          ];
+          for (const target of credentials) {
+            await mkdir(path.dirname(target), { recursive: true });
+            await writeFile(target, 'operator-private');
+          }
+          const metadata = [
+            path.join(cwd, '.autocode', 'state.json'),
+            path.join(extra, '.autocode', 'state.json'),
+            path.join(repository, '.autocode', 'state.json'),
+            path.join(common, 'config'),
+          ];
+          if (mode === 'linked') metadata.push(path.join(repository, '.git'));
+          for (const target of metadata.slice(0, 3)) {
+            await mkdir(path.dirname(target), { recursive: true });
+            await writeFile(target, 'operator-state');
+          }
+          const originalMetadata = await Promise.all(
+            metadata.map((target) => readFile(target, 'utf8')),
+          );
+          const aclPaths = [
+            base,
+            cwd,
+            extra,
+            path.join(extra, '.aws'),
+            ...credentials,
+            ...metadata,
+            common,
+          ];
+          const originalAcl = await snapshotWindowsAcl(aclPaths);
+          const publicGit =
+            mode === 'linked'
+              ? [path.join(common, 'refs', 'heads', 'credential-boundary')]
+              : [];
+          const script = `const fs=require('node:fs');const violations=[];${JSON.stringify(publicGit)}.forEach(p=>fs.readFileSync(p));const denied=(action,label)=>{try{action();violations.push(label)}catch(e){if(!['EACCES','EPERM'].includes(e.code))throw e}};${JSON.stringify(credentials)}.forEach((p,i)=>{denied(()=>fs.readFileSync(p),'credential-read-'+i);denied(()=>fs.writeFileSync(p,'corrupt'),'credential-write-'+i);denied(()=>fs.renameSync(p,p+'.moved'),'credential-rename-'+i);denied(()=>fs.unlinkSync(p),'credential-delete-'+i)});${JSON.stringify(metadata)}.forEach((p,i)=>{denied(()=>fs.writeFileSync(p,'corrupt'),'metadata-write-'+i);denied(()=>fs.renameSync(p,p+'.moved'),'metadata-rename-'+i);denied(()=>fs.unlinkSync(p),'metadata-delete-'+i)});fs.writeFileSync(${JSON.stringify(path.join(extra, 'ordinary.txt'))},'allowed');fs.writeFileSync('ordinary.txt','allowed');if(violations.length)throw Error(violations.join(','));console.log('all-roots-protected');`;
+          const options =
+            mode === 'nested'
+              ? []
+              : mode === 'aliases'
+                ? [extra, extra.toUpperCase()]
+                : [mode === 'parent' ? base : extra];
+          const result = await runContainedProcess(
+            process.execPath,
+            ['-e', script],
+            cwd,
+            30000,
+            10000,
+            undefined,
+            options,
+          );
+          assert.equal(result.exitCode, 0, result.stderr);
+          assert.match(result.stdout, /all-roots-protected/);
+          assert.equal(
+            await snapshotWindowsAcl(aclPaths),
+            originalAcl,
+            'resource ACLs restore exactly',
+          );
+          for (const target of credentials)
+            assert.equal(await readFile(target, 'utf8'), 'operator-private');
+          assert.deepEqual(
+            await Promise.all(
+              metadata.map((target) => readFile(target, 'utf8')),
+            ),
+            originalMetadata,
+          );
+          assert.equal(
+            await readFile(path.join(extra, 'ordinary.txt'), 'utf8'),
+            'allowed',
+          );
+          assert.equal(
+            await readFile(path.join(cwd, 'ordinary.txt'), 'utf8'),
+            'allowed',
+          );
+        } finally {
+          await rm(base, { recursive: true, force: true });
+        }
+      });
+  },
+);
+
+test(
+  'Windows protects a directly authorized cloud credential directory',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), 'autocode-cloud-root-'));
+    try {
+      const cwd = path.join(base, 'cwd');
+      const cloud = path.join(base, '.aws');
+      await mkdir(cwd);
+      await mkdir(cloud);
+      const target = path.join(cloud, 'config');
+      await writeFile(target, 'operator-private');
+      const original = await snapshotWindowsAcl([cwd, cloud, target]);
+      const script = `const fs=require('node:fs');try{fs.readFileSync(${JSON.stringify(target)});process.exit(2)}catch(e){if(!['EACCES','EPERM'].includes(e.code))throw e}fs.writeFileSync('ordinary.txt','allowed');`;
+      const result = await runContainedProcess(
+        process.execPath,
+        ['-e', script],
+        cwd,
+        15000,
+        10000,
+        undefined,
+        [cloud],
+      );
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.equal(await snapshotWindowsAcl([cwd, cloud, target]), original);
+      assert.equal(await readFile(target, 'utf8'), 'operator-private');
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'Windows refuses writable roots inside protected metadata before launch',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const cwd = await mkdtemp(
+      path.join(os.tmpdir(), 'autocode-metadata-overlap-'),
+    );
+    try {
+      const writable = path.join(cwd, '.autocode', 'cache');
+      await mkdir(writable, { recursive: true });
+      const original = await snapshotWindowsAcl([
+        cwd,
+        path.dirname(writable),
+        writable,
+      ]);
+      await assert.rejects(
+        () =>
+          runContainedProcess(
+            process.execPath,
+            ['-e', "require('node:fs').writeFileSync('launched','bad')"],
+            cwd,
+            15000,
+            10000,
+            undefined,
+            [writable],
+          ),
+        /writable roots must not overlap protected metadata/,
+      );
+      assert.equal(
+        await snapshotWindowsAcl([cwd, path.dirname(writable), writable]),
+        original,
+      );
+      await assert.rejects(() => readFile(path.join(cwd, 'launched')), {
+        code: 'ENOENT',
+      });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'Windows normal and timeout cleanup preserve concurrent credential ACL hardening',
   { skip: process.platform !== 'win32' },
   async (t) => {
@@ -823,6 +1033,7 @@ test(
           const trigger = path.join(directory, failure + '-trigger');
           const escaped = path.join(directory, failure + '-escaped');
           const child = `const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(ready)},'ready');setInterval(()=>{if(fs.existsSync(${JSON.stringify(trigger)}))fs.writeFileSync(${JSON.stringify(escaped)},'escaped');},10);`;
+
           const script = `const fs=require('node:fs');require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(child)}],{detached:true,stdio:'ignore',windowsHide:true}).unref();const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(ready)})){clearInterval(timer);${failure === 'overflow' ? "process.stdout.write('x'.repeat(64*1024));setInterval(()=>{},1000);" : 'setInterval(()=>{},1000);'}}},10);`;
           const adapter = createContainedQaAdapter(directory, {
             command: 'node',

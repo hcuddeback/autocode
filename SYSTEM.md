@@ -44,7 +44,17 @@ See `docs/MVP_AUDIT.md` for requirement-by-requirement code evidence and the rem
 
 ## Latest AC-012 boundary checkpoint
 
-### Credential and Git inspection boundary corrections, 2026-09-13
+### Additional writable-root boundary corrections, 2026-09-13
+
+PR #14's P1 credential-root finding (4001625111) and P2 metadata-root finding (4001625113) on c76db07 exposed additional paths to the same isolation boundary. Before any launch grants, discovery now covers every writable root, including sibling/parent resources, nested repositories and linked common Git metadata. Case aliases and covering roots are deduplicated. Shared credential classification protects direct cloud credential directories and private metadata stores; all reserved .git/.autocode descendants receive protected metadata boundaries. Roots inside protected metadata fail closed before launch. Public Git data labels remain readable and ordinary authorized files remain writable. Complete traversal is bounded to 100,000 entries, with a 10,000-entry generic-resource limit. Containment version 4 rejects v3 and earlier receipts.
+
+Native regressions cover sibling, parent, nested, linked and case-alias roots; deny credential read/write/rename/delete and metadata write/rename/delete; preserve exact original ACLs and contents; and verify safe ordinary writes and public Git reads. Additional cases protect a directly authorized cloud directory and reject metadata-root overlap without launching. Positive controls against c76db07 reproduced the original credential/metadata bypasses in disposable fixtures. The owner-accepted chat supplies independent critical review.
+
+Fresh verification over c76db07: the complete serialized source suite passes 279 tests, with four platform-specific skips and zero failures; no tests are omitted. Compiled Windows boundary QA passes 29 tests, and compiled pnpm CMD/CLI run-resume QA passes two. Configured formatting, lint, typecheck, clean production build, built CLI help and diff checks pass. Frozen source hashes remain unchanged. Evidence is retained under gitignored .autocode/implementation-plans/AC-012-pr14-extra-*.log.
+
+This checkpoint supersedes containment version 3's writable-root coverage. AC-012 remains in review under exact-head remote review and human merge gates. Existing command/platform and live-authentication acceptance gaps remain recorded below; complete MVP acceptance is not claimed.
+
+### Historical credential and Git inspection boundary corrections, 2026-09-13
 
 The latest P2 ACL-cleanup finding (3999340870) and P1 common-credential-filename finding on PR #14 are corrected. Shared discovery covers dotenv, npm/netrc/pypirc/Git auth, auth JSON/YAML, private keys and sensitive cloud/SSH/Kubernetes/Docker paths. Raw-byte fingerprints detect binary changes; bounded format-aware redaction also handles padded YAML tokens. Generic non-repository launches scan recursively with a 10,000-entry ceiling and fail closed on credential links or overflow.
 

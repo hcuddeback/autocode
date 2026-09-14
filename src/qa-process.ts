@@ -1,3 +1,6 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { gitInspectionArguments } from './git-inspection.js';
 import path from 'node:path';
 import os from 'node:os';
 import {
@@ -7,12 +10,14 @@ import {
   rmdir,
   stat,
   realpath,
-  readFile,
-  readdir,
+  opendir,
   lstat,
 } from 'node:fs/promises';
 import { discoverWorkspaceCredentials } from './codex.js';
-import { isCredentialPath } from './credential-paths.js';
+import {
+  isCredentialPath,
+  isCredentialDirectoryName,
+} from './credential-paths.js';
 import { WINDOWS_SANDBOX } from './windows-sandbox.js';
 import { randomUUID } from 'node:crypto';
 import { resolveExecutable, runProcess } from './verification.js';
@@ -277,63 +282,173 @@ async function windowsJobScript(
     )
       throw new Error('sandbox helper must be outside every writable resource');
   }
-  const blockedCredentials: string[] = [];
-  let repository = false;
-  try {
-    await stat(path.join(cwd, '.git'));
-    repository = true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  const writableRoots = [
+    ...new Map(
+      [await realpath(cwd), ...writeDirectories].map((root) => [
+        root.toLowerCase(),
+        root,
+      ]),
+    ).values(),
+  ];
+  const blocked = new Set<string>();
+  const protectedPaths = new Set<string>();
+  const seenDirectories = new Set<string>();
+  const repositories = new Set<string>();
+  let visited = 0;
+  let genericVisited = 0;
+  const within = (parent: string, child: string) => {
+    const relative = path.relative(parent, child);
+    return (
+      relative === '' ||
+      (!relative.startsWith('..' + path.sep) &&
+        relative !== '..' &&
+        !path.isAbsolute(relative))
+    );
+  };
+  async function directoryScope(directory: string): Promise<void> {
+    const original = directory;
+    const components = directory
+      .split(path.sep)
+      .map((name) => name.toLowerCase());
+    if (components.includes('.git'))
+      throw new Error(
+        'sandbox writable roots must not overlap protected metadata',
+      );
+    if (components.some(isCredentialDirectoryName))
+      blocked.add(await realpath(original));
+    while (true) {
+      const name = path.basename(directory).toLowerCase();
+      if (name === '.git' || name === '.autocode')
+        throw new Error(
+          'sandbox writable roots must not overlap protected metadata',
+        );
+      if (isCredentialDirectoryName(name))
+        blocked.add(await realpath(original));
+      try {
+        await lstat(path.join(directory, '.git'));
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      const parent = path.dirname(directory);
+      if (parent === directory) break;
+      directory = parent;
+    }
   }
-  if (repository) {
-    for (const relative of (
-      await discoverWorkspaceCredentials(cwd)
-    ).files.keys())
-      blockedCredentials.push(await realpath(path.resolve(cwd, relative)));
-  } else {
-    // Generic non-repository adapters still protect recognizable local secrets.
-    let visited = 0;
-    async function discover(directory: string): Promise<void> {
-      for (const entry of await readdir(directory)) {
-        if (directory === cwd && entry.toLowerCase() === '.git') continue;
-        if (++visited > 10_000)
-          throw new Error('credential discovery exceeds its entry limit');
-        const candidate = path.join(directory, entry);
-        const info = await lstat(candidate);
-        if (isCredentialPath(path.relative(cwd, candidate))) {
-          if (info.isSymbolicLink())
-            throw new Error('credential paths must not be links');
-          blockedCredentials.push(await realpath(candidate));
-        }
-        if (info.isDirectory()) await discover(candidate);
+  for (const root of [cwd, ...sandboxWriteDirectories, ...writableRoots])
+    await directoryScope(path.resolve(root));
+  async function discover(
+    directory: string,
+    base: string,
+    inRepository = false,
+    metadata = false,
+  ): Promise<void> {
+    const key =
+      directory.toLowerCase() +
+      (metadata ? '|metadata' : inRepository ? '|repository' : '|generic');
+    if (seenDirectories.has(key)) return;
+    seenDirectories.add(key);
+    let dotGit;
+    try {
+      dotGit = await lstat(path.join(directory, '.git'));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    if (dotGit) {
+      if (dotGit.isSymbolicLink())
+        throw new Error('protected metadata must not contain links');
+      inRepository = true;
+      if (!repositories.has(directory.toLowerCase())) {
+        repositories.add(directory.toLowerCase());
+        for (const relative of (
+          await discoverWorkspaceCredentials(directory)
+        ).files.keys())
+          blocked.add(await realpath(path.resolve(directory, relative)));
+        const { stdout } = await promisify(execFile)(
+          'git',
+          gitInspectionArguments(directory, ['rev-parse', '--git-common-dir']),
+          {
+            cwd: directory,
+            encoding: 'utf8',
+            maxBuffer: 64 * 1024,
+            timeout: 10000,
+            windowsHide: true,
+          },
+        );
+        const common = await realpath(path.resolve(directory, stdout.trim()));
+        protectedPaths.add(common);
+        readFiles.push(common);
+        await discover(common, common, false, true);
       }
     }
-    await discover(cwd);
+    for await (const entry of await opendir(directory)) {
+      if (++visited > 100000)
+        throw new Error('sandbox resource discovery exceeds its entry limit');
+      if (!metadata && !inRepository && ++genericVisited > 10000)
+        throw new Error('credential discovery exceeds its entry limit');
+      const candidate = path.join(directory, entry.name);
+      const info = await lstat(candidate);
+      const reserved = ['.git', '.autocode'].includes(entry.name.toLowerCase());
+      if (reserved) {
+        if (info.isSymbolicLink())
+          throw new Error('protected metadata must not contain links');
+        protectedPaths.add(await realpath(candidate));
+      }
+      const prefix = metadata
+        ? path.basename(base).toLowerCase() === '.autocode'
+          ? '.autocode/'
+          : '.git/'
+        : isCredentialDirectoryName(path.basename(base))
+          ? path.basename(base) + '/'
+          : '';
+      const relative = path.relative(base, candidate);
+      const parts = relative.split(path.sep);
+      const namespace = parts[0]?.toLowerCase();
+      const gitMetadata =
+        metadata && path.basename(base).toLowerCase() !== '.autocode';
+      // Object/ref/reflog names and worktree IDs are Git data labels, not
+      // credential names. Keep private stores outside these data namespaces protected.
+      const gitData =
+        gitMetadata && ['objects', 'refs', 'logs'].includes(namespace!);
+      const credentialPath =
+        gitMetadata && namespace === 'worktrees'
+          ? '.git/' + parts.slice(2).join('/')
+          : prefix + relative;
+      if (
+        !gitData &&
+        (metadata || reserved || !inRepository) &&
+        isCredentialPath(credentialPath)
+      ) {
+        if (info.isSymbolicLink())
+          throw new Error('credential paths must not be links');
+        blocked.add(await realpath(candidate));
+      }
+      if (info.isDirectory())
+        await discover(
+          candidate,
+          reserved ? candidate : base,
+          inRepository,
+          metadata || reserved,
+        );
+    }
   }
-  const protectedResources = [
-    path.join(cwd, '.autocode'),
-    path.join(cwd, '.git'),
-  ];
+  // Walk covering roots once; nested repositories and metadata are discovered
+  // regardless of whether they were supplied as a separate authorized resource.
+  for (const root of writableRoots.filter(
+    (root) =>
+      !writableRoots.some((parent) => parent !== root && within(parent, root)),
+  ))
+    await discover(root, root);
+  for (const metadata of protectedPaths)
+    for (const writable of writableRoots)
+      if (within(metadata, writable))
+        throw new Error(
+          'sandbox writable roots must not overlap protected metadata',
+        );
+  const blockedCredentials = [...blocked];
+  const protectedResources = [...protectedPaths];
   if (batchExecutable)
     readFiles.push(await realpath(path.dirname(batchExecutable)));
-  try {
-    const dotGit = path.join(cwd, '.git');
-    if ((await stat(dotGit)).isFile()) {
-      const gitDirectory = path.resolve(
-        cwd,
-        (await readFile(dotGit, 'utf8')).trim().replace(/^gitdir: /, ''),
-      );
-      const common = path.resolve(
-        gitDirectory,
-        (await readFile(path.join(gitDirectory, 'commondir'), 'utf8')).trim(),
-      );
-      const canonicalCommon = await realpath(common);
-      readFiles.push(canonicalCommon);
-      protectedResources.push(canonicalCommon);
-    }
-  } catch {
-    /* Disposable non-Git commands have no Git resource. */
-  }
   const directory = await mkdtemp(path.join(os.tmpdir(), 'autocode-qa-job-'));
   for (const writable of [await realpath(cwd), ...writeDirectories]) {
     const relative = path.relative(writable, await realpath(directory));
