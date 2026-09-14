@@ -2,7 +2,7 @@
 
 **Last verified:** 2026-09-14
 
-**Stage:** AC-001 through AC-012 merged; integrated local fixture workflow complete; next task awaits JIT selection
+**Stage:** AC-001 through AC-012 merged; AC-013 lifecycle boundary implemented for PR review; MVP acceptance remains open
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -34,13 +34,17 @@
 
 ## Known gaps and blockers
 
-- CI, required CLI QA adapters/QA-fix rounds, remote lifecycle adapters, and task completion updates are absent. Native Codex continuation is unused; fresh scoped roles provide the documented fallback.
+- CI, required CLI QA adapters/QA-fix rounds, durable task ownership and final immutable summaries are absent. Remote lifecycle adapters are deferred under D-007; repository task completion updates remain operator-managed in MVP 1. Native Codex continuation is unused; fresh scoped roles provide the documented fallback.
 - PR #13 merged as `63e8a49`. AC-012 merged in PR #14 as 6d72cfd after verified head 0a4e877. Integrated Codex, QA and verification share Windows AppContainer/Job containment; protected metadata writes and credential access are denied before execution, sanitized environments omit operator tokens, and tampering durably terminates runs. Fresh receipts cannot be pre-created; interrupted QA/completion require operator reconciliation. The latest boundary corrections below preserve concurrent ACL hardening and prevent trusted-host Git helpers from escaping containment. All review conversations and configured GitGuardian gates passed; the owner merged the PR. Node captured-child pipes, cross-volume batch execution and live authenticated compatibility remain unaccepted; unsupported commands fail closed.
 - D-005 permits owner-accepted critical chat review and scoped publication after checks/QA. The owner ended further continuous bot-review requests for PR #14; final verified dispositions and configured merge gates passed before human merge.
 - Linux and macOS subprocess execution fail closed; PRODUCT's three-platform acceptance remains open.
 - License has not been selected and added.
 
 See [the MVP audit](docs/MVP_AUDIT.md), refreshed against merged source 6d72cfd on 2026-09-14, for requirement-by-requirement code evidence and remaining acceptance/release gaps. Its final completion evidence is distinguished from historical pre-merge checks; runtime checks were not rerun for the documentation refresh. The complete MVP is not yet accepted or released.
+
+## AC-013 lifecycle boundary, 2026-09-14
+
+D-007 selects durable local execution through verified operator handoff for MVP 1. Remote PR/review/merge/deployment automation is later scope; required repository gates and D-005 contribution authority remain intact. PR-required runs still block at the external boundary; no runtime or CLI state changed. Ownership/summary, QA recovery, supported platforms/live Codex and release/security acceptance remain open. AC-013 is published in [PR #16](https://github.com/hcuddeback/autocode/pull/16) at implementation commit 188b782 and is not done until its PR/merge gates pass. Scoped formatting, lint, typecheck, fresh build, CLI help, local document links and diff checks pass; runtime tests were not rerun for the documentation-only change. Current-chat critical-review dispositions are in tasks/AC-013.md for owner acceptance; no separate independent session is claimed.
 
 ## AC-012 completion, 2026-09-14
 

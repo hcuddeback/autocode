@@ -10,6 +10,18 @@ This runbook tracks release gates as the CLI and workflow are built.
 - Branch: `main`
 - Package/binary: pending registry check
 
+## MVP 1 lifecycle acceptance
+
+D-007 limits CLI lifecycle scope to durable local execution and verified operator handoff. Automated publication/PR review/merge/deployment/production adapters are later work. This does not waive repository contribution gates or any local QA, platform, security or distribution requirement.
+
+- [ ] A PR-required fixture passes current local checks, independent review and applicable QA, then stops safely at the external boundary with retained identity/digest evidence and explicit operator responsibilities. It must not claim task `done`, merged or deployed.
+- [ ] A genuine local-only fixture completes under explicit task and operator PR/production exceptions.
+- [ ] Missing QA, stale evidence and ambiguous interruption block; safe restart preserves evidence and retry budgets.
+- [ ] Durable task ownership/resume and a final immutable local summary are implemented and verified.
+- [ ] Required CLI QA scenarios and bounded QA fix/reverify/review/QA recovery are verified.
+
+Operator-managed remote gates remain necessary before marking real repository tasks done. Remote adapter absence is deferred scope; the local acceptance items above are still release blockers.
+
 ## Preconditions
 
 - [ ] MVP acceptance criteria are complete.
@@ -27,7 +39,7 @@ Run `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm b
 - [ ] Install the distribution artifact.
 - [ ] `autocode --help` runs without modifying the repository.
 - [ ] Initialization previews or safely creates expected files.
-- [ ] One fixture task completes with evidence.
+- [ ] Local-only completion and PR-required handoff fixtures satisfy the lifecycle acceptance above.
 - [ ] Forced interruption resumes without repeated effects.
 - [ ] Uninstall behavior is documented and preserves user repositories.
 
