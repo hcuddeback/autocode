@@ -1262,6 +1262,7 @@ test(
       await mkdir(path.join(directory, '.docker'));
       const credentialPaths = [
         '.env',
+        '.envrc',
         '.credentials.json',
         'nested/service.credentials.json',
         '.npmrc',
@@ -1283,7 +1284,7 @@ test(
       for (const credential of credentialPaths)
         await writeFile(
           path.join(directory, credential),
-          credential === '.env'
+          credential === '.env' || credential === '.envrc'
             ? 'PRIVATE_VALUE=operator-private'
             : credential === 'NuGet.Config'
               ? '<configuration><packageSourceCredentials><fixture><add key="ClearTextPassword" value="operator-private" /></fixture></packageSourceCredentials></configuration>'

@@ -6,7 +6,7 @@ export function isCredentialPath(relative: string): boolean {
   // Explicit credential filenames in state remain protected as before.
   const sensitiveSegments = segments.includes('.autocode') ? [name] : segments;
   return (
-    /^\.env(?:\.|$)/.test(name) ||
+    /^\.env(?:rc)?(?:\.|$)/.test(name) ||
     sensitiveSegments.some((segment) =>
       /(?:secret|credential)/.test(segment),
     ) ||
@@ -19,7 +19,7 @@ export function isCredentialPath(relative: string): boolean {
 }
 
 export function isIniCredentialPath(name: string): boolean {
-  return /^(?:\.env(?:\.|$)|\.?npmrc$|pip\.(?:ini|conf)$|\.pypirc$|config$|credentials$)/i.test(
+  return /^(?:\.env(?:rc)?(?:\.|$)|\.?npmrc$|pip\.(?:ini|conf)$|\.pypirc$|config$|credentials$)/i.test(
     name,
   );
 }

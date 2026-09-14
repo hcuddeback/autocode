@@ -22,6 +22,7 @@ test('discovers standard ignored credential formats and retains redaction and fr
     await execFileAsync('git', ['init', '-b', 'main'], { cwd: root });
     await writeFile(path.join(root, '.gitignore'), '*\n');
     const credentials: Record<string, string> = {
+      '.envrc': 'export GITHUB_TOKEN=envrc-private-token\n',
       '.npmrc': '//registry.example.invalid/:_authToken=npm-private-token',
       '.yarnrc':
         '# Yarn Classic\n_authToken yarn-classic-plain # comment\n"//registry.example.invalid/:_authToken" "yarn-classic-token=" # comment\n_authToken=\'yarn-classic-assigned=\'\n"//other.example.invalid/:_authToken" \'yarn-classic-single\'\n',
@@ -80,6 +81,7 @@ test('discovers standard ignored credential formats and retains redaction and fr
     );
     for (const token of [
       'npm-private-token',
+      'envrc-private-token',
       'yarn-classic-token=',
       'yarn-classic-assigned=',
       'yarn-classic-single',
@@ -164,6 +166,15 @@ test('discovers standard ignored credential formats and retains redaction and fr
       path.join(root, 'NuGet.Config'),
       credentials['NuGet.Config']!,
     );
+    await writeFile(
+      path.join(root, '.envrc'),
+      'export GITHUB_TOKEN=replaced-envrc-token\n',
+    );
+    await assert.rejects(
+      () => assertCredentialFilesUnchanged(root, before.files),
+      /changed protected credential state/,
+    );
+    await writeFile(path.join(root, '.envrc'), credentials['.envrc']!);
     await writeFile(
       path.join(root, '.npmrc'),
       '//registry.example.invalid/:_authToken=replaced-private-token',

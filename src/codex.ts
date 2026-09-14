@@ -730,7 +730,7 @@ function collectCredentialScalars(
         addSecretScalar(match[1], secrets);
       }
     }
-    if (assignments || /^\.env(?:\.|$)/i.test(name)) return;
+    if (assignments || /^\.env(?:rc)?(?:\.|$)/i.test(name)) return;
   }
   if (/^[._]?netrc$/i.test(name)) {
     for (const match of contents.matchAll(
