@@ -434,6 +434,12 @@ test('resume rejects legacy process containment receipts', async () => {
           ...legacyInput,
         }),
       ),
+      hash(
+        JSON.stringify({
+          processContainment: 'windows-appcontainer-job-v17',
+          ...legacyInput,
+        }),
+      ),
     ]) {
       assert.notEqual(currentBinding, legacy);
       receipt.binding = legacy;
@@ -1264,6 +1270,11 @@ test('workflow rejects in-process QA callbacks before any model effects', async 
         arguments: [],
         sandboxReadResources: [path.join(f.root, 'missing-read')],
       },
+      {
+        command: 'node',
+        arguments: [],
+        sandboxReadResources: [f.directory],
+      },
     ]) {
       await assert.rejects(
         () =>
@@ -1577,7 +1588,38 @@ test(
       config.verification.commands[0].command = 'pnpm';
       config.verification.commands[0].args = ['run', 'check'];
       await writeFile(configPath, stringify(config));
-      const completed = await runProjectWorkflow(f.root, f.options);
+      const paused = await runProjectWorkflow(f.root, {
+        ...f.options,
+        durable: { pauseAfterPhase: 'verify-0' },
+      });
+      assert.equal(paused.outcome, 'paused', paused.state.reason);
+      const pausedCalls = await f.calls();
+      const executable = path.join(bin, 'pnpm.CMD');
+      const originalExecutable = await readFile(executable, 'utf8');
+      await writeFile(
+        executable,
+        originalExecutable + '\r\nrem changed executable\r\n',
+      );
+      await assert.rejects(
+        () => runProjectWorkflow(f.root, { ...f.options, resumeOnly: true }),
+        /invalid workflow receipt|evidence is stale/,
+      );
+      assert.deepEqual(await f.calls(), pausedCalls);
+      await writeFile(executable, originalExecutable);
+      const savedExecutable = path.join(bin, 'saved-pnpm.CMD');
+      await rename(executable, savedExecutable);
+      await writeFile(executable, originalExecutable);
+      await assert.rejects(
+        () => runProjectWorkflow(f.root, { ...f.options, resumeOnly: true }),
+        /invalid workflow receipt|evidence is stale/,
+      );
+      assert.deepEqual(await f.calls(), pausedCalls);
+      await rm(executable);
+      await rename(savedExecutable, executable);
+      const completed = await runProjectWorkflow(f.root, {
+        ...f.options,
+        resumeOnly: true,
+      });
       assert.equal(completed.outcome, 'completed');
       const calls = await f.calls();
       assert.equal(

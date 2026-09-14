@@ -7,7 +7,11 @@ import { promisify } from 'node:util';
 import { parse } from 'yaml';
 import { CONFIG_FILE, validateConfig } from './config.js';
 import { snapshotReadResources } from './read-resources.js';
-import { refreshQaInputs, type QaInputSnapshot } from './qa-inputs.js';
+import {
+  refreshQaInputs,
+  snapshotQaInputs,
+  type QaInputSnapshot,
+} from './qa-inputs.js';
 import { loadTaskCatalog, selectProjectTask } from './tasks.js';
 import { prepareImplementationPlan } from './planning.js';
 import {
@@ -153,6 +157,23 @@ export async function runProjectWorkflow(
   const verificationResources = await snapshotReadResources(
     policy.verificationReadResources ?? [],
   );
+  async function currentVerificationExecutables() {
+    try {
+      const targets = new Set<string>();
+      for (const configured of config.verification.commands)
+        targets.add(await resolveExecutable(configured.command, root));
+      return await snapshotQaInputs(
+        root,
+        hash(JSON.stringify(config.verification.commands)),
+        [...targets],
+      );
+    } catch {
+      throw new Error(
+        'verification executable or resources could not be resolved safely',
+      );
+    }
+  }
+  const verificationExecutables = await currentVerificationExecutables();
   try {
     for (const configured of config.verification.commands) {
       await preflightContainedProcess(
@@ -208,7 +229,8 @@ export async function runProjectWorkflow(
   const initialPlan = await safeRead(root, `${preparedRelative}/plan.md`);
   const binding = hash(
     JSON.stringify({
-      processContainment: 'windows-appcontainer-job-v17',
+      processContainment: 'windows-appcontainer-job-v18',
+      verificationExecutables,
       verificationResources,
       head,
       branch,
@@ -255,6 +277,7 @@ export async function runProjectWorkflow(
     return hash(
       JSON.stringify({
         worktree: await snapshotWorktree(root),
+        verificationExecutables: await currentVerificationExecutables(),
         qaInputs: qaInputs ? await refreshQaInputs(root, qaInputs) : undefined,
         verificationResources: await snapshotReadResources(
           policy.verificationReadResources ?? [],
@@ -481,12 +504,23 @@ export async function runProjectWorkflow(
               evidence = { skipped: true, reason: 'an earlier round passed' };
             else {
               try {
+                const executablesBefore =
+                  await currentVerificationExecutables();
                 evidence = await runDeterministicVerification(root, {
                   evidenceName: `workflow-${phase.id}`,
                   retainFailure: true,
                   taskId: task.taskId,
                   sandboxReadResources: policy.verificationReadResources ?? [],
                 });
+                if (
+                  JSON.stringify(executablesBefore) !==
+                  JSON.stringify(await currentVerificationExecutables())
+                )
+                  return {
+                    kind: 'blocked',
+                    reason:
+                      'verification executable changed; fresh evidence requires a new run',
+                  };
               } catch (error) {
                 if (error instanceof VerificationStateTamperingError)
                   return { kind: 'failed', reason: error.message };

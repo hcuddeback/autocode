@@ -16,7 +16,7 @@ export async function snapshotQaInputs(
   targets: readonly string[],
 ): Promise<QaInputSnapshot> {
   try {
-    if (!/^[a-f0-9]{64}$/.test(configuration) || targets.length > 17)
+    if (!/^[a-f0-9]{64}$/.test(configuration) || targets.length > 32)
       throw new Error('invalid QA resource snapshot');
     let entries = 0;
     let remaining = 512 * 1024 * 1024;

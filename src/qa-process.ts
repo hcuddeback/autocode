@@ -34,7 +34,7 @@ export interface QaProcessOptions {
   maxOutputBytes?: number;
   /** Additional directories explicitly authorized by the trusted operator. */
   sandboxWriteDirectories?: readonly string[];
-  /** Read resources explicitly authorized by the trusted operator. */
+  /** Exact regular files explicitly authorized for reading by the trusted operator. */
   sandboxReadResources?: readonly string[];
   /** Exact mutable files inside authorized writable roots. */
   sandboxWriteFiles?: readonly string[];
@@ -344,14 +344,12 @@ export async function preflightContainedProcess(
   await resolveExecutable('powershell', cwd);
   for (const resource of sandboxReadResources) {
     if (!path.isAbsolute(resource))
-      throw new Error('sandbox read resources must be absolute');
-    if ((await stat(resource)).isDirectory()) {
-      const directory = await opendir(resource);
-      await directory.close();
-    } else {
-      const file = await open(resource, 'r');
-      await file.close();
-    }
+      throw new Error('sandbox read resources must be absolute regular files');
+    const info = await lstat(resource);
+    if (!info.isFile() || info.isSymbolicLink())
+      throw new Error('sandbox read resources must be absolute regular files');
+    const file = await open(resource, 'r');
+    await file.close();
   }
   const job = await windowsJobScript(
     batch ? await resolveExecutable('cmd', cwd) : executable,
@@ -398,7 +396,14 @@ async function windowsJobScript(
   const readFiles: string[] = await Promise.all(
     sandboxReadResources.map(async (resource) => {
       if (!path.isAbsolute(resource))
-        throw new Error('sandbox read resources must be absolute');
+        throw new Error(
+          'sandbox read resources must be absolute regular files',
+        );
+      const info = await lstat(resource);
+      if (!info.isFile() || info.isSymbolicLink())
+        throw new Error(
+          'sandbox read resources must be absolute regular files',
+        );
       return realpath(resource);
     }),
   );

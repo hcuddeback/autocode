@@ -526,9 +526,10 @@ test(
               mode === 'explicit' ? [common] : [],
             );
           if (mode === 'explicit') {
-            const result = await launch();
-            assert.equal(result.exitCode, 0, result.stderr);
-            assert.match(result.stdout, /private-repository-data/);
+            await assert.rejects(launch, /read resources.*regular files/);
+            await assert.rejects(() => readFile(path.join(cwd, 'launched')), {
+              code: 'ENOENT',
+            });
           } else {
             await assert.rejects(
               launch,
@@ -1158,6 +1159,44 @@ test(
         ),
       /helper must be outside every writable resource/,
     );
+    const base = await mkdtemp(
+      path.join(os.tmpdir(), 'autocode-read-grant-test-'),
+    );
+    try {
+      const root = path.join(base, 'work');
+      const resources = path.join(base, 'runtime');
+      await mkdir(root);
+      await mkdir(resources);
+      await mkdir(path.join(resources, '.autocode'));
+      await writeFile(
+        path.join(resources, '.npmrc'),
+        'synthetic-private-token',
+      );
+      await writeFile(path.join(resources, 'id_rsa'), 'synthetic-private-key');
+      await writeFile(path.join(resources, '.autocode', 'prior.json'), '{}');
+      const before = await snapshotWindowsAcl([root, resources]);
+      await assert.rejects(
+        () =>
+          runContainedProcess(
+            process.execPath,
+            ['-e', "require('node:fs').writeFileSync('executed.txt','unsafe')"],
+            root,
+            5000,
+            1000,
+            undefined,
+            [],
+            [resources],
+          ),
+        /read resources.*regular files/,
+      );
+      await assert.rejects(readFile(path.join(root, 'executed.txt')), {
+        code: 'ENOENT',
+      });
+      assert.equal(await snapshotWindowsAcl([root, resources]), before);
+    } finally {
+      assert.equal(path.dirname(base), os.tmpdir());
+      await rm(base, { recursive: true, force: true });
+    }
   },
 );
 
