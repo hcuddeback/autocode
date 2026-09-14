@@ -2,7 +2,7 @@
 
 **Last verified:** 2026-09-14
 
-**Stage:** AC-001 through AC-012 merged; AC-013 lifecycle boundary implemented for PR review; MVP acceptance remains open
+**Stage:** AC-001 through AC-013 merged; MVP 1 local lifecycle settled; next task awaits JIT selection
 
 **Current release:** MVP 1 — one-task durable workflow foundation
 
@@ -44,7 +44,7 @@ See [the MVP audit](docs/MVP_AUDIT.md), refreshed against merged source 6d72cfd 
 
 ## AC-013 lifecycle boundary, 2026-09-14
 
-D-007 selects durable local execution through verified operator handoff for MVP 1. Remote PR/review/merge/deployment automation is later scope; required repository gates and D-005 contribution authority remain intact. PR-required runs still block at the external boundary; no runtime or CLI state changed. Ownership/summary, QA recovery, supported platforms/live Codex and release/security acceptance remain open. AC-013 is published in [PR #16](https://github.com/hcuddeback/autocode/pull/16) at implementation commit 188b782 and is not done until its PR/merge gates pass. Scoped formatting, lint, typecheck, fresh build, CLI help, local document links and diff checks pass; runtime tests were not rerun for the documentation-only change. Current-chat critical-review dispositions are in tasks/AC-013.md for owner acceptance; no separate independent session is claimed.
+D-007 selects durable local execution through verified operator handoff for MVP 1. Remote PR/review/merge/deployment automation is later scope; required repository gates and D-005 contribution authority remain intact. PR-required runs still block at the external boundary; no runtime or CLI state changed. Ownership/summary, QA recovery, supported platforms/live Codex and release/security acceptance remain open. AC-013 is complete: [PR #16](https://github.com/hcuddeback/autocode/pull/16) merged as 38fa030ff8e56359d669698a75afe4d23c1d6e83 at 2026-09-14 18:25:09 UTC, with GitGuardian passing and owner merge authorization exercised. Scoped formatting, lint, typecheck, fresh build, CLI help, local document links and diff checks pass; runtime tests were not rerun for the documentation-only change. Owner-accepted current-chat critical-review dispositions are in [the completed contract](tasks/completed/AC-013.md); no separate independent session is claimed. Post-merge closure checks documentation only; runtime checks were not rerun and MVP release acceptance remains open.
 
 ## AC-012 completion, 2026-09-14
 
