@@ -12,6 +12,10 @@ AutoCode will be a local-first TypeScript CLI that runs durable software-enginee
 
 > Current reality: AC-012 connects initialization/selection/preparation boundaries to scoped planning, implementation, deterministic checks, independent review, bounded fixes, explicit QA, and durable run/resume. D-007 selects verified local operator handoff for MVP 1; remote automation is deferred and required external phases still block local completion. MVP release acceptance is still open; see [the code audit](docs/MVP_AUDIT.md).
 
+## User documentation
+
+Start with [the user guide](docs/user/README.md) for source setup, task preparation, configuration, commands and safe recovery.
+
 ## Who it is for
 
 - User: developers who want controlled, inspectable autonomous implementation.
@@ -154,7 +158,7 @@ Existing `sessions`, `verify`, and policy APIs remain individual boundaries; the
 
 ## Current next step
 
-AC-012 is merged in [PR #14](https://github.com/hcuddeback/autocode/pull/14). [AC-013](tasks/completed/AC-013.md) settled the lifecycle boundary and is merged in [PR #16](https://github.com/hcuddeback/autocode/pull/16). No implementation task is active. Select remaining local acceptance outcomes just in time from [the audit](docs/MVP_AUDIT.md).
+AC-012 is merged in [PR #14](https://github.com/hcuddeback/autocode/pull/14). [AC-013](tasks/completed/AC-013.md) settled the lifecycle boundary and is merged in [PR #16](https://github.com/hcuddeback/autocode/pull/16). [AC-014](tasks/AC-014.md) documents the current operator journey. Select remaining local acceptance outcomes just in time from [the audit](docs/MVP_AUDIT.md).
 
 ## Guardrail
 

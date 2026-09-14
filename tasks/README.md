@@ -24,7 +24,7 @@ Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in
 
 ## Immediate queue
 
-AC-001 through AC-013 are complete and merged. [AC-012](completed/AC-012.md) completed the integrated local fixture outcome in [PR #14](https://github.com/hcuddeback/autocode/pull/14), merged as 6d72cfd on 2026-09-14. [AC-013](completed/AC-013.md) settled the MVP 1 lifecycle boundary under D-007 in [PR #16](https://github.com/hcuddeback/autocode/pull/16), merged as 38fa030 on 2026-09-14: verified local operator handoff, with remote automation deferred. No implementation task is active. Later outcomes must be selected and refined JIT against current main; [the MVP audit](../docs/MVP_AUDIT.md), refreshed against merge 6d72cfd on 2026-09-14, records remaining release and external-integration gaps. Recheck current code and dependencies when selecting each outcome.
+AC-001 through AC-013 are complete and merged. [AC-012](completed/AC-012.md) completed the integrated local fixture outcome in [PR #14](https://github.com/hcuddeback/autocode/pull/14), merged as 6d72cfd on 2026-09-14. [AC-013](completed/AC-013.md) settled the MVP 1 lifecycle boundary under D-007 in [PR #16](https://github.com/hcuddeback/autocode/pull/16), merged as 38fa030 on 2026-09-14: verified local operator handoff, with remote automation deferred. [AC-014](AC-014.md) is in `review` for the operator guide; runtime scope is unchanged. Later outcomes must be selected and refined JIT against current main; [the MVP audit](../docs/MVP_AUDIT.md), refreshed against merge 6d72cfd on 2026-09-14, records remaining release and external-integration gaps. Recheck current code and dependencies when selecting each outcome.
 
 ## Later review follow-up
 
