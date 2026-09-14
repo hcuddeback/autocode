@@ -34,6 +34,8 @@
 
 ## Known gaps and blockers
 
+- PR #19 defines MVP 2 as a future sequential batch milestone after the remaining MVP 1 acceptance outcomes. Its initial unattended chain proof is local-only with explicit exceptions; PR-required tasks retain operator-managed publication/merge and block dependents until repository completion and merged-base reconciliation. Batch execution and this reconciliation are requirements, not implemented capabilities.
+
 - CI, required CLI QA adapters/QA-fix rounds, durable task ownership and final immutable summaries are absent. Remote lifecycle adapters are deferred under D-007; repository task completion updates remain operator-managed in MVP 1. Native Codex continuation is unused; fresh scoped roles provide the documented fallback.
 - PR #13 merged as `63e8a49`. AC-012 merged in PR #14 as 6d72cfd after verified head 0a4e877. Integrated Codex, QA and verification share Windows AppContainer/Job containment; protected metadata writes and credential access are denied before execution, sanitized environments omit operator tokens, and tampering durably terminates runs. Fresh receipts cannot be pre-created; interrupted QA/completion require operator reconciliation. The latest boundary corrections below preserve concurrent ACL hardening and prevent trusted-host Git helpers from escaping containment. All review conversations and configured GitGuardian gates passed; the owner merged the PR. Node captured-child pipes, cross-volume batch execution and live authenticated compatibility remain unaccepted; unsupported commands fail closed.
 - D-005 permits owner-accepted critical chat review and scoped publication after checks/QA. The owner ended further continuous bot-review requests for PR #14; final verified dispositions and configured merge gates passed before human merge.
@@ -41,6 +43,10 @@
 - License has not been selected and added.
 
 See [the MVP audit](docs/MVP_AUDIT.md), refreshed against merged source 6d72cfd on 2026-09-14, for requirement-by-requirement code evidence and remaining acceptance/release gaps. Its final completion evidence is distinguished from historical pre-merge checks; runtime checks were not rerun for the documentation refresh. The complete MVP is not yet accepted or released.
+
+## PR #19 requirements review, 2026-09-14
+
+Current-chat review verified both reported findings against PRODUCT, WORKFLOW, D-007 and the MVP audit. The P1 dependent-advancement finding is addressed by explicit operator publication/merge, completion evidence and target-branch reconciliation requirements, with separate local-only and PR-required acceptance scenarios. The P2 acceptance-queue finding is addressed by scheduling remaining MVP 1 acceptance outcomes before MVP 2 implementation. The scoped diff changes documentation only; no runtime behavior, merge authority or release acceptance is claimed. Scoped formatting, local document links, lint, typecheck, compilation, CLI help and diff checks pass. Runtime tests, live Codex, platform QA and clean-install acceptance were not rerun for this documentation change.
 
 ## AC-014 user documentation, 2026-09-14
 
