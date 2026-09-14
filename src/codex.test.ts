@@ -554,7 +554,9 @@ async function sessionFixture(mode: string) {
     options: {
       command: process.execPath,
       commandPrefixArguments: [fake, mode],
-      timeoutMs: 2_000,
+      // Native profile/ACL setup runs inside the measured Windows host process.
+      // Keep explicit short-timeout tests unchanged while allowing fixture startup.
+      timeoutMs: process.platform === 'win32' ? 10_000 : 2_000,
       sandboxWriteDirectories: [base],
       // Simulate a concurrent operator/legacy writer, which the sandbox cannot impersonate.
       validateFinalMessage: (message: string) => {

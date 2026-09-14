@@ -25,7 +25,13 @@ export function isIniCredentialPath(name: string): boolean {
 }
 
 export function isCredentialDirectoryName(name: string): boolean {
-  return ['.aws', '.ssh', '.azure', '.kube', '.docker'].includes(
-    name.toLowerCase(),
-  );
+  return [
+    '.aws',
+    '.ssh',
+    '.azure',
+    '.kube',
+    '.docker',
+    '.credentials',
+    '.secrets',
+  ].includes(name.toLowerCase());
 }

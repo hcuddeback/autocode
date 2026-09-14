@@ -44,7 +44,23 @@ See `docs/MVP_AUDIT.md` for requirement-by-requirement code evidence and the rem
 
 ## Latest AC-012 boundary checkpoint
 
-### Additional writable-root boundary corrections, 2026-09-13
+### Git metadata authorization and config isolation, 2026-09-13
+
+PR #14's P1 findings (4001840321 and 4001840327) on e951cce are corrected. An external common Git directory requires original explicit directory read authorization or a registered linked worktree whose canonical back-pointer resolves to this workspace's .git file. Derived read grants do not authorize another repository. Unrelated pointers, including pointers to another registered worktree, fail before launch grants. Actual registered feature worktrees remain supported.
+
+Bounded Git config parsing does not follow includes. Config/config.worktree files with URL user information, auth headers, credential settings, private references, includes or embedded helper commands receive credential isolation; public configs and valueless booleans remain readable. Git inspection errors retain no raw output that could include secrets. Credential-bearing configs may prevent commands that require those files; no secret-bearing config or authentication fallback is exposed. Containment version 5 invalidates v4 and earlier receipts.
+
+Positive controls on e951cce reproduce both bypasses in disposable fixtures. Native regressions reject unregistered/wrong-worktree pointers with no child launch and unchanged ACLs, permit explicitly authorized reads, deny private config reads in current/additional repositories, preserve exact config contents/ACLs and retain public config reads. The owner-accepted chat supplies independent critical review.
+
+Native Codex fixture defaults now allow Windows host startup while retaining explicit short-timeout tests and production limits. Detailed failure reproduction showed the prior two-second fixture budget expired before artifact/duplicate/orphan/overflow assertions; all five focused assertions pass after this correction. Public refs and worktree identifiers named config are regression-covered as data labels; only actual Git config locations are parsed.
+
+Final root review also protects directly authorized .credentials/.secrets directories and their opaque files, includes core.askPass authentication helpers in config isolation, and limits writable .autocode enclaves to registered worktrees under .autocode/worktrees with external common metadata. Plain Git markers cannot reclassify cache/run state. Native old-source controls reproduce these gaps; fixed cases retain registered infrastructure and preserve original ACLs/content.
+
+Fresh verification on the frozen final source: all 13 source test files and all 33 workflow test registrations are covered exactly once. The complete source suite passes 295 tests with four platform skips and zero failures/cancellations; other files run serialized and workflow tests run in three isolated, disjoint Node-process shards. Compiled Windows boundary QA passes 45 tests, and compiled pnpm CMD/CLI run-resume QA passes two. Configured formatting, lint, typecheck, clean production build and built CLI help pass. Source hashes match the frozen snapshot. Ignored evidence is retained in `.autocode/implementation-plans/AC-012-pr14-git-suite-results.json`, its manifest and per-process logs, and `AC-012-pr14-final-built-host.log` / `AC-012-pr14-final-built-workflow.log`. One earlier unchanged-source attempt encountered a Windows EBUSY fixture-cleanup error; the complete same-source rerun passes. Earlier aborted or superseded runs do not support this checkpoint.
+
+This checkpoint supersedes earlier metadata read authorization and config coverage. AC-012 remains in review under exact-head remote review and human merge gates; broader MVP acceptance remains unclaimed.
+
+### Historical additional writable-root boundary corrections, 2026-09-13
 
 PR #14's P1 credential-root finding (4001625111) and P2 metadata-root finding (4001625113) on c76db07 exposed additional paths to the same isolation boundary. Before any launch grants, discovery now covers every writable root, including sibling/parent resources, nested repositories and linked common Git metadata. Case aliases and covering roots are deduplicated. Shared credential classification protects direct cloud credential directories and private metadata stores; all reserved .git/.autocode descendants receive protected metadata boundaries. Roots inside protected metadata fail closed before launch. Public Git data labels remain readable and ordinary authorized files remain writable. Complete traversal is bounded to 100,000 entries, with a 10,000-entry generic-resource limit. Containment version 4 rejects v3 and earlier receipts.
 

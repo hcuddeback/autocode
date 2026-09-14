@@ -200,7 +200,10 @@ test(
         try {
           await mkdir(cwd, { recursive: true });
           await mkdir(extra, { recursive: true });
-          const repository = path.join(extra, 'nested');
+          const repository = path.join(
+            extra,
+            mode === 'linked' ? 'config' : 'nested',
+          );
           let common: string;
           if (mode === 'linked') {
             const source = path.join(base, 'source');
@@ -213,6 +216,7 @@ test(
             await writeFile(path.join(source, 'ordinary.txt'), 'tracked');
             await git(['add', '.']);
             await git(['commit', '-m', 'fixture']);
+            await git(['branch', 'config']);
             await git([
               'worktree',
               'add',
@@ -271,7 +275,10 @@ test(
           const originalAcl = await snapshotWindowsAcl(aclPaths);
           const publicGit =
             mode === 'linked'
-              ? [path.join(common, 'refs', 'heads', 'credential-boundary')]
+              ? [
+                  path.join(common, 'refs', 'heads', 'credential-boundary'),
+                  path.join(common, 'refs', 'heads', 'config'),
+                ]
               : [];
           const script = `const fs=require('node:fs');const violations=[];${JSON.stringify(publicGit)}.forEach(p=>fs.readFileSync(p));const denied=(action,label)=>{try{action();violations.push(label)}catch(e){if(!['EACCES','EPERM'].includes(e.code))throw e}};${JSON.stringify(credentials)}.forEach((p,i)=>{denied(()=>fs.readFileSync(p),'credential-read-'+i);denied(()=>fs.writeFileSync(p,'corrupt'),'credential-write-'+i);denied(()=>fs.renameSync(p,p+'.moved'),'credential-rename-'+i);denied(()=>fs.unlinkSync(p),'credential-delete-'+i)});${JSON.stringify(metadata)}.forEach((p,i)=>{denied(()=>fs.writeFileSync(p,'corrupt'),'metadata-write-'+i);denied(()=>fs.renameSync(p,p+'.moved'),'metadata-rename-'+i);denied(()=>fs.unlinkSync(p),'metadata-delete-'+i)});fs.writeFileSync(${JSON.stringify(path.join(extra, 'ordinary.txt'))},'allowed');fs.writeFileSync('ordinary.txt','allowed');if(violations.length)throw Error(violations.join(','));console.log('all-roots-protected');`;
           const options =
@@ -320,6 +327,194 @@ test(
 );
 
 test(
+  'Windows requires authorization for unrelated external Git metadata',
+  { skip: process.platform !== 'win32' },
+  async (t) => {
+    for (const mode of ['unregistered', 'wrong-registration', 'explicit'])
+      await t.test(mode, async () => {
+        const base = await mkdtemp(
+          path.join(os.tmpdir(), 'autocode-git-authority-'),
+        );
+        try {
+          const cwd = path.join(base, 'cwd');
+          const extra = path.join(base, 'extra');
+          const privateRoot = path.join(base, 'private');
+          const exec = promisify(execFile);
+          await mkdir(cwd);
+          await mkdir(extra);
+          await mkdir(privateRoot);
+          const git = (args: string[]) =>
+            exec('git', args, { cwd: privateRoot, windowsHide: true });
+          await git(['init', '-b', 'main']);
+          let pointer = path.join(privateRoot, '.git');
+          if (mode === 'wrong-registration') {
+            await git(['config', 'user.name', 'Fixture']);
+            await git(['config', 'user.email', 'fixture@example.invalid']);
+            await writeFile(path.join(privateRoot, 'ordinary.txt'), 'tracked');
+            await git(['add', '.']);
+            await git(['commit', '-m', 'fixture']);
+            const registered = path.join(base, 'registered');
+            await git(['worktree', 'add', '-b', 'fixture', registered]);
+            pointer = (
+              await exec('git', ['rev-parse', '--absolute-git-dir'], {
+                cwd: registered,
+                windowsHide: true,
+              })
+            ).stdout.trim();
+          }
+          await writeFile(
+            path.join(extra, '.git'),
+            'gitdir: ' + pointer + '\n',
+          );
+          const common = path.join(privateRoot, '.git');
+          const target = path.join(common, 'private-object.txt');
+          await writeFile(target, 'private-repository-data');
+          const paths = [cwd, extra, common, target, path.join(extra, '.git')];
+          const original = await snapshotWindowsAcl(paths);
+          const script =
+            mode === 'explicit'
+              ? `const fs=require('node:fs');console.log(fs.readFileSync(${JSON.stringify(target)},'utf8'));fs.writeFileSync('launched','yes')`
+              : "require('node:fs').writeFileSync('launched','yes')";
+          const launch = () =>
+            runContainedProcess(
+              process.execPath,
+              ['-e', script],
+              cwd,
+              15000,
+              10000,
+              undefined,
+              [extra],
+              mode === 'explicit' ? [common] : [],
+            );
+          if (mode === 'explicit') {
+            const result = await launch();
+            assert.equal(result.exitCode, 0, result.stderr);
+            assert.match(result.stdout, /private-repository-data/);
+          } else {
+            await assert.rejects(
+              launch,
+              /External Git metadata requires explicit read authorization or a registered worktree/,
+            );
+            await assert.rejects(() => readFile(path.join(cwd, 'launched')), {
+              code: 'ENOENT',
+            });
+          }
+          assert.equal(await snapshotWindowsAcl(paths), original);
+          assert.equal(
+            await readFile(target, 'utf8'),
+            'private-repository-data',
+          );
+        } finally {
+          await rm(base, { recursive: true, force: true });
+        }
+      });
+  },
+);
+
+test(
+  'Windows isolates credential-bearing Git configuration and retains public config reads',
+  { skip: process.platform !== 'win32' },
+  async (t) => {
+    for (const mode of [
+      'url',
+      'header',
+      'worktree',
+      'askpass',
+      'include',
+      'public',
+    ])
+      await t.test(mode, async () => {
+        const base = await mkdtemp(
+          path.join(os.tmpdir(), 'autocode-git-config-'),
+        );
+        try {
+          const cwd = path.join(base, 'cwd');
+          const extra = path.join(base, 'extra');
+          await mkdir(cwd);
+          await mkdir(extra);
+          const exec = promisify(execFile);
+          const configs: string[] = [];
+          for (const root of [cwd, extra]) {
+            await exec('git', ['init', '-b', 'main'], {
+              cwd: root,
+              windowsHide: true,
+            });
+            const config = path.join(
+              root,
+              '.git',
+              mode === 'worktree' ? 'config.worktree' : 'config',
+            );
+            const setting =
+              mode === 'url'
+                ? [
+                    'remote.origin.url',
+                    'https://operator-private@example.invalid/repo',
+                  ]
+                : mode === 'header' || mode === 'worktree'
+                  ? [
+                      'http.https://example.invalid/.extraHeader',
+                      'Authorization: Basic operator-private',
+                    ]
+                  : mode === 'askpass'
+                    ? ['core.askPass', '!echo operator-private']
+                    : mode === 'include'
+                      ? ['include.path', path.join(base, 'private-config')]
+                      : ['user.name', 'Public Fixture'];
+            await exec('git', ['config', '--file', config, ...setting], {
+              cwd: root,
+              windowsHide: true,
+            });
+            configs.push(config);
+          }
+          if (mode === 'public')
+            for (const config of configs)
+              await writeFile(
+                config,
+                (await readFile(config, 'utf8')) +
+                  '\n[feature]\nexperimental\n',
+              );
+          await writeFile(
+            path.join(base, 'private-config'),
+            '[http]\nextraHeader = Authorization: Basic operator-private\n',
+          );
+          const originals = await Promise.all(
+            configs.map((file) => readFile(file, 'utf8')),
+          );
+          const paths = [cwd, extra, ...configs];
+          const originalAcl = await snapshotWindowsAcl(paths);
+          const script =
+            mode === 'public'
+              ? `const fs=require('node:fs');${JSON.stringify(configs)}.forEach(p=>{if(!fs.readFileSync(p,'utf8').includes('Public Fixture'))throw Error('missing public config')});console.log('public-config-readable')`
+              : `const fs=require('node:fs');${JSON.stringify(configs)}.forEach(p=>{try{fs.readFileSync(p);throw Error('private config readable')}catch(e){if(!['EACCES','EPERM'].includes(e.code))throw e}});fs.writeFileSync('ordinary.txt','allowed');console.log('private-config-protected')`;
+          const result = await runContainedProcess(
+            process.execPath,
+            ['-e', script],
+            cwd,
+            15000,
+            10000,
+            undefined,
+            [extra],
+          );
+          assert.equal(result.exitCode, 0, result.stderr);
+          assert.match(
+            result.stdout,
+            mode === 'public'
+              ? /public-config-readable/
+              : /private-config-protected/,
+          );
+          assert.equal(await snapshotWindowsAcl(paths), originalAcl);
+          assert.deepEqual(
+            await Promise.all(configs.map((file) => readFile(file, 'utf8'))),
+            originals,
+          );
+        } finally {
+          await rm(base, { recursive: true, force: true });
+        }
+      });
+  },
+);
+
+test(
   'Windows protects a directly authorized cloud credential directory',
   { skip: process.platform !== 'win32' },
   async () => {
@@ -347,6 +542,124 @@ test(
       assert.equal(await readFile(target, 'utf8'), 'operator-private');
     } finally {
       await rm(base, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'Windows preserves metadata ancestors despite Git markers and permits registered infrastructure',
+  { skip: process.platform !== 'win32' },
+  async (t) => {
+    for (const mode of ['cache-git', 'worktree-git', 'registered'])
+      await t.test(mode, async () => {
+        const base = await mkdtemp(
+          path.join(os.tmpdir(), 'autocode-state-enclave-'),
+        );
+        try {
+          const cwd = path.join(base, 'cwd');
+          const resource = path.join(
+            base,
+            'other',
+            '.autocode',
+            mode === 'cache-git' ? 'cache' : 'worktrees',
+            'feature',
+          );
+          await mkdir(cwd);
+          const exec = promisify(execFile);
+          if (mode === 'registered') {
+            const source = path.join(base, 'source');
+            await mkdir(source);
+            const git = (args: string[]) =>
+              exec('git', args, { cwd: source, windowsHide: true });
+            await git(['init', '-b', 'main']);
+            await git(['config', 'user.name', 'Fixture']);
+            await git(['config', 'user.email', 'fixture@example.invalid']);
+            await writeFile(path.join(source, 'ordinary.txt'), 'tracked');
+            await git(['add', '.']);
+            await git(['commit', '-m', 'fixture']);
+            await git(['worktree', 'add', '-b', 'feature', resource]);
+          } else {
+            await mkdir(resource, { recursive: true });
+            await exec('git', ['init', '-b', 'feature'], {
+              cwd: resource,
+              windowsHide: true,
+            });
+          }
+          const target = path.join(resource, 'operator-state.json');
+          await writeFile(target, 'operator-state');
+          const paths = [cwd, resource, target, path.join(resource, '.git')];
+          const original = await snapshotWindowsAcl(paths);
+          const script = `const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(target)},'changed');fs.writeFileSync('launched','yes')`;
+          const launch = () =>
+            runContainedProcess(
+              process.execPath,
+              ['-e', script],
+              mode === 'registered' ? resource : cwd,
+              20000,
+              10000,
+              undefined,
+              mode === 'registered' ? [] : [resource],
+            );
+          if (mode === 'registered') {
+            const result = await launch();
+            assert.equal(result.exitCode, 0, result.stderr);
+            assert.equal(await readFile(target, 'utf8'), 'changed');
+          } else {
+            await assert.rejects(
+              launch,
+              /sandbox writable roots must not overlap protected metadata/,
+            );
+            await assert.rejects(() => readFile(path.join(cwd, 'launched')), {
+              code: 'ENOENT',
+            });
+            assert.equal(await readFile(target, 'utf8'), 'operator-state');
+          }
+          assert.equal(await snapshotWindowsAcl(paths), original);
+        } finally {
+          await rm(base, { recursive: true, force: true });
+        }
+      });
+  },
+);
+
+test(
+  'Windows protects directly authorized hidden credential directories',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    for (const name of ['.credentials', '.secrets']) {
+      const base = await mkdtemp(
+        path.join(os.tmpdir(), 'autocode-hidden-root-'),
+      );
+      try {
+        const cwd = path.join(base, 'cwd');
+        const resource = path.join(base, name);
+        await mkdir(cwd);
+        await mkdir(resource);
+        const target = path.join(resource, 'opaque.bin');
+        await writeFile(target, 'operator-private-bytes');
+        const paths = [cwd, resource, target];
+        const original = await snapshotWindowsAcl(paths);
+        const script = `const fs=require('node:fs');try{fs.readFileSync(${JSON.stringify(target)});throw Error('hidden credential root readable')}catch(e){if(!['EACCES','EPERM'].includes(e.code))throw e}fs.writeFileSync('ordinary.txt','allowed');console.log('hidden-root-protected')`;
+        const result = await runContainedProcess(
+          process.execPath,
+          ['-e', script],
+          cwd,
+          15000,
+          10000,
+          undefined,
+          [resource],
+        );
+        assert.equal(result.exitCode, 0, result.stderr);
+        assert.match(result.stdout, /hidden-root-protected/);
+        assert.equal(await snapshotWindowsAcl(paths), original);
+        assert.equal(await readFile(target, 'utf8'), 'operator-private-bytes');
+        assert.equal(
+          await readFile(path.join(cwd, 'ordinary.txt'), 'utf8'),
+          'allowed',
+        );
+      } finally {
+        await rm(base, { recursive: true, force: true });
+      }
     }
   },
 );

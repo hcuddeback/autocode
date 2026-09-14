@@ -10,6 +10,7 @@ import {
   rmdir,
   stat,
   realpath,
+  readFile,
   opendir,
   lstat,
 } from 'node:fs/promises';
@@ -294,6 +295,10 @@ async function windowsJobScript(
   const protectedPaths = new Set<string>();
   const seenDirectories = new Set<string>();
   const repositories = new Set<string>();
+  const authorizedReadRoots = [...writableRoots];
+  for (const resource of readFiles)
+    if ((await stat(resource)).isDirectory())
+      authorizedReadRoots.push(resource);
   let visited = 0;
   let genericVisited = 0;
   const within = (parent: string, child: string) => {
@@ -305,12 +310,97 @@ async function windowsJobScript(
         !path.isAbsolute(relative))
     );
   };
+  async function inspectGit(root: string, args: string[]): Promise<string> {
+    try {
+      const { stdout } = await promisify(execFile)(
+        'git',
+        gitInspectionArguments(root, args),
+        {
+          cwd: root,
+          encoding: 'utf8',
+          maxBuffer: 1024 * 1024,
+          timeout: 10000,
+          windowsHide: true,
+        },
+      );
+      return stdout;
+    } catch {
+      // Git errors can include private configuration values; retain no raw output.
+      throw new Error('Could not inspect sandbox Git metadata safely');
+    }
+  }
+  async function credentialGitConfig(file: string): Promise<boolean> {
+    const config = await inspectGit(cwd, [
+      'config',
+      '--file',
+      file,
+      '--null',
+      '--no-includes',
+      '--list',
+    ]);
+    for (const entry of config.split('\0').filter(Boolean)) {
+      const separator = entry.indexOf('\n');
+      // Git permits valueless boolean keys; --null lists those without a value.
+      const key = (
+        separator < 0 ? entry : entry.slice(0, separator)
+      ).toLowerCase();
+      const value = separator < 0 ? '' : entry.slice(separator + 1);
+      if (
+        /^(?:credential|include|includeif)\./.test(key) ||
+        /(?:^|\.)(?:extraheader|cookiefile|password|passwd|token|secret|authorization|sslkey|sslcert)$/.test(
+          key,
+        ) ||
+        /^filter\..*\.(?:clean|smudge|process)$/.test(key) ||
+        ['core.sshcommand', 'core.askpass'].includes(key) ||
+        /[a-z][a-z0-9+.-]*:\/\/[^/\s]*@/i.test(key + '\n' + value)
+      )
+        return true;
+    }
+    return false;
+  }
+  async function registeredWorktree(
+    directory: string,
+    common: string,
+  ): Promise<boolean> {
+    try {
+      const gitDirectory = await realpath(
+        (
+          await inspectGit(directory, ['rev-parse', '--absolute-git-dir'])
+        ).trim(),
+      );
+      const registrationRoot = await realpath(path.join(common, 'worktrees'));
+      const backPointer = path.join(gitDirectory, 'gitdir');
+      const info = await lstat(backPointer);
+      return (
+        within(registrationRoot, gitDirectory) &&
+        gitDirectory !== registrationRoot &&
+        info.isFile() &&
+        !info.isSymbolicLink() &&
+        info.size <= 64 * 1024 &&
+        (
+          await realpath((await readFile(backPointer, 'utf8')).trim())
+        ).toLowerCase() ===
+          (await realpath(path.join(directory, '.git'))).toLowerCase()
+      );
+    } catch {
+      return false;
+    }
+  }
   async function directoryScope(directory: string): Promise<void> {
     const original = directory;
     const components = directory
       .split(path.sep)
       .map((name) => name.toLowerCase());
     if (components.includes('.git'))
+      throw new Error(
+        'sandbox writable roots must not overlap protected metadata',
+      );
+    if (
+      components.some(
+        (name, index) =>
+          name === '.autocode' && components[index + 1] !== 'worktrees',
+      )
+    )
       throw new Error(
         'sandbox writable roots must not overlap protected metadata',
       );
@@ -325,7 +415,25 @@ async function windowsJobScript(
       if (isCredentialDirectoryName(name))
         blocked.add(await realpath(original));
       try {
-        await lstat(path.join(directory, '.git'));
+        const marker = await lstat(path.join(directory, '.git'));
+        if (components.includes('.autocode')) {
+          const common = await realpath(
+            path.resolve(
+              directory,
+              (
+                await inspectGit(directory, ['rev-parse', '--git-common-dir'])
+              ).trim(),
+            ),
+          );
+          if (
+            !marker.isFile() ||
+            within(directory, common) ||
+            !(await registeredWorktree(directory, common))
+          )
+            throw new Error(
+              'sandbox writable roots must not overlap protected metadata',
+            );
+        }
         break;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
@@ -364,18 +472,17 @@ async function windowsJobScript(
           await discoverWorkspaceCredentials(directory)
         ).files.keys())
           blocked.add(await realpath(path.resolve(directory, relative)));
-        const { stdout } = await promisify(execFile)(
-          'git',
-          gitInspectionArguments(directory, ['rev-parse', '--git-common-dir']),
-          {
-            cwd: directory,
-            encoding: 'utf8',
-            maxBuffer: 64 * 1024,
-            timeout: 10000,
-            windowsHide: true,
-          },
-        );
+        const stdout = await inspectGit(directory, [
+          'rev-parse',
+          '--git-common-dir',
+        ]);
         const common = await realpath(path.resolve(directory, stdout.trim()));
+        if (!authorizedReadRoots.some((root) => within(root, common))) {
+          if (!(await registeredWorktree(directory, common)))
+            throw new Error(
+              'External Git metadata requires explicit read authorization or a registered worktree',
+            );
+        }
         protectedPaths.add(common);
         readFiles.push(common);
         await discover(common, common, false, true);
@@ -406,6 +513,19 @@ async function windowsJobScript(
       const namespace = parts[0]?.toLowerCase();
       const gitMetadata =
         metadata && path.basename(base).toLowerCase() !== '.autocode';
+      if (
+        gitMetadata &&
+        ((parts.length === 1 &&
+          ['config', 'config.worktree'].includes(entry.name.toLowerCase())) ||
+          (namespace === 'worktrees' &&
+            parts.length === 3 &&
+            entry.name.toLowerCase() === 'config.worktree'))
+      ) {
+        if (info.isSymbolicLink() || !info.isFile())
+          throw new Error('Git configuration must be a regular file');
+        if (await credentialGitConfig(candidate))
+          blocked.add(await realpath(candidate));
+      }
       // Object/ref/reflog names and worktree IDs are Git data labels, not
       // credential names. Keep private stores outside these data namespaces protected.
       const gitData =
