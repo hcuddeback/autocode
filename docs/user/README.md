@@ -1,6 +1,6 @@
 # AutoCode user guide
 
-AutoCode supervises one local software task through planning, implementation, checks, critical review and retained evidence. You supply the task, repository and policy; Codex CLI performs the model work.
+The current AutoCode CLI supervises one local software task through planning, implementation, checks, critical review and retained evidence. Codex CLI performs today's model work. The MVP 1 target is an ordered workbook whose planner, implementer, reviewer, and fixer roles are assigned to configurable runners/models, with Codex retained as the first adapter.
 
 This guide describes the development checkout, not an accepted public release. Windows AppContainer fixtures are verified, but authenticated live Codex execution, some Windows commands, and clean installation remain unaccepted. Linux and macOS execution currently stops before launching contained work. See [current evidence and gaps](../MVP_AUDIT.md).
 

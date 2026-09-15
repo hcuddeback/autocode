@@ -4,20 +4,21 @@ Record durable choices with meaningful alternatives; do not duplicate task histo
 
 ## Decision index
 
-| ID    | Date       | Status   | Decision                                                           | Revisit trigger                                                             |
-| ----- | ---------- | -------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------- |
-| D-001 | 2026-09-02 | accepted | Local-first TypeScript CLI around Codex CLI                        | Local execution cannot meet a measured need                                 |
-| D-002 | 2026-09-02 | accepted | MVP document, small queue, JIT tasks, and JIT plans                | Rework shows a planning horizon is wrong                                    |
-| D-003 | 2026-09-02 | accepted | QA as an explicit applicability-gated phase                        | Evidence shows it belongs outside orchestration                             |
-| D-004 | 2026-09-11 | accepted | Fresh scoped sessions with durable phase receipts                  | Stable continuation/reconciliation evidence justifies a different interface |
-| D-005 | 2026-09-12 | accepted | Autonomous commit, push, and PR creation after local checks and QA | Owner changes publication authority or required merge gates                 |
-| D-007 | 2026-09-14 | accepted | MVP 1 ends at verified local operator handoff                      | Accepted local release and a selected remote lifecycle outcome              |
+| ID    | Date       | Status             | Decision                                                            | Revisit trigger                                                                             |
+| ----- | ---------- | ------------------ | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| D-001 | 2026-09-02 | accepted           | Local-first TypeScript CLI; Codex CLI first execution adapter       | Local execution cannot meet a measured need                                                 |
+| D-002 | 2026-09-02 | accepted           | MVP document, small queue, JIT tasks, and JIT plans                 | Rework shows a planning horizon is wrong                                                    |
+| D-003 | 2026-09-02 | accepted           | QA as an explicit applicability-gated phase                         | Evidence shows it belongs outside orchestration                                             |
+| D-004 | 2026-09-11 | accepted           | Fresh scoped sessions with durable phase receipts                   | Stable continuation/reconciliation evidence justifies a different interface                 |
+| D-005 | 2026-09-12 | accepted           | Autonomous commit, push, and PR creation after local checks and QA  | Owner changes publication authority or required merge gates                                 |
+| D-007 | 2026-09-14 | superseded in part | Local task execution ends at verified operator handoff              | D-008 expands MVP 1 from one task to a sequential workbook; handoff safety remains accepted |
+| D-008 | 2026-09-15 | accepted           | MVP 1 is an ordered workbook with configurable roles/runners/models | Workbook acceptance or evidence justifies a new product boundary                            |
 
 ## D-001 — Local TypeScript CLI
 
 **Context:** Earlier prototypes used deterministic runners, a hosted control plane, and direct model APIs. The refined product needs local Codex sessions and durable recovery.
 
-**Decision:** Start clean with Node.js 24+, strict TypeScript, pnpm, project-local state, and Codex CLI adapters.
+**Decision:** Start clean with Node.js 24+, strict TypeScript, pnpm, project-local state, and Codex CLI as the first execution adapter.
 
 | Alternative               | Advantage                  | Why not now                                        |
 | ------------------------- | -------------------------- | -------------------------------------------------- |
@@ -58,7 +59,7 @@ Record durable choices with meaningful alternatives; do not duplicate task histo
 
 **Decision:** After deterministic verification and applicable QA pass, agents have standing authority to commit scoped selected-task changes, push their feature branch, and open a PR without another manual review or permission request. Independent critical review remains required for task completion; an owner-accepted review chat can provide that evidence by recording findings and their verified dispositions. No separate external Codex session is mandatory before publication.
 
-**Consequence:** AC-012's two chat-review findings are dispositioned by the protected-state and QA preflight corrections and their regression evidence. Publication may proceed. Configured CI, exact-head Codex PR review when required, and human merge authorization remain merge gates. This decision changes repository contribution policy; it does not add remote adapters to the local workflow CLI or authorize autonomous merging or deployment.
+**Consequence:** AC-012's two chat-review findings are dispositioned by the protected-state and QA preflight corrections and their regression evidence. Publication may proceed. Configured CI, exact-head automated PR review when required, and human merge authorization remain merge gates. This decision changes repository contribution policy; it does not add remote adapters to the local workflow CLI or authorize autonomous merging or deployment.
 
 ## D-006 — Windows broker isolation
 
@@ -135,3 +136,15 @@ AC-012 receipt version 18 adds resolved verification executable identity/content
 **Safety boundary:** A PR-required run stops at the external boundary, currently as `blocked`. It is a verified handoff only after local checks, review and applicable QA pass with current identity/digest evidence. Missing QA, actionable findings, stale evidence or ambiguous effects remain unresolved blockers. A prepared base commit is not a committed implementation head or proof of deployment. Operators retain responsibility for exact-head remote checks/review, authorized merge, applicable production verification and task/system updates. Required external gates cannot be bypassed by supplying a fixture exception.
 
 **Consequence:** PRODUCT and WORKFLOW distinguish release scope, current implementation and repository contribution policy. D-005 publication authority is unchanged, and this decision grants no autonomous merge/deployment authority. Durable ownership, immutable handoff summaries, QA recovery, platform/live compatibility and release/security acceptance remain MVP work. No runtime state, schema or policy is changed by AC-013. Revisit remote automation only through a selected bounded task and updated acceptance evidence.
+
+The 2026-09-15 product reconciliation preserves this handoff safety boundary but supersedes the statement that MVP 1 proves only one task. D-008 makes sequential workbook execution part of MVP 1.
+
+## D-008 — Ordered MVP 1 workbook and configurable execution roles
+
+**Context:** After AC-001–AC-014, the repository had a durable one-task kernel but split its remaining product value between “MVP 1 acceptance” and a future “MVP 2 pipeline.” The task index was not the sole sequencing authority, and core workflow documentation treated Codex as the role owner rather than the first adapter. The current product direction requires one invocation to progress an ordered workbook through the existing kernel.
+
+**Decision:** MVP 1 is the ordered sequential workbook described by M1-01 through M1-07 in `PRODUCT.md`. `tasks/README.md` is the canonical sequence/state source. Completed AC-001–AC-014 remain historical delivery records; AC-015+ are newly derived from current acceptance and materialized one at a time JIT. Planner, implementer, reviewer, and fixer are stable responsibilities configured to runner adapters and optional models. Codex CLI is the first supported adapter, not a hard-coded architectural identity.
+
+**Alternatives:** Keeping the sequential pipeline as MVP 2 would leave MVP 1 below the product success test and preserve two competing queues. Renumbering completed tasks would destroy useful history. Adding multiple providers now would expand implementation without proving the adapter contract.
+
+**Consequence:** AC-015 first extracts/configures the role/runner/model boundary while preserving current Codex behavior. Later workbook rows add scheduling/ownership, complete recovery, evidence/state continuation, compatibility, end-to-end proof, and release acceptance. Execution remains one task at a time. Remote PR/merge/deploy effects remain operator-managed, and D-007's rule that handoff is not completion remains in force.

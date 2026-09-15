@@ -89,7 +89,7 @@ Replace pending commands before marking ready once the repository provides them.
 ## PR, merge, and production gates
 
 - PR applicability: required | not applicable (include a reason when not applicable)
-- Codex PR review: required | not applicable | auto
+- Automated PR review: required | not applicable | auto
 - Merge authorization: human | policy | not applicable
 - Production verification: required | not applicable | auto
 - Task-specific CI, freshness, deployment, smoke, or rollback evidence.

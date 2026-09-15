@@ -36,6 +36,8 @@ fixLoop:
 
 Keep the version, state directory and telemetry fields. Unknown keys are rejected. Initialization defaults to empty checks, a ten-minute timeout, 1 MiB output and three fix attempts. Verification stops at the first failing check and rejects workspace or protected-state changes; use check modes rather than formatters that rewrite source.
 
+The current schema has no role/runner/model section; Codex-specific options are supplied by the current workflow API. Configurable planner, implementer, reviewer, and fixer assignments are target behavior in AC-015, not accepted configuration yet.
+
 ## Workflow policy
 
 Create `.autocode/workflow.json` before `run`. Initialization does not create it. For a documentation-only task whose contract explicitly makes QA inapplicable:
@@ -80,15 +82,15 @@ Optional `verificationReadResources` authorizes up to 16 exact existing absolute
 
 Use `node <AutoCode-checkout>/dist/cli.js <command> <project-directory>`. The directory defaults to your current working directory when omitted. Every command accepts at most one directory; `--help` prints usage. There are no CLI flags for pause, pacing, authentication, QA adapters or automatic publication.
 
-| Command    | What it does                                                                                                                     |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `init`     | Safely creates configuration/state and ignore coverage; preserves existing valid configuration.                                  |
-| `select`   | Reports the dependency-ready task, active work, dependency blockers or no ready tasks; does not reserve work or change statuses. |
-| `prepare`  | Validates the complete task and clean linked worktree, then creates or reuses commit-bound planning artifacts.                   |
-| `run`      | Executes the integrated durable local workflow; prepares automatically when necessary.                                           |
-| `resume`   | Continues an existing matching durable workflow; never starts a missing run.                                                     |
-| `sessions` | Uses prepared artifacts to run separate implementation and review sessions; lacks the integrated fix/QA/resume flow.             |
-| `verify`   | Runs configured checks against a prepared task and retains deterministic evidence; does not orchestrate model work.              |
+| Command    | What it does                                                                                                                                                            |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init`     | Safely creates configuration/state and ignore coverage; preserves existing valid configuration.                                                                         |
+| `select`   | Reports the dependency-ready materialized task, active work, dependency blockers or no ready tasks; it does not parse workbook order, reserve work, or change statuses. |
+| `prepare`  | Validates the complete task and clean linked worktree, then creates or reuses commit-bound planning artifacts.                                                          |
+| `run`      | Executes the integrated durable local workflow; prepares automatically when necessary.                                                                                  |
+| `resume`   | Continues an existing matching durable workflow; never starts a missing run.                                                                                            |
+| `sessions` | Uses prepared artifacts to run separate implementation and review sessions; lacks the integrated fix/QA/resume flow.                                                    |
+| `verify`   | Runs configured checks against a prepared task and retains deterministic evidence; does not orchestrate model work.                                                     |
 
 Errors exit with code 1. `run` and `resume` also exit 1 for `blocked` or `failed` results. `select` reports active work, missing dependencies and no-ready-task results with exit code 0, so inspect its output rather than assuming success means selection.
 

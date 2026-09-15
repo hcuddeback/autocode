@@ -1,10 +1,10 @@
 # Contributing to AutoCode
 
-AutoCode is in its foundation phase. Changes should keep the first release small, local-first, observable, and recoverable.
+AutoCode is building its first ordered-workbook release. Changes should keep it sequential, local-first, observable, and recoverable.
 
 ## Before contributing
 
-1. Open or reference a narrowly scoped task.
+1. Select the single `ready` task from the canonical `tasks/README.md` workbook; do not skip or reorder waiting rows.
 2. Identify the affected workflow contract and safety boundary.
 3. Include acceptance criteria and deterministic verification.
 4. Avoid adding a hosted service or UI dependency to MVP 1 without an accepted architecture decision.
@@ -17,7 +17,7 @@ AutoCode is in its foundation phase. Changes should keep the first release small
 - Tests for state transitions, retries, recovery, path safety, and policy decisions.
 - No live credentials or committed local run state.
 - Documentation updated when behavior or configuration changes.
-- External integrations implemented behind narrow adapters.
+- Planner, implementer, reviewer, and fixer remain workflow roles; runner/model integrations stay behind narrow capability-checked adapters.
 
 ## Pull requests
 

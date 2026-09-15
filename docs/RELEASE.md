@@ -4,21 +4,27 @@ This runbook tracks release gates as the CLI and workflow are built.
 
 ## Release identity
 
-- Milestone: MVP 1
+- Milestone: MVP 1 ordered JIT task workbook
 - Target: public source plus locally installed CLI
 - Repository: `hcuddeback/autocode`
 - Branch: `main`
 - Package/binary: pending registry check
 
-## MVP 1 lifecycle acceptance
+## MVP 1 workflow acceptance
 
-D-007 limits CLI lifecycle scope to durable local execution and verified operator handoff. Automated publication/PR review/merge/deployment/production adapters are later work. This does not waive repository contribution gates or any local QA, platform, security or distribution requirement.
+D-008 defines MVP 1 as an ordered sequential workbook using configurable role/runner/model assignments. D-007's verified local handoff remains the boundary for PR-required tasks. Automated publication/PR review/merge/deployment/production adapters are later work. This does not waive repository contribution gates or any local QA, platform, security or distribution requirement.
+
+- [ ] The canonical workbook rejects malformed ordering/dependencies/state and selects exactly the next eligible task.
+- [ ] Planner, implementer, reviewer, and fixer resolve through validated runner/model assignments; Codex is proven as the first adapter.
+- [ ] Durable task ownership prevents competing execution and reconciles after interruption.
+- [ ] Validation, independent review, fixes, revalidation/re-review, and applicable QA use one bounded recovery policy.
+- [ ] Immutable task summaries support evidence-backed state updates, continuation, blocker handling, and resume without repeated completed effects.
+- [ ] A disposable five-task workbook completes/blocks/resumes as required, and a PR-required chain does not advance before repository completion and merged-base reconciliation.
 
 - [ ] A PR-required fixture passes current local checks, independent review and applicable QA, then stops safely at the external boundary with retained identity/digest evidence and explicit operator responsibilities. It must not claim task `done`, merged or deployed.
 - [ ] A genuine local-only fixture completes under explicit task and operator PR/production exceptions.
 - [ ] Missing QA, stale evidence and ambiguous interruption block; safe restart preserves evidence and retry budgets.
-- [ ] Durable task ownership/resume and a final immutable local summary are implemented and verified.
-- [ ] Required CLI QA scenarios and bounded QA fix/reverify/review/QA recovery are verified.
+- [ ] Every declared supported OS/runner/model/command combination has contained live compatibility evidence.
 
 Operator-managed remote gates remain necessary before marking real repository tasks done. Remote adapter absence is deferred scope; the local acceptance items above are still release blockers.
 
