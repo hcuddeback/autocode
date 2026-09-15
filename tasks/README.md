@@ -15,7 +15,7 @@ This workbook is the authoritative ordered plan for MVP 1. `docs/PRODUCT.md` own
 | `waiting`      | Ordered MVP 1 work whose predecessor or JIT refinement is incomplete.         |
 | `blocked`      | A named external, policy, credential, or safety condition prevents selection. |
 
-Only one row may be `ready`, `in_progress`, or `review` at a time. A `waiting` row is not an active task file and is not visible to the current task loader. When the ready task is completed and reconciled, inspect current `main`, refine only the next row into `tasks/AC-###.md`, and change that row to `ready`. Runtime state must ultimately be derived from this order, task contracts, completed records, durable run evidence, and repository evidence—not copied into a second task board.
+Only one row may be `ready` (or its materialized task file's finer-grained `in_progress`/`review` status per `src/tasks.ts`) at a time. `later` and `canceled` are also valid task-file statuses but describe work outside the current ordered sequence, not a workbook row state. A `waiting` row is not an active task file and is not visible to the current task loader. When the ready task is completed and reconciled, inspect current `main`, refine only the next row into `tasks/AC-###.md`, and change that row to `ready`. Runtime state must ultimately be derived from this order, task contracts, completed records, durable run evidence, and repository evidence—not copied into a second task board.
 
 ## Historical delivery record
 
@@ -60,7 +60,7 @@ The single next task is AC-015. Do not materialize AC-016 until AC-015 is merged
 
 ## The dogfooding milestone
 
-The most concrete proof that MVP 1 works is AutoCode executing its own remaining workbook: once AC-016 lands, point a workbook run at this repository's own `tasks/README.md` and let AutoCode select, implement, validate, and review AC-017 onward under its own supervised loop, stopping only at genuine blockers (for example, a PR-required handoff). This is a substantially more convincing demonstration than a synthetic fixture and should be treated as the milestone to aim for once AC-015–AC-017 are merged, alongside (not instead of) the deterministic disposable-fixture acceptance scenarios in `docs/PRODUCT.md`, which remain required for release certification because they are reproducible and do not depend on this repository's own remaining backlog.
+The most concrete proof that MVP 1 works is AutoCode executing its own remaining workbook: once AC-015 and AC-016 are merged, point a workbook run at this repository's own `tasks/README.md` and let AutoCode select, implement, validate, and review AC-017 onward under its own supervised loop, stopping only at genuine blockers (for example, a PR-required handoff). This is a substantially more convincing demonstration than a synthetic fixture and should be treated as the milestone to aim for, alongside (not instead of) the deterministic disposable-fixture acceptance scenarios in `docs/PRODUCT.md`, which remain required for release certification because they are reproducible and do not depend on this repository's own remaining backlog.
 
 ## Target execution loop
 

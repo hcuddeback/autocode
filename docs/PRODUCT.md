@@ -123,7 +123,7 @@ Given an ordered disposable workbook with at least five dependent tasks and genu
 
 The developer should not have to launch every role, decide what task comes next, relay findings to the fixer, or reconstruct state after interruption.
 
-Release certification uses the reproducible disposable-fixture scenarios above because they do not depend on this repository's own backlog. Once AC-015–AC-017 are merged, the most convincing informal demonstration of the same success test is AutoCode executing its own remaining workbook end to end — see "The dogfooding milestone" in `tasks/README.md`.
+Release certification uses the reproducible disposable-fixture scenarios above because they do not depend on this repository's own backlog. Once AC-015 and AC-016 are merged, the most convincing informal demonstration of the same success test is AutoCode executing its own remaining workbook (AC-017 onward) end to end — see "The dogfooding milestone" in `tasks/README.md`.
 
 ## Open decisions
 
