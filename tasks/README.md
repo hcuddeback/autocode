@@ -101,3 +101,8 @@ Initial WIP remains one executing task. Parallel execution, a hosted control pla
 ## Completion definition
 
 A task is `done` only when its acceptance criteria, deterministic validation, independent review, applicable QA, configured repository gates, evidence retention, documentation/state updates, and manual dispositions are complete. A local handoff may stop a run safely, but it does not by itself make a PR-required repository task `done` or satisfy downstream dependencies.
+
+## Known follow-ups (non-blocking)
+
+- **Duplicated execution-loop diagram.** The ordered workbook execution loop is spelled out as a near-identical ASCII diagram in five places, each worded slightly differently: `README.md` ("Product workflow"), `docs/PRODUCT.md` ("Canonical MVP 1 journey"), `docs/ARCHITECTURE.md` ("Task-kernel phases"), `docs/WORKFLOW.md` ("Target workbook loop"), and this file ("Target execution loop" below). A future edit to the loop applied to one copy but not the others would reproduce the doc/code drift this workbook exists to prevent. Not urgent enough to block AC-015; fix opportunistically or as a small standalone task.
+  - Prompt to run later: "Read the five ASCII execution-loop diagrams in README.md, docs/PRODUCT.md, docs/ARCHITECTURE.md, docs/WORKFLOW.md, and tasks/README.md. Pick one file to hold the canonical diagram (or a shared doc if none fits) and have the other four reference it instead of repeating their own wording, preserving each file's surrounding context/detail level. Verify no content is lost and update cross-references."
