@@ -48,7 +48,7 @@ pull_request: required
 
 This frontmatter is only part of the contract; the filled template body is also required. Explain why QA and deployment do not apply. For runtime behavior, choose required QA and define scenarios instead.
 
-Commit the completed contract through your repository's normal contribution process before preparing execution. Dependencies must exist and be `done` in `tasks/completed/`. No task may be `in_progress` or `review` when selecting new work. The current integrated runner expects its selected contract to remain `ready`; it does not manage task ownership or statuses.
+Commit the completed contract through your repository's normal contribution process before preparing execution. Dependencies must exist and be `done` in `tasks/completed/`. No task may be `in_progress` or `review` when selecting new work. `tasks/README.md` is the canonical MVP 1 workbook, but the current integrated runner still expects one materialized contract to remain `ready`; it does not yet parse workbook order, manage ownership/statuses, or continue to a successor.
 
 ## Create and initialize the execution worktree
 

@@ -1,217 +1,132 @@
 # AutoCode product requirements
 
-**Status:** MVP 1 execution kernel implemented/in acceptance; next product milestone approved
+**Status:** MVP 1 in development and acceptance
 
-**Current release:** MVP 1 — one-task durable workflow foundation
+**Current release target:** MVP 1 — ordered JIT task workbook
 
-**Next milestone:** MVP 2 — autonomous task pipeline
-
-**Last updated:** 2026-09-14
+**Last updated:** 2026-09-15
 
 ## Product statement
 
-AutoCode turns a structured engineering plan into a controlled, resumable software-delivery pipeline. It determines runnable work, delegates implementation and independent review to coding agents, enforces project policy and acceptance criteria, preserves execution evidence, and advances the project until human judgment or an external gate is required.
+AutoCode executes an ordered workbook of bounded software tasks through a controlled, resumable delivery loop. It selects the next eligible task, assigns each workflow responsibility to a configured runner/model, enforces deterministic validation and independent review, retains evidence, updates task state, and continues until the workbook completes or a legitimate blocker requires an operator.
 
-Codex CLI is the first execution backend. AutoCode is not intended to duplicate Codex chat or become another coding model interface; its product value is orchestration above the coding agent.
+Codex CLI is the first supported runner adapter. AutoCode's product identity is the orchestration, evidence, and recovery contract—not Codex, a particular model, or a coding-agent chat interface.
 
 ## Product boundary
 
-### Codex owns
-
-- Repository-aware implementation work.
-- Code edits and bounded fixes.
-- Model-assisted planning and critical review within supplied scope.
-
 ### AutoCode owns
 
-- Structured task contracts and task state.
-- Dependency/readiness resolution.
-- Selection of the next legal unit of work.
-- Durable execution phases and resume behavior.
-- Deterministic validation and QA policy.
-- Independent-review and bounded-fix loops.
-- Evidence retention and auditability.
-- Repository lifecycle orchestration as later milestones admit it.
-- Stopping and escalating when human judgment, credentials, policy, or external gates are required.
+- The canonical ordered workbook and deterministic task eligibility.
+- Durable single-task ownership and dependency-safe continuation.
+- JIT planning against the selected task and current repository state.
+- Role assignment, runner/model resolution, capability checks, and adapter boundaries.
+- Deterministic validation, applicable QA, independent review, and bounded recovery.
+- Evidence freshness, immutable task summaries, state updates, auditability, and resume.
+- Safe stopping when authority, credentials, policy, or external gates are required.
 
-## Evidence and assumptions
+### Configurable roles own
 
-### Verified
+- `planner`: produce a current implementation plan without changing the worktree.
+- `implementer`: make only the selected task's changes in its isolated worktree.
+- `reviewer`: independently challenge the result without modifying it.
+- `fixer`: address only retained failures/findings before fresh downstream evidence.
 
-- Earlier prototypes demonstrated useful task parsing, dependency readiness, worktree, validation, state, GitHub, and policy concepts.
-- The current MVP 1 implementation demonstrates a durable single-task local execution kernel with isolated work, deterministic verification, review/fix phases, evidence and interruption-safe resume in fixtures.
-- A hosted control plane and direct provider APIs are unnecessary for the first CLI milestones.
+A role is a workflow responsibility. A runner is an executable adapter that can perform one or more roles. A model is an optional runner-specific selection. Configuration maps roles to runners/models; it must not grant capabilities the adapter or role does not have.
 
-### Assumptions to test next
-
-- The single-task kernel can be composed into a reliable sequential task pipeline without weakening task isolation or evidence guarantees.
-- AutoCode can calculate READY work from repository task contracts and completed records without requiring the operator to choose every next task.
-- Several tasks can execute unattended until a legitimate blocker or configured human gate is reached.
-- Codex CLI remains useful as the first worker backend while orchestration contracts stay backend-neutral.
-
-### Unknown
-
-- Appropriate unattended batch size and pacing across subscription and machine constraints.
-- When parallel execution provides enough value to justify concurrency complexity.
-- Which remote GitHub lifecycle actions belong in the first public product release versus a later milestone.
-- When additional coding/review backends are justified.
-
-## Operating levels
-
-AutoCode should converge on three operating levels using the same task contracts and execution kernel:
-
-1. **Task** — execute one explicitly selected task.
-2. **Batch** — execute a selected set/range of tasks in dependency-safe order until complete or blocked.
-3. **Project** — repeatedly select READY work from the project task graph and continue until no legal work remains or human intervention is required.
-
-MVP 1 proves Task mode. MVP 2 proves Batch mode. Project mode follows only after Batch mode is trustworthy.
-
-## MVP 1 — execution kernel
-
-### Primary journey
-
-1. Approve an MVP document and small ordered queue.
-2. Select the next ready outcome and create/refine its task just in time.
-3. Generate a fresh implementation plan against the current repository.
-4. Implement in an isolated worktree through Codex CLI.
-5. Run deterministic checks and independent critical review.
-6. Perform bounded fixes and applicable QA.
-7. Retain a verified local handoff or an explicit local-only completion, or stop safely as blocked/failed/paused; support later resume.
-8. The operator handles publication, PR review, merge and applicable production verification through repository policy before declaring the repository task done.
-
-### Functional requirements
-
-| ID                        | Requirement                                              | Acceptance evidence                                                           |
-| ------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| AC-001                    | Initialize project-local configuration and state safely. | A fixture receives validated, gitignored configuration without overwrites.    |
-| AC-002                    | Select one ready task with satisfied dependencies.       | Tests cover ready, blocked, malformed, and completed tasks.                   |
-| AC-003                    | Create/refine task detail and plan just in time.         | Artifacts reference the selected task/current commit and exclude later work.  |
-| AC-004                    | Run role-separated Codex CLI sessions.                   | Implementation and review have distinct session identities and scoped inputs. |
-| AC-005                    | Run deterministic verification and retain evidence.      | Commands, exits, duration, bounded output, and commit identity are persisted. |
-| AC-006                    | Apply bounded fix loops.                                 | Retry ceilings and terminal outcomes have transition tests.                   |
-| AC-007                    | Run QA for applicable behavior.                          | QA evidence or a structured not-applicable decision is recorded.              |
-| AC-008 (later automation) | Address applicable Codex PR-review findings.             | Findings are resolved, disputed with evidence, or escalated.                  |
-| AC-009 (later automation) | Enforce configured merge and production gates.           | Missing, stale, or failed required signals prevent completion.                |
-| AC-010                    | Pause/resume without repeated side effects.              | A forced-interruption integration test reconciles and resumes safely.         |
-| AC-011                    | Persist pacing, waits, and retry policy.                 | Restarting does not reset budgets or backoff.                                 |
-
-### MVP 1 lifecycle boundary
-
-D-007 in [DECISIONS.md](DECISIONS.md) settles MVP 1 as one local task through intake, JIT planning, isolated implementation, deterministic verification, independent critical review, bounded fixes, applicable QA and durable evidence-backed operator handoff. Required QA and fresh evidence remain mandatory.
-
-AC-008 remote PR-review orchestration and AC-009 automated remote merge/production orchestration remain outside MVP 1. A verified handoff requires current local check, review and applicable QA evidence, task/worktree identity, the implementation workspace digest and an explanation of remaining operator gates.
-
-MVP 1 is now explicitly treated as the **execution kernel**, not the final product boundary.
-
-Before MVP 2 implementation begins, MVP 1 acceptance must close durable task ownership, immutable final handoff summaries, required CLI QA adapters and bounded QA recovery, supported-platform containment/live Codex compatibility, and release/security acceptance. AC-014 documents the current kernel; closing it alone does not accept MVP 1. Select these remaining outcomes JIT using [the MVP audit](MVP_AUDIT.md) and current code evidence.
-
-## MVP 2 — autonomous task pipeline
-
-### Outcome
-
-An operator can select a bounded set of repository tasks once and AutoCode will execute every legally runnable task in dependency-safe order, using the MVP 1 kernel for each task, until the selected batch is complete or a legitimate blocker/human gate prevents further progress.
-
-### Core loop
+## Canonical MVP 1 journey
 
 ```text
-load task contracts
-  -> build dependency graph
-  -> calculate READY tasks
-  -> select next task deterministically
-  -> execute MVP 1 task kernel
-  -> validate + independent review + bounded fix loop
-  -> reach configured repository handoff/finalization boundary
-  -> persist task/run outcome
-  -> recalculate READY tasks
-  -> continue or stop with an explicit reason
+load ordered workbook and retained evidence
+  -> select next eligible task and acquire ownership
+  -> generate a current JIT plan
+  -> implement
+  -> deterministically validate
+  -> independently review
+  -> fix and revalidate/re-review within bounded policy
+  -> run applicable QA and repeat bounded recovery after changes
+  -> retain immutable evidence and update canonical state
+  -> recalculate eligibility
+  -> continue, pause, block, fail, or resume without repeating completed effects
 ```
 
-### Required capabilities
+Initial execution is sequential: one task at a time. The operator may start a bounded workbook run once; AutoCode, not the operator, determines each subsequent eligible task.
 
-- Parse task identity, status, `depends_on`, blockers and completion records into a project task graph.
-- Detect malformed dependencies and cycles before model execution.
-- Calculate READY/WAITING/BLOCKED/DONE state deterministically.
-- Accept a bounded batch target; initial UX may be an explicit task list or `--through <task>` over an ordered queue.
-- Reuse the existing single-task execution kernel rather than creating a second execution path.
-- Persist batch/run identity, current task, completed tasks, blockers and remaining tasks so interruption can resume safely.
-- Recalculate readiness only from durable repository/run evidence.
-- Stop rather than guess when credentials, architecture/product decisions, unsafe permissions or configured human gates are required.
-- Produce a final run summary showing completed, blocked, waiting, failed and not-started work with evidence locations.
+## MVP 1 acceptance criteria
 
-### Publication, completion and branch-base boundary
+| ID    | Criterion                             | Acceptance evidence                                                                                                                                                                                                         |
+| ----- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M1-01 | Canonical workbook                    | `tasks/README.md` is the single ordered sequencing/state source; malformed order, dependencies, duplicate IDs, cycles, and contradictory state fail before runner effects.                                                  |
+| M1-02 | Configurable roles                    | Planner, implementer, reviewer, and fixer resolve through validated runner/model assignments. Codex is the first adapter; core orchestration and evidence are provider-neutral.                                             |
+| M1-03 | Eligible selection and ownership      | The next legal task is selected deterministically, owned durably by one run, and reconciled after interruption without competing execution.                                                                                 |
+| M1-04 | Complete task kernel                  | Each task follows JIT plan → implement → validate → independent review → bounded fix/revalidate/re-review → applicable QA. QA findings re-enter bounded recovery and invalidate stale evidence.                             |
+| M1-05 | Evidence, state, continuation, resume | A completed/handoff task has an immutable evidence-backed summary; canonical state changes only after applicable gates; readiness is recalculated and the workbook continues or resumes without repeated completed effects. |
+| M1-06 | Declared compatibility                | Every supported runner/model/OS/command combination has retained containment and live compatibility evidence; unsupported combinations fail closed and are documented.                                                      |
+| M1-07 | Release/security readiness            | CI, dependency/secret checks, license, package identity, private vulnerability reporting, clean install/upgrade/uninstall, help/init, workbook/resume, and artifact verification are complete and recorded.                 |
 
-MVP 2 initially retains D-007's operator-managed publication and merge boundary. The batch runner does not commit, push, create PRs, merge or deploy. For a PR-required task it persists a verified local handoff and stops for the operator to publish, address remote review, obtain human-authorized merge through configured gates, perform applicable production verification and update the completed task record. Handoff, a published PR and passing local checks do not satisfy a dependency.
+The canonical derivation and current state of AC-015+ live only in `tasks/README.md`. `docs/MVP_AUDIT.md` reports evidence and gaps but cannot reorder work.
 
-On batch resume, reconcile the completed record with durable evidence of all applicable repository gates, including the merged implementation identity. Fetch and verify the current target branch contains that implementation before preparing a dependent task's fresh isolated feature worktree from that target branch. Never base dependent work on an unmerged predecessor branch or reuse the predecessor's prepared run. Missing, stale or contradictory evidence blocks advancement. Reconcile the batch checkpoint without repeating completed task effects; prepare a new task run when task/base identity changes, preserving the kernel's existing resume rules.
+## Historical task IDs
 
-Automatic dependent advancement is initially proven only in a disposable local fixture whose task contracts and trusted operator policy explicitly permit PR and production exceptions and whose local completion evidence passes the configured gates. Such run completion may satisfy fixture dependencies; it cannot mark PR-required repository tasks done. Remote publication/merge automation requires a separately selected lifecycle milestone and policy decision before unattended PR-required chains are promised.
+AC-001 through AC-014 are completed delivery records. They established initialization, one-task selection/JIT planning, Codex-specific sessions, verification, review/QA/gate policies, durable execution, the integrated one-task kernel, lifecycle scope, and operator documentation. Their original contracts and evidence remain under `tasks/completed/`.
 
-### Initial acceptance scenarios
+Those IDs are history, not the current product acceptance numbering. In particular:
 
-Given a disposable five-task dependency chain with genuine explicit local-only exceptions as defined above, one AutoCode invocation must:
+- AC-004 proves a Codex-specific session boundary; it does not prove configurable runners/models.
+- AC-006 and AC-007 provide fix and QA policies; they do not prove QA-finding recovery through the integrated loop.
+- AC-010 and AC-011 prove durable phases and retries; they do not prove workbook-level ownership and continuation.
+- AC-012 proves one integrated task in fixtures; it does not update canonical task state or execute the next task.
+- AC-013 defers automated remote lifecycle effects; it does not reduce the current MVP 1 workbook target to one task.
+- AC-014 documents the current one-task operator experience; it does not accept or release MVP 1.
 
-1. execute the first READY task;
-2. pass it through deterministic validation, independent review and bounded fixes;
-3. advance to newly READY work without another operator prompt;
-4. repeat for subsequent tasks;
-5. stop correctly if a task encounters a declared human/credential/policy blocker;
-6. leave downstream dependent tasks WAITING rather than attempting them; and
-7. resume the same batch without repeating already-completed side effects.
+## Repository lifecycle boundary
 
-The local proof is successful if the operator does not manually launch each Codex task or determine what comes next. It demonstrates scheduling and durable batch execution, not remote repository acceptance.
+MVP 1 automates the local workbook through a verified evidence-backed handoff or a genuine local-only completion. Publication, hosted PR-review observation, merge, deployment, and production verification remain operator-managed unless a later accepted decision adds an adapter and authority.
 
-A separate PR-required chain scenario must stop at the first verified handoff and leave dependents WAITING. After the operator completes the repository gates, resume must reconcile the merged predecessor and start the next READY task from the verified current target branch without repeating predecessor effects. Before merge, absent authorization, failed gates or a target branch missing the merged implementation must prevent advancement.
+A PR-required task at verified local handoff is not `done` and cannot satisfy a dependent task. On resume, repository evidence must prove applicable gates and that the target branch contains the predecessor implementation before a dependent task is prepared from that branch. Missing, stale, failed, or contradictory evidence blocks advancement.
 
-### Deliberate non-goals for MVP 2
+Local-only fixtures may advance only with explicit task and operator exceptions plus passing configured completion evidence. Such fixtures prove scheduling/recovery, not remote repository completion.
 
-- Parallel task execution.
-- Hosted scheduler/control plane.
-- Web dashboard.
-- Automatic decomposition of a vague product idea into an entire project plan.
-- Multiple model/provider backends.
-- Cross-repository orchestration.
-- Automated publication, PR-review observation, merge and deployment.
-- Unbounded autonomous merging/deployment.
-- Jira/Slack/project-management integrations.
+## JIT planning model
 
-## JIT task strategy
+- Product criteria remain stable in this document.
+- The canonical workbook contains the ordered outcomes and their derived state.
+- Only the single next eligible outcome is materialized into a detailed task contract.
+- A fresh implementation plan is generated against that contract and current commit immediately before coding.
 
-JIT remains part of AutoCode, but it has two distinct meanings:
-
-- **JIT implementation planning:** generate the detailed coding plan immediately before executing an already-defined task. This remains required.
-- **JIT task materialization:** refine/create a future task from a coarse project outcome only when it is about to become actionable. This is valuable for Project mode but is not required to prove MVP 2 Batch mode.
-
-MVP 2 should begin with pre-authored executable task contracts. Automatic JIT task materialization follows after dependency-safe batch execution is proven.
-
-## Longer-term project runner
-
-After MVP 2, AutoCode may operate continuously over a project queue: materialize or select READY work, execute it, verify it, advance repository state, and repeat. Coding and review backends should remain replaceable behind stable AutoCode contracts; Codex is the first backend, not the product identity.
+Do not pre-author all future task contracts. Reconcile the workbook after each merge and refine only the next row against current reality.
 
 ## Non-functional requirements
 
-- Reliable idempotent/reconciled transitions.
-- Constrained commands/paths and untrusted-input handling.
-- Human-readable reasons for every transition.
-- Windows, macOS and Linux support where the selected worker backend and Git are supported.
-- No required hosted infrastructure for the local MVPs.
-- Orchestration state must survive process interruption.
-- Task graph decisions must be deterministic and inspectable.
+- Deterministic, inspectable selection and transitions.
+- Idempotent or conservatively reconciled effects.
+- Bounded inputs, subprocesses, outputs, attempts, and retained evidence.
+- Role capability separation and genuinely independent review.
+- Secret-safe configuration and evidence; no inherited credential environment.
+- Versioned local state that survives interruption.
+- Windows, macOS, and Linux only where declared runner containment is accepted.
+- No required hosted infrastructure.
 
-## Explicit non-goals
+## Explicit non-goals for MVP 1
 
-- Competing with coding-agent chat/IDE interfaces.
-- Building a proprietary coding model.
-- Direct OpenAI/Anthropic API integration as an MVP requirement.
-- Multi-user billing or organization management.
-- Unbounded parallel agents/tasks.
-- Autonomous high-risk merges without explicit approval policy.
+- Parallel task execution or parallel role execution.
+- A hosted scheduler, database, or web dashboard.
+- Automatic decomposition of a vague idea into a complete project.
+- A second production runner/provider implementation.
+- Direct provider APIs as a requirement.
+- Cross-repository orchestration.
+- Automatic remote PR/merge/deploy effects.
+- Unbounded autonomous merging or deployment.
 
 ## Product success test
 
-AutoCode is useful when a developer can define several bounded engineering outcomes, start one run, leave, and return to multiple independently reviewed task results plus a precise explanation of anything that stopped. If the developer still has to launch every Codex task, choose every next task, relay every review/fix cycle and reconstruct execution state manually, AutoCode has not yet delivered its product-level value.
+Given an ordered disposable workbook with at least five dependent tasks and genuine local-only exceptions, one invocation advances every eligible task through the complete kernel, stops correctly on an inserted blocker, leaves dependents waiting, and resumes without repeating completed effects. A separate PR-required scenario stops at verified handoff and advances a dependent only after current repository evidence proves the predecessor is complete and present in the target branch.
 
-## Open questions
+The developer should not have to launch every role, decide what task comes next, relay findings to the fixer, or reconstruct state after interruption.
 
-- Select the public package/binary name after checking registry availability.
-- Select a later remote lifecycle milestone and its exact-head publication, authorized merge and deployment reconciliation policy.
-- Define the first batch-selection CLI contract.
+Release certification uses the reproducible disposable-fixture scenarios above because they do not depend on this repository's own backlog. Once AC-015–AC-017 are merged, the most convincing informal demonstration of the same success test is AutoCode executing its own remaining workbook end to end — see "The dogfooding milestone" in `tasks/README.md`.
+
+## Open decisions
+
+- Public package/binary name and license.
+- Exact supported MVP 1 platform matrix if safe containment cannot be accepted on all three desktop platforms.
+- Whether model selection is a portable hint or strictly runner-adapter-specific configuration after the Codex adapter is generalized.

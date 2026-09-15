@@ -1,111 +1,103 @@
-# AutoCode task queue
+# AutoCode MVP 1 workbook and task index
 
-Tasks are JIT implementation contracts, not a wishlist. Product scope belongs in `docs/PRODUCT.md`; later ideas remain coarse until selected.
+**Canonical sequencing/state source:** this file
 
-## Status
+**Last reconciled:** 2026-09-15 against `main` at `be5b144`
 
-| Status        | Meaning                                            |
-| ------------- | -------------------------------------------------- |
-| `ready`       | Dependencies resolved; may be selected/refined JIT |
-| `in_progress` | Owned by an active run                             |
-| `review`      | Implementation complete; gates still running       |
-| `done`        | Acceptance and all applicable gates passed         |
-| `blocked`     | Named blocker prevents progress                    |
-| `later`       | Outside the immediate queue/current release        |
-| `canceled`    | Rejected or superseded                             |
+This workbook is the authoritative ordered plan for MVP 1. `docs/PRODUCT.md` owns product acceptance, completed task files retain historical evidence, and an active task file owns the immediate implementation contract. No other roadmap, audit, or prose list may silently reorder work or declare a different next task.
 
-## Product direction
+## State rules
 
-MVP 1 is the durable **single-task execution kernel**. It is not the final product boundary.
+| Workbook state | Meaning                                                                       |
+| -------------- | ----------------------------------------------------------------------------- |
+| `done`         | The historical task record and its applicable repository gates are complete.  |
+| `ready`        | This is the single materialized task eligible for selection now.              |
+| `waiting`      | Ordered MVP 1 work whose predecessor or JIT refinement is incomplete.         |
+| `blocked`      | A named external, policy, credential, or safety condition prevents selection. |
 
-The next product milestone is **MVP 2 — autonomous task pipeline**: one operator invocation selects a bounded batch, AutoCode calculates legal READY work, executes tasks through the existing implementation/validation/review/fix kernel, persists outcomes, recalculates readiness and continues until the batch completes or a legitimate blocker/human gate stops progress.
+Only one row may be `ready`, `in_progress`, or `review` at a time. A `waiting` row is not an active task file and is not visible to the current task loader. When the ready task is completed and reconciled, inspect current `main`, refine only the next row into `tasks/AC-###.md`, and change that row to `ready`. Runtime state must ultimately be derived from this order, task contracts, completed records, durable run evidence, and repository evidence—not copied into a second task board.
 
-The product differentiator is orchestration above coding agents. Codex CLI is the first worker backend; AutoCode should not duplicate Codex chat/IDE functionality.
+## Historical delivery record
 
-## Current milestone
+AC-001 through AC-014 are completed implementation-history identifiers. They are not renumbered or retroactively redefined to fit the current MVP 1 acceptance sequence.
 
-**Outcome:** Finish acceptance/documentation of the single-task kernel, then begin the smallest dependency-safe multi-task pipeline.
+| Task                          | Historical delivered scope                                     | Reconciled status                                                      |
+| ----------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [AC-001](completed/AC-001.md) | Strict TypeScript CLI and safe local initialization            | `done`; foundation retained                                            |
+| [AC-002](completed/AC-002.md) | Deterministic selection of one dependency-ready task           | `done`; selector is not yet a workbook scheduler                       |
+| [AC-003](completed/AC-003.md) | Commit-bound JIT task preparation and plan artifacts           | `done`; operator still materializes task contracts                     |
+| [AC-004](completed/AC-004.md) | Separate Codex planning/implementation/review session boundary | `done`; provider-specific implementation to be generalized by AC-015   |
+| [AC-005](completed/AC-005.md) | Deterministic verification with retained evidence              | `done`; reusable kernel component                                      |
+| [AC-006](completed/AC-006.md) | Bounded verification/review fix policy                         | `done`; QA findings are not yet in the same recovery loop              |
+| [AC-007](completed/AC-007.md) | QA applicability and scenario evidence policy                  | `done`; required CLI QA and QA-fix recovery remain open                |
+| [AC-008](completed/AC-008.md) | PR-review finding disposition policy                           | `done`; remote observation/repair remains deferred                     |
+| [AC-009](completed/AC-009.md) | Merge/production gate evaluation policy                        | `done`; remote effects remain operator-managed                         |
+| [AC-010](completed/AC-010.md) | Durable phase execution and interruption reconciliation        | `done`; workbook ownership/continuation is not implemented             |
+| [AC-011](completed/AC-011.md) | Durable pacing, waits, retry ceilings, and backoff             | `done`; reusable kernel component                                      |
+| [AC-012](completed/AC-012.md) | Integrated one-task local workflow fixture                     | `done`; it does not update task state or continue to another task      |
+| [AC-013](completed/AC-013.md) | Local operator-handoff boundary                                | `done`; remote lifecycle remains outside current automation            |
+| [AC-014](completed/AC-014.md) | Current source-checkout operator guide                         | `done`; it documents the one-task implementation, not MVP 1 completion |
 
-**MVP 2 proof:** A disposable local-only five-task dependency chain advances automatically under explicit PR/production exceptions, stops correctly on a blocker and resumes without repeating completed work. A PR-required chain stops at verified handoff, leaves dependents waiting and advances only after operator-completed repository gates and merged-base reconciliation.
+See `docs/MVP_AUDIT.md` for code/evidence traceability and limitations.
 
-**Initial WIP:** One task executing at a time. Parallel task execution is explicitly deferred.
+## Canonical MVP 1 sequence
 
-## Immediate queue
+These tasks are derived from the current acceptance criteria in `docs/PRODUCT.md`. IDs after AC-014 describe new work only; they do not replace the completed history above.
 
-AC-001 through AC-014 are complete and merged. [AC-014](completed/AC-014.md) documents the current operator guide and merged in [PR #18](https://github.com/hcuddeback/autocode/pull/18); the pnpm setup review finding is resolved in merged PR #21. No implementation task is active.
+| Order | Task                | Workbook outcome                                                                                                                           | Product criteria | State                                  |
+| ----- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------- | -------------------------------------- |
+| 1     | [AC-015](AC-015.md) | Configure role-to-runner/model assignments behind a provider-neutral execution contract; keep Codex as the first adapter                   | M1-02            | `ready`                                |
+| 2     | AC-016              | Load the ordered workbook, derive the next eligible task, and acquire durable single-task ownership                                        | M1-01, M1-03     | `waiting` on AC-015 and JIT refinement |
+| 3     | AC-017              | Complete the role-neutral task kernel, including required CLI QA and bounded QA fix/revalidate/review/QA recovery                          | M1-04            | `waiting` on AC-016 and JIT refinement |
+| 4     | AC-018              | Retain an immutable task summary, update canonical state, recalculate eligibility, and continue/resume without repeating completed effects | M1-05            | `waiting` on AC-017 and JIT refinement |
+| 5     | AC-019              | Prove supported-platform containment and authenticated live compatibility for declared runner/model combinations                           | M1-06            | `waiting` on AC-018 and JIT refinement |
+| 6     | AC-020              | Prove the ordered workbook end to end, including blocker/waiting/resume and PR-required handoff behavior                                   | M1-01–M1-06      | `waiting` on AC-019 and JIT refinement |
+| 7     | AC-021              | Close CI, dependency/secret checks, licensing, package identity, clean install/upgrade/uninstall, and release evidence                     | M1-07            | `waiting` on AC-020 and JIT refinement |
 
-Select/refine the remaining **MVP 1 acceptance outcomes** against current `main`, using [the MVP audit](../docs/MVP_AUDIT.md), D-007 and verified current code:
+The single next task is AC-015. Do not materialize AC-016 until AC-015 is merged, its evidence is reconciled here, and current code is re-inspected.
 
-1. **Durable task ownership and immutable summaries** — prevent competing ownership, reconcile interruption safely and retain final evidence-backed handoff summaries.
-2. **Required CLI QA and recovery** — supply applicable QA adapters and bounded QA-fix/reverification recovery without accepting stale evidence or repeating ambiguous effects.
-3. **Platform and live compatibility acceptance** — close supported-platform containment, Windows command/runtime compatibility and authenticated live Codex execution gaps with retained evidence; unsupported execution continues to fail closed.
-4. **Release/security acceptance** — close CI, clean-install/package and license decisions, applicable security/release checks and remaining audit requirements; record explicit acceptance evidence and limitations.
+**Note on AC-015 and a second runner adapter:** a second production runner/model integration remains explicitly out of MVP 1 scope. If, while implementing AC-015's runner-adapter boundary, exposing the existing test-only fake/stub Codex runner as a second minimally configured adapter is genuinely low-cost, it may be included to prove the abstraction is real rather than a single-implementation interface — but this is opportunistic, not a gate on AC-015 completion, and must not expand AC-015's scope, timeline, or require a second live model/provider.
 
-These are coarse outcomes, not claims of missing implementations after future merges. Recheck each against current code and split it into bounded JIT tasks as needed. Do not begin MVP 2 implementation until MVP 1 acceptance is recorded; AC-014 closure alone is insufficient.
+## The dogfooding milestone
 
-Then select/refine MVP 2 JIT tasks in this order of outcomes:
+The most concrete proof that MVP 1 works is AutoCode executing its own remaining workbook: once AC-016 lands, point a workbook run at this repository's own `tasks/README.md` and let AutoCode select, implement, validate, and review AC-017 onward under its own supervised loop, stopping only at genuine blockers (for example, a PR-required handoff). This is a substantially more convincing demonstration than a synthetic fixture and should be treated as the milestone to aim for once AC-015–AC-017 are merged, alongside (not instead of) the deterministic disposable-fixture acceptance scenarios in `docs/PRODUCT.md`, which remain required for release certification because they are reproducible and do not depend on this repository's own remaining backlog.
 
-1. **Task graph/readiness model** — load active + completed task contracts, validate dependency references/cycles and derive deterministic READY/WAITING/BLOCKED/DONE state.
-2. **Bounded batch selection** — define and implement the smallest explicit batch contract (for example task list or `--through <task>` over an ordered queue).
-3. **Sequential pipeline loop** — reuse the existing single-task kernel, persist each outcome and advance only on applicable completion evidence. Retain operator-managed PR publication/merge, stop at PR-required handoff and verify the merged predecessor is in the current target branch before creating a dependent worktree from that branch.
-4. **Durable batch resume** — persist batch identity/current task/completed work/blockers/remaining work and reconcile after interruption without repeating completed side effects.
-5. **Five-task fixture and repository-boundary acceptance** — prove automatic local-only advancement with genuine explicit exceptions and blocker/resume evidence; separately prove PR-required handoff stops dependents until operator-completed gates and merged-base reconciliation permit resume.
+## Target execution loop
 
-Do not pre-number or over-specify all five implementation contracts now. Create each task JIT after inspecting the merged state from the preceding outcome. The outcome sequence above is the task board until those contracts materialize.
+```text
+load canonical workbook and evidence
+  -> select the next eligible task
+  -> acquire durable ownership
+  -> generate a current JIT plan
+  -> implement with the configured implementer
+  -> run deterministic validation
+  -> independently review with the configured reviewer
+  -> fix with the configured fixer and revalidate/re-review as needed
+  -> run applicable QA and repeat bounded recovery when code changes
+  -> retain immutable evidence and update canonical task state
+  -> recalculate eligibility
+  -> continue, pause, block, fail, or resume without repeated effects
+```
 
-## Deferred until the pipeline proof passes
+Initial WIP remains one executing task. Parallel execution, a hosted control plane, a web dashboard, automatic vague-idea decomposition, cross-repository scheduling, automatic merge/deploy, and additional runner implementations are outside MVP 1. The architecture must permit later runner adapters without promising them now.
 
-- Parallel workers/tasks.
-- Hosted scheduler or control plane.
-- Web dashboard.
-- Automatic vague-idea-to-project decomposition.
-- Multiple model/provider backends.
-- Cross-repository orchestration.
-- Jira/Slack integrations.
-- Unbounded autonomous merge/deploy.
-- Automatic JIT task materialization from coarse project outcomes.
+## JIT materialization process
 
-These may become later milestones; they must not distract from proving unattended sequential advancement first.
-
-## JIT task process
-
-1. Select the next approved milestone outcome—not an unrelated attractive feature.
-2. Inspect current code, state, decisions, dependencies and the latest merged task evidence.
-3. Copy `TASK_TEMPLATE.md` to `tasks/AC-###.md`.
-4. Replace every placeholder and reference only needed documents.
-5. Confirm scope, risk, validation, QA/deployment applicability and blockers.
-6. Mark ready only when independently executable.
-7. Create `feat/AC-###-slug` from current `main` and attach it to a separate worktree.
-8. Confirm implementation is running from that feature branch/worktree; stop if the current branch is `main`.
-9. Generate the detailed implementation plan immediately before coding.
-10. Implement and run deterministic verification, independent critical review, fixes and applicable QA.
-11. After deterministic verification and applicable QA pass, autonomously commit the scoped changes, push the feature branch and open its required PR under standing contribution authority.
-12. Merge only through configured gates and human authorization unless a later explicit repository policy changes that boundary.
-13. After merge gates pass, mark the task `done`, move it to `tasks/completed/`, update this queue and update `SYSTEM.md` where current system reality changed.
-14. For MVP 2 pipeline tasks, preserve task-graph and resume semantics so the same contracts can later be consumed automatically rather than only by an operator.
-
-## MVP 2 execution-state target
-
-The pipeline should be able to distinguish at least:
-
-- `READY` — legal to execute now.
-- `WAITING` — dependency not complete.
-- `BLOCKED` — explicit blocker/human action prevents progress.
-- `RUNNING` — owned by the active pipeline run.
-- `REVIEWING` / `FIXING` — current task is inside existing kernel phases.
-- `DONE` — applicable repository completion evidence is satisfied.
-- `FAILED` — terminal execution failure requiring intervention.
-
-Do not create a second competing task-status source merely to obtain these labels. Derive runtime state from task contracts, durable run state and repository evidence with explicit reconciliation rules.
+1. Select only the first `ready` row in this workbook.
+2. Inspect current code, completed evidence, dependencies, decisions, risk, and blockers.
+3. Create or refine only that task from `TASK_TEMPLATE.md`; replace every placeholder.
+4. Confirm acceptance, deterministic validation, QA, security, publication, and manual gates.
+5. Implement from the declared feature branch and isolated worktree, never `main`.
+6. Execute implementation, validation, independent review, bounded fixes, revalidation, and applicable QA.
+7. Retain evidence before changing task/workbook state. Code changes invalidate stale downstream evidence.
+8. Complete repository gates, move the task record to `tasks/completed/`, reconcile this workbook and `SYSTEM.md`, then materialize at most one successor.
 
 ## Task folders
 
-- Non-completed tasks live directly under `tasks/`.
-- Tasks move to `tasks/completed/` only after they reach `done`; completed records remain part of dependency resolution.
-- `TASK_TEMPLATE.md` remains at the root of `tasks/`.
+- The one materialized non-completed task lives directly under `tasks/`.
+- Completed records live under `tasks/completed/` and remain part of dependency/evidence resolution.
+- `TASK_TEMPLATE.md` is the template, not a queue entry.
 
 ## Completion definition
 
-A repository task is done only after acceptance, deterministic validation, independent review, applicable QA, configured PR/merge gates, applicable production verification, documentation/current state and manual steps are handled explicitly.
-
-A pipeline run may stop before repository tasks are `done` when a configured human/external gate owns the next transition. Such a stop must be explicit and must not cause dependent work to be treated as complete.
+A task is `done` only when its acceptance criteria, deterministic validation, independent review, applicable QA, configured repository gates, evidence retention, documentation/state updates, and manual dispositions are complete. A local handoff may stop a run safely, but it does not by itself make a PR-required repository task `done` or satisfy downstream dependencies.

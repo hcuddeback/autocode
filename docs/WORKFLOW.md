@@ -1,111 +1,116 @@
 # AutoCode workflow
 
-**Status:** MVP 1 local lifecycle selected by D-007; remote automation deferred
+**Status:** current one-task kernel implemented; ordered MVP 1 workbook target in progress
 
-**Last updated:** 2026-09-14
+**Last updated:** 2026-09-15
 
-## Planning hierarchy
+## Authority and planning horizons
 
-AutoCode uses three planning horizons:
+1. `docs/PRODUCT.md` owns MVP 1 acceptance and non-goals.
+2. `tasks/README.md` is the canonical ordered workbook and state/sequence authority.
+3. The single materialized `tasks/AC-###.md` owns immediate implementation scope.
+4. A generated run plan is current only for that task, configuration, worktree, and commit.
 
-1. `docs/PRODUCT.md` defines the approved MVP outcome, requirements, non-goals, and release gates.
-2. `tasks/README.md` holds a small ordered queue of outcomes, not speculative implementation detail.
-3. The selected task is created/refined just in time, then a fresh implementation plan is generated against the current commit before coding.
+Audits, `SYSTEM.md`, README files, and completed task prose report evidence; they do not select or reorder work. Unresolved conflicts follow the priority in `AGENTS.md` and must be surfaced.
 
-For MVP 1, task refinement remains an operator-authored repository contract. AutoCode validates that selected contract and prepares a deterministic task snapshot, commit-bound metadata, and editable plan template. Model-authored plan content begins only after role-separated Codex sessions are available.
+## Target workbook loop
 
-Implementation must take place in an isolated feature branch and worktree. Direct implementation on `main` is prohibited.
+```text
+reconcile canonical workbook + completed records + durable/repository evidence
+  -> derive READY / WAITING / BLOCKED / RUNNING / REVIEWING / FIXING / DONE / FAILED
+  -> select the first eligible task
+  -> acquire durable ownership
+  -> execute the task kernel
+  -> retain immutable summary and applicable handoff/completion evidence
+  -> update canonical task state only when gates permit
+  -> recalculate eligibility
+  -> continue or stop explicitly
+```
 
-Later tasks stay coarse until dependencies and current reality are known. The task is an implementation contract; its detailed plan is a run artifact.
+One task executes at a time. The same workbook run resumes after interruption. It does not repeat completed effects, treat a local handoff as repository completion, or start a dependent from an unmerged predecessor.
 
-Before implementation begins, create the task's feature branch from current `main`, attach it to an isolated worktree, and verify that worktree is not on `main`. After deterministic verification and applicable QA pass, agents may commit scoped changes, push the feature branch, and open the required PR without a separate manual review or permission request. Independent critical review remains required for task completion and may be recorded in the current review chat when accepted by the owner; a separate external review session is not a publication prerequisite. See D-005 in `DECISIONS.md`.
+## Role assignment
 
-## Lifecycle and release scope
+The workflow uses four stable responsibilities:
 
-MVP 1 requires the local phases through QA and a durable verified operator handoff (D-007). The table also describes the later remote lifecycle and the repository contribution gates that operators must follow today. Listing a remote phase does not make its automation an MVP 1 requirement. Publication through production verification is operator-managed in MVP 1; task completion updates are also currently operator-managed. Durable ownership and an immutable local summary remain unimplemented acceptance work.
+| Role        | Authority                                                      | Required result                          |
+| ----------- | -------------------------------------------------------------- | ---------------------------------------- |
+| Planner     | Read-only repository/task context                              | Current bounded implementation plan      |
+| Implementer | Selected worktree writes only                                  | Scoped changes and execution identity    |
+| Reviewer    | Read-only, independent of implementation                       | Validated findings or pass/block verdict |
+| Fixer       | Selected worktree writes limited to retained failures/findings | Scoped correction and execution identity |
 
-A verified handoff retains task/branch/base identity, current implementation workspace digest, planning and check/review/QA evidence, findings/dispositions and the remaining external gates. It must distinguish a clean local result from missing QA, stale evidence and ambiguous interrupted effects. The current CLI represents the PR boundary as `blocked`, not a new handoff status. It does not yet produce a final immutable handoff summary.
+Each role resolves through configuration to a runner and optional model. The adapter owns provider-specific invocation and translates output to provider-neutral evidence. Codex CLI is the first and currently only implemented runner. AC-015 adds the configuration/adapter boundary; current code directly invokes Codex-specific types.
 
-## Lifecycle phases
+## Task kernel
 
-| Phase                                                                     | Purpose                                                               | Required exit evidence                                                      |
-| ------------------------------------------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Intake                                                                    | Validate task, dependencies, repository, and authority                | Ready task and policy decision                                              |
-| JIT task refinement                                                       | Turn the next outcome into an executable contract                     | Scope, criteria, risk, relevant docs, validation                            |
-| JIT implementation plan                                                   | Plan against the current commit                                       | Intended changes, sequence, risks, verification plan                        |
-| Implementation                                                            | Change an isolated feature-branch worktree                            | Diff, summary, assumptions, session identity                                |
-| Deterministic verification                                                | Run configured checks                                                 | Commands, exits, duration, bounded output, commit                           |
-| Independent critical review                                               | Challenge correctness in a separate session                           | Structured findings with severity/evidence                                  |
-| Fix and re-verify                                                         | Address actionable failures/findings                                  | Updated diff, dispositions, fresh verification                              |
-| QA applicability                                                          | Decide whether runtime/browser QA is needed                           | Required scenarios or recorded not-applicable reason                        |
-| QA                                                                        | Exercise applicable user-visible behavior                             | Scenario evidence, screenshots/logs, findings                               |
-| Local handoff/summary (MVP target)                                        | Retain current local evidence and remaining operator responsibilities | Immutable local summary; no claim of remote task completion                 |
-| Pull request (operator; later automation)                                 | Push the verified feature branch and publish a PR                     | PR identity and exact head commit, or a documented not-applicable exception |
-| Codex PR review (operator; later automation)                              | Observe and address actionable review                                 | Resolved findings, evidenced disputes, or escalation                        |
-| Merge gate (operator; later automation)                                   | Evaluate configured CI, approvals, risk, findings, and freshness      | Recorded authorization; merge is prohibited outside configured gates        |
-| Production applicability (explicit local policy; operator for deployment) | Decide whether deployment verification applies                        | Target/checks or recorded not-applicable reason                             |
-| Production verification (operator; later automation)                      | Confirm deployed behavior                                             | Deployment identity, smoke results, rollback signal                         |
-| Repository task complete (operator today)                                 | Update task/system state after applicable repository gates            | Merge/production evidence or genuine exceptions; completed task record      |
+| Phase                     | Exit evidence                                                                       |
+| ------------------------- | ----------------------------------------------------------------------------------- |
+| Intake and ownership      | Eligible task, dependency/repository identity, policy, exclusive durable owner      |
+| JIT plan                  | Selected task/current commit binding, plan, risks, validation approach              |
+| Implementation            | Diff/workspace digest, assumptions, runner/model/execution identity                 |
+| Deterministic validation  | Commands, exits, duration, bounded output, executable and workspace identity        |
+| Independent review        | Structured findings, severity/evidence, distinct reviewer identity                  |
+| Fix and revalidate        | Finding/failure dispositions plus fresh validation and review                       |
+| QA applicability          | Required scenarios or substantive not-applicable reason                             |
+| QA and recovery           | Scenario evidence; changes re-enter bounded fix/validation/review/QA                |
+| Immutable summary/handoff | Current task/config/runner/model/Git/workspace/evidence binding and remaining gates |
+| State transition          | Canonical state update supported by applicable repository evidence                  |
 
-## Implemented local execution
+Failures, review findings, and QA findings consume one bounded recovery policy. The fixer addresses only retained evidence. Any code change invalidates validation, review, QA, and later evidence that depended on the prior workspace.
 
-`autocode run <worktree>` and `autocode resume <worktree>` invoke the same durable workflow; resume requires an existing matching run and cannot start new model work. The operator supplies a complete `ready` task, its declared linked feature worktree, and configured deterministic commands. The runner prepares a task/commit snapshot when absent, starts a read-only planning session, passes its retained plan to implementation, and checkpoints verification and structured independent review separately. Failed checks defer review until a fixed round passes checks. Actionable review findings require another bounded fix round with fresh checks and review. Unused rounds retain explicit skip receipts. Verification binds explicitly to the selected task even when other tasks are ready.
+## Current implementation
 
-`.autocode/workflow.json` is protected operator policy: version 1, an explicit `qa` decision accepted by `runQaPhase`, and optional `pullRequest`/`completion` policy. Missing QA blocks. Required QA needs the workflow API's scenario adapter; the CLI has no browser/runtime adapter. A scenario that changes the workspace blocks because checks and review are stale. QA failures currently require operator disposition rather than automatic QA-fix rounds.
+`autocode run <worktree>` and `autocode resume <worktree>` execute one already-materialized `ready` task. They prepare a plan, invoke fresh Codex planning/implementation/review/fix roles, run deterministic checks, retain receipts, evaluate explicit QA/completion policy, and conservatively resume successful current effects.
 
-PR-required tasks stop as blocked at the external boundary. After current local checks, review and applicable QA pass, this is the MVP 1 operator handoff boundary; remote automation is deferred and the handoff remains `blocked`, without claiming local or repository completion. Missing or failed local phases are unresolved blockers, not verified handoffs. This runner does not commit, push, publish, poll reviews, merge, deploy, mark task contracts done, or advance the queue. Disposable local workflows may complete only when the task explicitly declares `pull_request: not_applicable`, operator policy records a substantive `pullRequest: {kind: "not-applicable", reason: "..."}` exception, and `completion` passes `evaluateCompletionGates` for the prepared commit with explicit production applicability. Such completion is local run completion, not proof of a published or merged task.
+Important present limits:
 
-Required production verification also blocks until a deployment adapter can bind observed behavior to committed implementation. Passing static signals for the prepared base commit cannot prove the uncommitted implementation was deployed. Local-only completion therefore requires production to be explicitly not applicable.
+- `select` scans task files by filename; it does not read a canonical workbook sequence or detect graph cycles.
+- The runner does not claim/update task ownership, change task metadata, move completed records, or select a successor.
+- Role execution and evidence use Codex-specific options/session types.
+- Required QA needs an API-supplied contained adapter; the CLI does not configure scenarios.
+- QA findings do not enter automatic bounded fix/revalidation/review/QA recovery.
+- A PR-required task stops as `blocked` at the verified local boundary and has no immutable final handoff summary.
+- Linux/macOS execution and authenticated live Codex compatibility remain unaccepted.
 
-Phase receipts and the durable event log live under `.autocode/runs/durable-workflow-<task>-<commit>/`; subprocess output remains in the prepared task run. Receipts bind task/configuration/policy/prepared plan and Git identity, plus the workspace digest after the phase. Resume rejects changed task, base commit, branch, configuration, plan, or workspace. Successful current receipts reconcile without repeating their effect. Interrupted model work without a successful receipt, malformed review, and blocked callback results require operator reconciliation. Changing policy or workspace requires a fresh prepared run (normally a new base commit); there is no unsafe automatic state reset.
+These are open workbook tasks, not hidden behavior or reasons to preserve the old AC sequence.
 
-Integrated Codex roles and deterministic commands terminate contained descendants before accepting process results; they share the Windows AppContainer and Job Object used by QA. Linux and macOS execution fail preflight until their containment boundaries are accepted. Each deterministic command is checked against a snapshot of all AutoCode state, excluding only its current verification output directory. Creating, changing, or deleting workflow receipts or other protected state fails the run permanently; restart cannot reconcile those subprocess-written receipts into success. QA callbacks are also checked against protected state before their results are accepted.
+## Eligibility and state rules
 
-When required QA stops because its adapter is absent, the runner retains a separate `qa-awaiting-adapter-<attempt>.json` preflight receipt instead of a QA result. Supplying the adapter through the workflow API permits resume only when that receipt matches the current effect, attempt, binding, and workspace. The durable retry policy still applies. Once a new attempt starts, an earlier preflight receipt cannot authorize repeating an interrupted QA callback. Existing blocked QA result receipts without this attempt-bound preflight evidence remain conservative.
+- Parse every active/completed task identity, dependency, status, and workbook position before runner effects.
+- Reject duplicates, missing references, cycles, illegal order/state combinations, and multiple active owners.
+- `READY` means the task is materialized, its prerequisites are repository-complete, policy allows execution, and no task is active.
+- `WAITING` means an ordered predecessor/dependency is incomplete or the future task is not yet JIT-materialized.
+- `BLOCKED` names the external/policy/credential/safety condition preventing progress.
+- `DONE` requires applicable repository gates and a completed historical record; local handoff alone is insufficient.
+- Runtime state is derived from canonical workbook/task records, durable ownership/effects, and repository evidence. Do not maintain a second manual status ledger.
 
-The integrated runner supports up to 19 fix rounds within the durable engine's 64-phase ceiling. Durable attempt, elapsed, and pacing defaults remain persisted; quiet hours and operator-configured workflow pacing are not CLI features. Native model-session continuation is deliberately unnecessary: each scoped role starts a fresh session.
+## Repository handoff boundary
 
-## Target QA policy
+Automated publication, hosted PR-review observation, merge, deployment, and production checks are outside the current local runner. D-005 permits an implementing agent to commit, push, and open a PR after required local gates; human/configured repository gates still control merge.
 
-QA is an explicit phase, not an implied part of unit tests. It is normally required for UI/interaction, auth, onboarding, payments, public APIs, external-provider journeys, migrations, deployment behavior, or regressions requiring observed behavior.
+For a PR-required task, the workbook pauses after a verified local summary. The task remains incomplete and dependents remain waiting. Resume may advance only after current evidence proves applicable gates passed and the target branch contains the predecessor implementation. A fresh dependent worktree starts from that verified target branch.
 
-Pure internal changes may record QA as not applicable when deterministic tests cover the outcome. QA findings enter the bounded fix/reverify loop, and subsequent code changes invalidate affected QA evidence.
+Disposable local-only tasks may complete with explicit task and operator PR/production exceptions plus current completion evidence. Such exceptions cannot be inferred or reused for a PR-required task.
 
-## Transition rules
+## Evidence and resume rules
 
-Publication, remote review, merge and repository task updates below describe operator/contributor policy under D-005. They are not claims that the MVP 1 runner performs remote effects.
-
-- Persist required evidence before advancing.
-- Agent prose cannot override failed deterministic checks.
-- Implementation and critical review use distinct scoped sessions.
-- Fix, dispute with evidence, explicitly authorize, or escalate every finding.
-- Code changes invalidate stale verification, review, QA, and PR evidence.
-- Optional phases require a recorded applicability decision.
-- After deterministic verification and applicable QA pass, autonomously commit scoped changes, push the feature branch, and open a PR unless a genuine not-applicable exception is explicitly documented. No separate manual review or permission request is required for these publication actions.
-- A PR is genuinely not applicable only when the task contract records the reason and the configured policy permits proceeding without one.
-- Merge only through configured gates; a successful local check or agent claim cannot replace required remote checks or approvals.
-- After merge gates pass, mark the task `done` and move its record from `tasks/` to `tasks/completed/`; completed records remain available for dependency resolution.
-- Timeouts become waiting, paused, blocked, or failed—not success.
-- Retry budgets and pacing survive restart.
-
-## Pause, resume, and pacing
-
-Completion follows the same conservative receipt boundary as QA: only a durably completed phase advances, and receipt-only reconciliation cannot turn blocked or interrupted gate evaluation into success. Supplied workflow policy sections are fully validated before effects begin, so operators can correct malformed policy before any run binding or model work exists.
-
-Integrated QA uses createContainedQaAdapter with a command name, argument array, bounded timeout and output limit. The child receives a final JSON argument containing the scenario and sequence context and returns one JSON scenario result on stdout. Plain in-process callbacks fail preflight. Descendants are terminated before state and credential checks. Windows uses an AppContainer plus a Job Object assigned before execution; Linux fails preflight because user-manager IPC can launch helpers outside its cgroup; verified manager isolation is required before Linux execution is enabled. macOS also remains unavailable. QA still has a conservative interruption boundary: a mutable receipt cannot establish that an interrupted callback finished. Resume accepts QA only when its durable phase was already completed, and never reconciles an in-flight QA effect as applied from its receipt. This also applies to interruption after a passing QA receipt is published. Such callbacks require operator reconciliation; supplying an absent adapter remains safe only for the recorded attempt that invoked no callback and produced no QA receipt.
-
-Fresh phase execution requires an absent receipt and evaluates its configured gates; receipt reuse belongs only to reconciliation of an already in-flight effect. A pre-created receipt or publication collision is terminal protected-state tampering. Verification checks ignored credential paths and hashes after every command, and changing those files cannot produce passing evidence.
-
-Local workflow receipts preserve typed control fields and redact free-text payloads before JSON serialization. Independent review parses bounded raw output in memory and retains a validated structured verdict separately from redacted display artifacts. Freshness includes discovered ignored credential paths and content hashes; QA cannot modify, remove, or add these files and retain passing evidence. Receipts from the earlier AC-012 worktree-only fingerprint are conservatively stale under the credential-aware fingerprint and require a new run.
-
-After each side effect and phase result, record a safe checkpoint. Resume validates state, locks the run, reconciles Git/external systems, invalidates stale evidence, and continues from the first incomplete safe transition.
-
-Pacing may enforce cooldowns, quiet hours, attempt/time ceilings, stop-after-current-task, and polling backoff.
+- Persist an attempt/effect identity before invoking an adapter and persist evidence before advancing.
+- Bind receipts to workbook/task/config/role/runner/model/Git/workspace and relevant executable/resource identity.
+- Successful current receipts may reconcile without repeating an effect.
+- Interrupted mutable/model/QA/completion effects remain ambiguous unless the adapter can prove the recorded identity's outcome.
+- Stale or forged evidence never advances state.
+- Attempts, elapsed budgets, backoff, pauses, blockers, completed tasks, and current ownership survive restart.
+- The final per-task summary is immutable; later repository completion appends/references new evidence rather than rewriting history silently.
 
 ## Terminal outcomes
 
-- Repository task `done`: every applicable repository gate passed; never implied by local handoff. The durable engine reports local `completed` only for explicitly permitted local exceptions, not repository task completion.
-- `paused`: deliberately stopped at a resumable boundary.
-- `blocked`: input, authority, or an external condition is required.
-- `failed`: recovery policy is exhausted.
-- `canceled`: deliberately ended and safely reconciled.
+- `continued`: task completed under applicable gates and another task became eligible.
+- `completed`: no selected workbook work remains and all selected tasks are repository-complete.
+- `handoff`: local evidence is ready but an external/human gate owns the next transition.
+- `paused`: stopped deliberately at a safe resumable boundary.
+- `blocked`: named input, authority, credential, policy, or external state is required.
+- `failed`: bounded recovery is exhausted or a terminal safety/correctness failure occurred.
+- `canceled`: deliberately ended after effects were reconciled.
+
+Current CLI outcomes remain `completed`, `paused`, `blocked`, or `failed`; the richer workbook outcomes are target behavior and must not be advertised as implemented before their tasks complete.

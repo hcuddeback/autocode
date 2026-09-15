@@ -1,18 +1,19 @@
 # AutoCode system state
 
-**Last verified:** 2026-09-14
+**Last verified:** 2026-09-15 documentation/code audit against `main` at `be5b144`
 
-**Stage:** AC-001 through AC-014 complete and merged; remaining MVP 1 acceptance awaits JIT selection
+**Stage:** AC-001 through AC-014 remain complete historical delivery; AC-015 is the single ready task in the canonical MVP 1 workbook
 
-**Current release:** MVP 1 — one-task durable workflow foundation
+**Current release target:** MVP 1 — ordered JIT task workbook
 
 **Production:** Not deployed
 
 ## What is true now
 
 - The clean public repository exists.
-- The product, architecture, workflow, security, release, and task contracts are documented.
-- A strict TypeScript foundation initializes local state, selects dependency-ready tasks, prepares commit-bound planning artifacts, invokes scoped role-separated Codex sessions, runs configured deterministic checks with retained evidence, applies reusable review/QA/fix policies, enforces configured completion gates, and executes bounded ordered effect phases through durable pause/resume checkpoints, reconciliation, and persisted pacing/retry budgets.
+- Product acceptance, target architecture, workflow, security, release, and the canonical task workbook are documented.
+- A strict TypeScript foundation initializes local state, selects one dependency-ready materialized task, prepares commit-bound planning artifacts, invokes scoped role-separated Codex sessions, runs configured deterministic checks with retained evidence, applies reusable review/QA/fix policies, enforces configured completion gates, and executes bounded ordered effect phases through durable pause/resume checkpoints, reconciliation, and persisted pacing/retry budgets.
+- The target architecture separates planner, implementer, reviewer, and fixer roles from runner adapters and optional models. The implementation does not yet conform: config has no role assignments and `workflow.ts` directly consumes Codex-specific options/session records.
 
 ## Evidence level
 
@@ -34,15 +35,15 @@
 
 ## Known gaps and blockers
 
-- PR #19 defines MVP 2 as a future sequential batch milestone after the remaining MVP 1 acceptance outcomes. Its initial unattended chain proof is local-only with explicit exceptions; PR-required tasks retain operator-managed publication/merge and block dependents until repository completion and merged-base reconciliation. Batch execution and this reconciliation are requirements, not implemented capabilities.
-
-- CI, required CLI QA adapters/QA-fix rounds, durable task ownership and final immutable summaries are absent. Remote lifecycle adapters are deferred under D-007; repository task completion updates remain operator-managed in MVP 1. Native Codex continuation is unused; fresh scoped roles provide the documented fallback.
+- The former MVP 2 sequential batch description is superseded by D-008: ordered workbook execution is the MVP 1 product target. `tasks/README.md` is the single sequencing/state authority; only AC-015 is materialized and ready.
+- Configurable role/runner/model resolution, workbook parsing/eligibility, durable task ownership, state updates/continuation, required CLI QA adapters/QA-fix rounds, and final immutable summaries are absent.
+- Remote lifecycle adapters are deferred under D-007/D-008; repository task completion updates remain operator-managed until the workbook state task implements a safe boundary. Fresh scoped Codex sessions provide the current implementation, not a provider-neutral contract.
 - PR #13 merged as `63e8a49`. AC-012 merged in PR #14 as 6d72cfd after verified head 0a4e877. Integrated Codex, QA and verification share Windows AppContainer/Job containment; protected metadata writes and credential access are denied before execution, sanitized environments omit operator tokens, and tampering durably terminates runs. Fresh receipts cannot be pre-created; interrupted QA/completion require operator reconciliation. The latest boundary corrections below preserve concurrent ACL hardening and prevent trusted-host Git helpers from escaping containment. All review conversations and configured GitGuardian gates passed; the owner merged the PR. Node captured-child pipes, cross-volume batch execution and live authenticated compatibility remain unaccepted; unsupported commands fail closed.
 - D-005 permits owner-accepted critical chat review and scoped publication after checks/QA. The owner ended further continuous bot-review requests for PR #14; final verified dispositions and configured merge gates passed before human merge.
 - Linux and macOS subprocess execution fail closed; PRODUCT's three-platform acceptance remains open.
 - License has not been selected and added.
 
-See [the MVP audit](docs/MVP_AUDIT.md), refreshed against merged source 6d72cfd on 2026-09-14, for requirement-by-requirement code evidence and remaining acceptance/release gaps. Its final completion evidence is distinguished from historical pre-merge checks; runtime checks were not rerun for the documentation refresh. The complete MVP is not yet accepted or released.
+See [the MVP audit](docs/MVP_AUDIT.md), refreshed against `main` at be5b144 on 2026-09-15, for AC-001–AC-014 reconciliation, current implementation evidence, contradictions resolved, and remaining acceptance/release gaps. Historical runtime evidence was inspected but not rerun or promoted by this documentation audit. MVP 1 is not yet accepted or released.
 
 ## Latest pnpm upgrade, 2026-09-14
 
@@ -52,9 +53,9 @@ The owner requested the latest pnpm release after the compatible refresh. packag
 
 Updated pnpm to 11.27.0, Node 24 types to 24.13.4, ESLint to 10.10.0, typescript-eslint to 8.70.0 and YAML to 2.9.1; regenerated the lockfile. TypeScript remains at 6.0.3 within typescript-eslint's supported peer range; Node 24 and the current dependency major versions are retained. Formatting, lint, typecheck, clean build, built CLI help and frozen-lockfile installation pass. The complete Windows suite passes 306 of 310 cases with four platform skips and no failures or cancellations, including fake-Codex CLI run/resume and pnpm CMD-shim workflow QA. Current-chat critical diff review found no manifest/lockfile mismatch, unsupported peer combination, unrelated source change or exposed run artifacts. Authenticated live Codex, other operating systems and distribution installation were not verified; existing release limitations remain. PR #20 review finding 4010320695 correctly identified the stale source-guide pnpm prerequisite; the guide was corrected to match package.json at 11.27.0 before the latest-pnpm upgrade above. A tracked-file search confirms no remaining 11.25.0 pins. Documentation formatting and diff checks pass; runtime verification above was not rerun for this documentation-only correction.
 
-## PR #19 requirements review, 2026-09-14
+## Historical PR #19 requirements review, 2026-09-14
 
-Current-chat review verified both reported findings against PRODUCT, WORKFLOW, D-007 and the MVP audit. The P1 dependent-advancement finding is addressed by explicit operator publication/merge, completion evidence and target-branch reconciliation requirements, with separate local-only and PR-required acceptance scenarios. The P2 acceptance-queue finding is addressed by scheduling remaining MVP 1 acceptance outcomes before MVP 2 implementation. The scoped diff changes documentation only; no runtime behavior, merge authority or release acceptance is claimed. Scoped formatting, local document links, lint, typecheck, compilation, CLI help and diff checks pass. Runtime tests, live Codex, platform QA and clean-install acceptance were not rerun for this documentation change.
+At that checkpoint, review verified both reported findings against the then-current PRODUCT, WORKFLOW, D-007 and MVP audit. It added explicit operator publication/merge, completion evidence and target-branch reconciliation requirements, with separate local-only and PR-required acceptance scenarios, and placed remaining acceptance before the then-named MVP 2 pipeline. D-008 now incorporates the sequential workbook into MVP 1 while preserving those safety requirements. The historical scoped validation remains evidence for PR #19 only; it is not evidence for this reconciliation or current runtime acceptance.
 
 ## AC-014 user documentation, 2026-09-14
 
@@ -66,7 +67,7 @@ D-007 selects durable local execution through verified operator handoff for MVP 
 
 ## AC-012 completion, 2026-09-14
 
-PR #14 merged as 6d72cfd2b3994eaaf71cca9ff4508f9a712753e6 at 17:59:09 UTC. Final head 0a4e877 passed GitGuardian; all 49 review conversations were resolved and GitHub reported CLEAN. Verification: 306 source passes and four platform skips, all 62 production-JavaScript checks and eleven privacy controls pass, plus configured format/lint/typecheck/build and CLI smoke. The completed contract is tasks/completed/AC-012.md. This is completion of the bounded local fixture outcome, with broader MVP/live compatibility gaps still recorded above and in docs/MVP_AUDIT.md. No implementation task is active. Nonblocking maintainability follow-up stays separate.
+PR #14 merged as 6d72cfd2b3994eaaf71cca9ff4508f9a712753e6 at 17:59:09 UTC. Final head 0a4e877 passed GitGuardian; all 49 review conversations were resolved and GitHub reported CLEAN. Verification: 306 source passes and four platform skips, all 62 production-JavaScript checks and eleven privacy controls pass, plus configured format/lint/typecheck/build and CLI smoke. The completed contract is tasks/completed/AC-012.md. This is completion of the bounded local fixture outcome, with broader MVP/live compatibility gaps still recorded above and in docs/MVP_AUDIT.md. AC-015 is now the active queue entry; no AC-012 implementation remains active. Nonblocking maintainability follow-up stays separate.
 
 ## Historical AC-012 boundary checkpoints
 
@@ -176,11 +177,11 @@ The full serialized suite after these source changes passed 201 tests with four 
 
 ## Current milestone
 
-**Outcome:** Execute one low-risk task locally through persisted phase transitions and deterministic verification, including interruption-safe resume.
+**Outcome:** Implement the first canonical workbook task, AC-015, so planner, implementer, reviewer, and fixer resolve through provider-neutral runner/model assignments while Codex remains the first adapter.
 
-**Evidence expected:** A fixture repository completes a recorded run; terminating and resuming does not repeat completed side effects.
+**Evidence expected:** Configuration/adapter contract tests and disposable contained CLI QA prove safe defaults, explicit role/model mapping, distinct review identity, fail-closed invalid assignments, fresh evidence, and resume without repeated effects.
 
-**Stop condition:** Pause scope expansion if the vertical slice requires a hosted service, direct provider API, or broad multi-agent runtime.
+**Stop condition:** Do not implement workbook scheduling, a second production runner, hosted services, direct provider APIs, or parallel execution in AC-015.
 
 ## AC-001 evidence
 
@@ -280,9 +281,7 @@ The full serialized suite after these source changes passed 201 tests with four 
 
 ## Next task
 
-AC-012 verification was refreshed on 2026-09-12 against implementation commit `1509c66`: formatting, lint, typecheck, compilation, built CLI help, and diff checks pass. The full serialized suite outside the restricted Windows sandbox passes 193 tests with four platform-specific skips and no failures, including CLI fixture QA and interruption/resume. The restricted run reproduced the known concurrent-initialization failure and was stopped before the full rerun. This historical checkpoint preceded the owner-accepted chat review and D-005 publication authorization; current correction evidence is recorded above.
-
-Finish required review/merge gates for AC-012 PR #14; the owner-accepted chat review is recorded above. Then select the next remaining MVP outcome from `docs/MVP_AUDIT.md` after resolving the external lifecycle scope question.
+Exactly one task is ready: [AC-015](tasks/AC-015.md), **Configure provider-neutral workflow roles with a Codex adapter**. Its acceptance requires validated role-to-runner/model configuration; a provider-neutral capability/result/evidence contract; preserved contained Codex behavior and safe defaults; fail-closed invalid assignments; distinct independent review; receipt freshness and interruption-safe resume; deterministic checks; and disposable fake-runner CLI QA. AC-016 remains waiting and must not be materialized until AC-015 is complete and the workbook is reconciled against then-current `main`.
 
 ## Recently completed
 
