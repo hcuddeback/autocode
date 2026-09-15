@@ -35,19 +35,7 @@ A role is a workflow responsibility. A runner is an executable adapter that can 
 
 ## Canonical MVP 1 journey
 
-```text
-load ordered workbook and retained evidence
-  -> select next eligible task and acquire ownership
-  -> generate a current JIT plan
-  -> implement
-  -> deterministically validate
-  -> independently review
-  -> fix and revalidate/re-review within bounded policy
-  -> run applicable QA and repeat bounded recovery after changes
-  -> retain immutable evidence and update canonical state
-  -> recalculate eligibility
-  -> continue, pause, block, fail, or resume without repeating completed effects
-```
+The canonical execution-loop diagram is [the target execution loop in the MVP 1 workbook](../tasks/README.md#target-execution-loop). The acceptance criteria below define the required outcomes for that loop.
 
 Initial execution is sequential: one task at a time. The operator may start a bounded workbook run once; AutoCode, not the operator, determines each subsequent eligible task.
 

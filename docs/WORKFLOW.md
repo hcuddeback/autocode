@@ -15,17 +15,7 @@ Audits, `SYSTEM.md`, README files, and completed task prose report evidence; the
 
 ## Target workbook loop
 
-```text
-reconcile canonical workbook + completed records + durable/repository evidence
-  -> derive READY / WAITING / BLOCKED / RUNNING / REVIEWING / FIXING / DONE / FAILED
-  -> select the first eligible task
-  -> acquire durable ownership
-  -> execute the task kernel
-  -> retain immutable summary and applicable handoff/completion evidence
-  -> update canonical task state only when gates permit
-  -> recalculate eligibility
-  -> continue or stop explicitly
-```
+[The target execution loop in the MVP 1 workbook](../tasks/README.md#target-execution-loop) is canonical. This document defines how that loop derives state, assigns roles, executes the task kernel, and enforces repository handoff boundaries.
 
 One task executes at a time. The same workbook run resumes after interruption. It does not repeat completed effects, treat a local handoff as repository completion, or start a dependent from an unmerged predecessor.
 

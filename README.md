@@ -16,17 +16,7 @@ Codex CLI is the first supported runner adapter. The target architecture assigns
 
 ## Product workflow
 
-```text
-select next eligible workbook task
-  -> JIT plan
-  -> implement
-  -> deterministic validation
-  -> independent review
-  -> bounded fix and revalidation/re-review
-  -> applicable QA and recovery
-  -> retain immutable evidence and update task state
-  -> continue or resume
-```
+The canonical execution-loop diagram is [the target execution loop in the MVP 1 workbook](tasks/README.md#target-execution-loop). Product acceptance is defined in [PRODUCT](docs/PRODUCT.md); this README does not maintain a second version of the loop.
 
 The initial workbook executes one task at a time. PR-required work stops at a verified local handoff until operator-managed repository gates are complete; a handoff does not mark the task done or unblock dependents.
 
