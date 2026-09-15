@@ -158,7 +158,7 @@ Existing `sessions`, `verify`, and policy APIs remain individual boundaries; the
 
 ## Current next step
 
-AC-012 is merged in [PR #14](https://github.com/hcuddeback/autocode/pull/14). [AC-013](tasks/completed/AC-013.md) settled the lifecycle boundary and is merged in [PR #16](https://github.com/hcuddeback/autocode/pull/16). [AC-014](tasks/AC-014.md) documents the current operator journey. Select remaining local acceptance outcomes just in time from [the audit](docs/MVP_AUDIT.md).
+AC-012 is merged in [PR #14](https://github.com/hcuddeback/autocode/pull/14). [AC-013](tasks/completed/AC-013.md) settled the lifecycle boundary and is merged in [PR #16](https://github.com/hcuddeback/autocode/pull/16). [AC-014](tasks/completed/AC-014.md) documents the current operator journey and is complete after merge in [PR #18](https://github.com/hcuddeback/autocode/pull/18). Select remaining local acceptance outcomes just in time from [the audit](docs/MVP_AUDIT.md).
 
 ## Guardrail
 
