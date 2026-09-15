@@ -82,16 +82,7 @@ Canonical repository state changes only after the evidence summary is durable an
 
 ## Task-kernel phases
 
-```text
-intake/ownership
-  -> JIT plan (planner)
-  -> implementation (implementer)
-  -> deterministic validation
-  -> independent review (reviewer)
-  -> bounded fix (fixer) -> fresh validation -> fresh review
-  -> applicable QA -> bounded fix/revalidation/review/QA when code changes
-  -> immutable summary/handoff
-```
+The canonical execution-loop diagram is [the target execution loop in the MVP 1 workbook](../tasks/README.md#target-execution-loop). Architecturally, its task-kernel steps resolve planner, implementer, reviewer, and fixer assignments through the role contract above, while validation, QA, evidence, and state transitions remain core workflow responsibilities.
 
 Successful existing receipts can reconcile without repeating their effect when every binding is current. Ambiguous effects block. Changes invalidate downstream evidence.
 

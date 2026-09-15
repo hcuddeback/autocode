@@ -53,17 +53,7 @@ The implementation does not:
 
 `PRODUCT.md` now defines M1-01 through M1-07. `tasks/README.md` is the only sequencing/state authority and maps them to AC-015–AC-021. The ordered control loop is:
 
-```text
-select eligible task
-  -> durable ownership and current JIT plan
-  -> configured implementer
-  -> deterministic validation
-  -> configured independent reviewer
-  -> configured fixer and fresh validation/review
-  -> applicable QA and bounded recovery
-  -> immutable evidence summary and canonical state update
-  -> recalculate and continue/resume
-```
+[The target execution loop in the MVP 1 workbook](../tasks/README.md#target-execution-loop) is canonical. This audit reports implementation evidence and gaps against that loop; it does not maintain a separate version.
 
 Repository-completion evidence, not a local success claim, controls dependencies. PR-required tasks stop at handoff until operator-managed gates and merged-base reconciliation permit advancement.
 
