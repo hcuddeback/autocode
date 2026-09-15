@@ -17,6 +17,8 @@ Audits, `SYSTEM.md`, README files, and completed task prose report evidence; the
 
 [The target execution loop in the MVP 1 workbook](../tasks/README.md#target-execution-loop) is canonical. This document defines how that loop derives state, assigns roles, executes the task kernel, and enforces repository handoff boundaries.
 
+Workbook state derivation distinguishes the queue states `READY`, `WAITING`, `BLOCKED`, and `DONE`; the active execution states `RUNNING`, `REVIEWING`, and `FIXING`; and terminal `FAILED`. These derived runtime states do not create a second manual status ledger. They must reconcile from the canonical workbook, task records, durable ownership/effects, and repository evidence.
+
 One task executes at a time. The same workbook run resumes after interruption. It does not repeat completed effects, treat a local handoff as repository completion, or start a dependent from an unmerged predecessor.
 
 ## Role assignment
