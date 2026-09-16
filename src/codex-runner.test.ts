@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { assertRunnerResourcesUnchanged } from './codex-runner.js';
+import { preflightCodexSession } from './codex.js';
 import { snapshotQaInputs } from './qa-inputs.js';
 
 test('runner resource freshness rejects executable content changes', async () => {
@@ -21,6 +22,23 @@ test('runner resource freshness rejects executable content changes', async () =>
     await assert.rejects(
       () => assertRunnerResourcesUnchanged(root, snapshot),
       /Codex runner resources changed/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Codex preflight rejects an existing relative prefix resource', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+  try {
+    await writeFile(path.join(root, 'runner.mjs'), 'export {}\n');
+    await assert.rejects(
+      () =>
+        preflightCodexSession(root, {
+          command: process.execPath,
+          commandPrefixArguments: ['runner.mjs'],
+        }),
+      /Codex executable or resources could not be resolved safely/,
     );
   } finally {
     await rm(root, { recursive: true, force: true });
