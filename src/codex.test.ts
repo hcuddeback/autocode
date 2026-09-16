@@ -632,6 +632,10 @@ async function sessionFixture(mode: string) {
   );
   const task = selectedTask();
   await writeFile(path.join(worktree, 'tasks', 'AC-004.md'), task);
+  await writeFile(
+    path.join(worktree, 'tasks', 'README.md'),
+    `# Workbook\n\n## Canonical MVP 1 sequence\n\n| Order | Task | Workbook outcome | Product criteria | State |\n| --- | --- | --- | --- | --- |\n| 1 | [AC-003](completed/AC-003.md) | Fixture | M1-01 | \`done\` |\n| 2 | [AC-004](AC-004.md) | Fixture | M1-01 | \`ready\` |\n\n## Next\n`,
+  );
   await git(worktree, ['add', 'tasks']);
   await git(worktree, ['commit', '-m', 'select task']);
   const head = (await git(worktree, ['rev-parse', 'HEAD'])).trim();

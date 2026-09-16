@@ -12,7 +12,8 @@ import {
   snapshotQaInputs,
   type QaInputSnapshot,
 } from './qa-inputs.js';
-import { loadTaskCatalog, selectProjectTask } from './tasks.js';
+import { assertSelectedInputsInHead, selectProjectTask } from './tasks.js';
+import { acquireTaskOwnership, assertTaskOwnership } from './ownership.js';
 import { prepareImplementationPlan } from './planning.js';
 import {
   assertCredentialFilesUnchanged,
@@ -132,6 +133,7 @@ export async function runProjectWorkflow(
   if (selected.kind !== 'selected')
     throw new Error('workflow requires one dependency-ready ready task');
   const task = selected.task;
+  const workbookSha256 = selected.workbook.sha256;
   const head = await git(root, ['rev-parse', '--verify', 'HEAD']);
   const branch = await git(root, ['branch', '--show-current']);
   const runId = `workflow-${task.taskId.toLowerCase()}-${head.slice(0, 12)}`;
@@ -237,6 +239,15 @@ export async function runProjectWorkflow(
     throw new Error(
       'operator policy cannot bypass task-required production verification',
     );
+  await assertSelectedInputsInHead(root, selected);
+  const ownership = await acquireTaskOwnership(root, {
+    runId,
+    taskId: task.taskId,
+    workbookSha256,
+    taskSha256: hash(task.contents),
+    headCommit: head,
+    branch,
+  });
   const preparedRelative = `.autocode/runs/${task.taskId}-${head.slice(0, 12)}`;
   if (
     (await optionalRead(root, `${preparedRelative}/planning.json`)) ===
@@ -268,6 +279,8 @@ export async function runProjectWorkflow(
       verificationResources,
       head,
       branch,
+      workbook: workbookSha256,
+      ownership: ownership.record.ownershipId,
       task: hash(task.contents),
       roles: config.roles,
       runnerIdentities,
@@ -296,13 +309,15 @@ export async function runProjectWorkflow(
       (await git(root, ['branch', '--show-current'])) !== branch
     )
       throw new Error('workflow Git identity changed');
-    const catalog = await loadTaskCatalog(root);
+    const currentSelection = await selectProjectTask(root);
     if (
-      catalog.find((entry) => entry.taskId === task.taskId)?.contents !==
-        task.contents ||
-      (await selectProjectTask(root)).kind !== 'selected'
+      currentSelection.kind !== 'selected' ||
+      currentSelection.task.taskId !== task.taskId ||
+      currentSelection.task.contents !== task.contents ||
+      currentSelection.workbook.sha256 !== workbookSha256
     )
       throw new Error('workflow task or readiness changed');
+    await assertTaskOwnership(root, ownership.record);
     if (
       (await safeRead(root, CONFIG_FILE)) !== configText ||
       (await optionalRead(root, '.autocode/workflow.json')) !== policyText ||
@@ -499,8 +514,9 @@ export async function runProjectWorkflow(
           )
             throw new WorkflowReceiptTamperingError();
           const previous = await latest();
-          if (
-            previous &&
+          if (previous === undefined) {
+            await assertTaskOwnership(root, ownership.record);
+          } else if (
             previous.workspace !== (await currentWorkspace(previous.qaInputs))
           )
             return {
