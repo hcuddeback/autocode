@@ -421,6 +421,7 @@ export async function runProjectWorkflow(
   }
 
   async function assertFreshExecution(record: RunnerResult): Promise<void> {
+    const currentExecutionId = await retainedExecutionId(record.executionId);
     for (const id of phaseIds) {
       const stored = (await receipt(id))?.evidence as
         RunnerResult | { result?: RunnerResult } | undefined;
@@ -428,11 +429,20 @@ export async function runProjectWorkflow(
         stored && 'executionId' in stored
           ? stored.executionId
           : stored?.result?.executionId;
-      if (executionId === record.executionId)
+      if (executionId === currentExecutionId)
         throw new Error(
           'all integrated roles require fresh distinct execution identities',
         );
     }
+  }
+
+  async function retainedExecutionId(executionId: string): Promise<string> {
+    const credentials = await discoverWorkspaceCredentials(root);
+    return redactWorkflowPayload(
+      executionId,
+      credentials.secrets,
+      'executionId',
+    ) as string;
   }
 
   function retainedRunnerIdentity(record: RunnerResult) {
@@ -586,7 +596,7 @@ export async function runProjectWorkflow(
                     'independent review did not retain a validated verdict',
                   );
                 if (
-                  record.executionId ===
+                  (await retainedExecutionId(record.executionId)) ===
                   ((await receipt('implementation'))?.evidence as RunnerResult)
                     ?.executionId
                 )

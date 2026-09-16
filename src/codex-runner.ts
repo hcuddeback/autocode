@@ -1,5 +1,6 @@
 import type { RoleAssignmentConfig, WorkflowRole } from './config.js';
 import { createHash } from 'node:crypto';
+import { lstat, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import {
   CodexStateTamperingError,
@@ -84,9 +85,7 @@ export class CodexRunnerAdapter implements RunnerAdapter {
       .digest('hex');
     const targets = [
       options.command!,
-      ...(options.commandPrefixArguments ?? []).filter((argument) =>
-        path.isAbsolute(argument),
-      ),
+      ...(await discoverRunnerResources(options.commandPrefixArguments ?? [])),
     ].filter((target, index, values) => values.indexOf(target) === index);
     const resourceKey = JSON.stringify({ root, targets });
     if (this.resourceSnapshot === undefined) {
@@ -155,6 +154,43 @@ export class CodexRunnerAdapter implements RunnerAdapter {
       },
     };
   }
+}
+
+const STATIC_MODULE =
+  /(?:\b(?:import|export)\s+(?:[^'";]*?\s+from\s+)?|\brequire\s*\(|\bimport\s*\()\s*['"]([^'"]+)['"]/g;
+const SCRIPT_RESOURCE = /\.(?:c|m)?(?:j|t)sx?$/i;
+
+async function discoverRunnerResources(
+  prefixArguments: readonly string[],
+): Promise<string[]> {
+  const resources: string[] = [];
+  const visited = new Set<string>();
+  async function visit(target: string): Promise<void> {
+    try {
+      const canonical = await realpath(target);
+      if (visited.has(canonical.toLowerCase())) return;
+      const info = await lstat(canonical);
+      if (!info.isFile() || info.isSymbolicLink()) throw new Error();
+      visited.add(canonical.toLowerCase());
+      resources.push(canonical);
+      if (resources.length > 31)
+        throw new Error('runner dependency limit exceeded');
+      if (!SCRIPT_RESOURCE.test(canonical)) return;
+      const contents = await readFile(canonical, 'utf8');
+      for (const match of contents.matchAll(STATIC_MODULE)) {
+        const specifier = match[1]!;
+        if (!specifier.startsWith('./') && !specifier.startsWith('../'))
+          continue;
+        await visit(path.resolve(path.dirname(canonical), specifier));
+      }
+    } catch {
+      throw new Error(
+        'Codex runner dependencies could not be inspected safely',
+      );
+    }
+  }
+  for (const argument of prefixArguments) await visit(argument);
+  return resources;
 }
 
 export async function assertRunnerResourcesUnchanged(

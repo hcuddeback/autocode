@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -50,19 +50,26 @@ test('Codex preflight rejects direct and indirect relative prefix resources', as
 });
 
 test(
-  'reused Codex adapters reject changed resources during preflight',
+  'reused Codex adapters reject changed transitive resources during preflight',
   { skip: process.platform !== 'win32' },
   async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
     try {
-      const executable = path.join(root, 'runner.mjs');
-      await writeFile(executable, 'export const revision = 1;\n');
+      const runnerDirectory = path.join(root, 'runner');
+      await mkdir(runnerDirectory);
+      const executable = path.join(runnerDirectory, 'runner.mjs');
+      const helper = path.join(runnerDirectory, 'helper.mjs');
+      await writeFile(
+        executable,
+        "import './helper.mjs';\nexport const revision = 1;\n",
+      );
+      await writeFile(helper, 'export const helper = 1;\n');
       const adapter = new CodexRunnerAdapter({
         command: process.execPath,
         commandPrefixArguments: [executable],
       });
       await adapter.prepare(root, 'planner', { runner: 'codex' });
-      await writeFile(executable, 'export const revision = 2;\n');
+      await writeFile(helper, 'export const helper = 2;\n');
       await assert.rejects(
         () => adapter.prepare(root, 'planner', { runner: 'codex' }),
         /Codex runner resources changed/,

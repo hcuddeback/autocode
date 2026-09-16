@@ -176,7 +176,8 @@ if (${JSON.stringify(credentials)}.length) {
     final = JSON.stringify(verdict);
   }
 }
-console.log(JSON.stringify({type:'thread.started',thread_id:randomUUID()}));
+const executionId = mode === 'credential-execution' ? ${JSON.stringify(credentials[0] ?? '')} : randomUUID();
+console.log(JSON.stringify({type:'thread.started',thread_id:executionId}));
 console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:final}}));
 console.log(JSON.stringify({type:'turn.completed'}));
 `,
@@ -787,6 +788,20 @@ test('opaque runner evidence is fully redacted without changing runner controls'
   assert.equal(redacted.finalMessage.includes(secret), false);
   assert.equal(JSON.stringify(redacted.evidence).includes(secret), false);
   assert.equal(JSON.stringify(redacted.evidence).includes('true'), false);
+});
+
+test('credential-bearing duplicate execution IDs remain detectable after persistence redaction', async () => {
+  const secret = '12345678-1234-4234-8234-123456789abc';
+  const f = await fixture('credential-execution', 'local', [secret]);
+  try {
+    await assert.rejects(
+      () => runProjectWorkflow(f.root, f.options),
+      /effect adapter failed for phase implementation; reconciliation is required/,
+    );
+    assert.deepEqual(await f.calls(), ['planning', 'implementation']);
+  } finally {
+    await f.cleanup();
+  }
 });
 
 async function git(root: string, args: string[]): Promise<string> {
