@@ -4,7 +4,7 @@ AutoCode is a local-first TypeScript CLI for executing an ordered workbook of so
 
 **Status:** MVP 1 in development and acceptance
 
-**Current implementation:** durable one-task kernel using Codex CLI
+**Current implementation:** durable one-task kernel with configurable roles and a Codex CLI adapter
 
 **MVP 1 target:** ordered JIT task workbook with configurable role/runner/model assignments
 
@@ -12,7 +12,7 @@ AutoCode is a local-first TypeScript CLI for executing an ordered workbook of so
 
 **Last updated:** 2026-09-15
 
-Codex CLI is the first supported runner adapter. The target architecture assigns `planner`, `implementer`, `reviewer`, and `fixer` roles to configured runners and optional models; it does not hard-code the product to one provider. The current source still invokes Codex-specific session types, and [AC-015](tasks/AC-015.md) is the single next task that begins this separation.
+Codex CLI is the first supported runner adapter. The `planner`, `implementer`, `reviewer`, and `fixer` roles resolve through validated runner and optional model assignments. Core workflow receipts use provider-neutral execution/effect identity and bounded results; Codex prompts, process events, session parsing, and containment remain inside the adapter.
 
 ## Product workflow
 
@@ -32,7 +32,7 @@ autocode run [worktree]
 autocode resume [worktree]
 ```
 
-Today, `run` and `resume` operate one already-materialized `ready` task in its declared linked feature worktree. They use fresh Codex planning, implementation, review, and fix invocations, deterministic checks, explicit QA/completion policy, durable receipts, and conservative interruption recovery. They do not yet own/update task state or continue to a successor.
+Today, `run` and `resume` operate one already-materialized `ready` task in its declared linked feature worktree. They resolve configured roles, use fresh independent runner invocations, run deterministic checks, enforce explicit QA/completion policy, retain durable receipts, and recover conservatively after interruption. Codex is the only production runner currently registered. The workflow does not yet own/update task state or continue to a successor.
 
 ## Source setup and validation
 
@@ -67,7 +67,7 @@ This is development-checkout guidance, not clean-distribution evidence. See the 
 
 ## Current limits
 
-- Roles/runners/models are not configurable yet; current execution is Codex-specific.
+- Codex is the only production runner adapter; authenticated model/OS compatibility remains a later acceptance task.
 - The CLI does not schedule the ordered workbook, retain workbook ownership, update task state, or continue between tasks.
 - Required CLI QA configuration and automatic QA-fix recovery are absent.
 - Windows containment fixtures are verified, but some captured-pipe commands and authenticated live Codex remain unaccepted.

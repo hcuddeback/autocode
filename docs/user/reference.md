@@ -20,6 +20,19 @@ verification:
   maxOutputBytes: 1048576
 fixLoop:
   maxAttempts: 3
+roles:
+  planner:
+    runner: codex
+    model: gpt-5.6-plan
+  implementer:
+    runner: codex
+    model: gpt-5.6-code
+  reviewer:
+    runner: codex
+    model: gpt-5.6-review
+  fixer:
+    runner: codex
+    model: gpt-5.6-code
 ```
 
 | Setting                 | Meaning                                                                                                               |
@@ -33,10 +46,14 @@ fixLoop:
 | `timeoutMs`             | Positive integer, at most 86,400,000 ms per check.                                                                    |
 | `maxOutputBytes`        | Positive integer, at most 16,777,216 bytes of captured output per check.                                              |
 | `fixLoop.maxAttempts`   | Positive integer; the integrated workflow supports up to 19 rounds. The standalone config validator accepts up to 20. |
+| `roles.<role>.runner`   | Registered runner ID for exactly one of `planner`, `implementer`, `reviewer`, or `fixer`. Codex uses `codex`.         |
+| `roles.<role>.model`    | Optional runner-specific model ID. It changes execution identity/evidence, never role authority.                      |
 
 Keep the version, state directory and telemetry fields. Unknown keys are rejected. Initialization defaults to empty checks, a ten-minute timeout, 1 MiB output and three fix attempts. Verification stops at the first failing check and rejects workspace or protected-state changes; use check modes rather than formatters that rewrite source.
 
-The current schema has no role/runner/model section; Codex-specific options are supplied by the current workflow API. Configurable planner, implementer, reviewer, and fixer assignments are target behavior in AC-015, not accepted configuration yet.
+The `roles` section must contain exactly one assignment for every required role when present. Existing valid version-1 files without `roles` retain the safe migration default of `codex` for all four roles with the Codex CLI's own default model. New initialization writes those defaults explicitly. Unknown runners, malformed model IDs, incomplete role maps, unsupported model selection, and runner capability mismatches fail before durable or model effects. Codex is the only production adapter currently registered; the adapter contract permits later runners without granting them capabilities through configuration.
+
+Planner and reviewer assignments are always read-only. Implementer and fixer assignments receive the existing bounded worktree-write authority. A configured runner cannot escalate those authorities, and review must return a fresh execution identity distinct from implementation. Runner/model IDs and bounded redacted evidence are retained for resume freshness; credentials and inherited secret-bearing environments are not configuration fields.
 
 ## Workflow policy
 

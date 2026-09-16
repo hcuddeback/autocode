@@ -53,6 +53,8 @@ export interface CodexSessionOptions {
   commandPrefixArguments?: string[];
   timeoutMs?: number;
   maxOutputBytes?: number;
+  /** Adapter-owned runner-specific model selection. */
+  model?: string;
   /** Additional directories explicitly authorized by the trusted operator. */
   sandboxWriteDirectories?: readonly string[];
   /** Exact mutable files inside authorized writable roots. */
@@ -113,6 +115,11 @@ export async function preflightCodexSession(
     throw new Error(
       'Codex limits must be positive integers within the native range',
     );
+  if (
+    options.model !== undefined &&
+    !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(options.model)
+  )
+    throw new Error('Codex model identifier is invalid');
   const copied = {
     ...options,
     timeoutMs,
@@ -384,6 +391,7 @@ async function runRole(
   const arguments_ = [
     ...(options.commandPrefixArguments ?? []),
     'exec',
+    ...(options.model === undefined ? [] : ['--model', options.model]),
     '--json',
     '--color',
     'never',
