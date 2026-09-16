@@ -167,6 +167,8 @@ export class CodexRunnerAdapter implements RunnerAdapter {
 
 const STATIC_MODULE =
   /(?:\b(?:import|export)\s+(?:[^'";]*?\s+from\s+)?|\brequire\s*\(|\bimport\s*\()\s*['"]([^'"]+)['"]/g;
+const DYNAMIC_MODULE =
+  /\b(?:import|require)(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\r\n]*(?:\r?\n|$))*\(/g;
 const SCRIPT_RESOURCE = /\.(?:c|m)?(?:j|t)sx?$/i;
 
 async function discoverRunnerResources(
@@ -195,10 +197,16 @@ async function discoverRunnerResources(
         if (!/^\s*\(\s*['"]/.test(call))
           throw new Error('unsupported runner dependency syntax');
       }
-      for (const match of contents.matchAll(/\b(?:import|require)\s*\(/g)) {
+      for (const match of contents.matchAll(DYNAMIC_MODULE)) {
         const argument = contents.slice(match.index + match[0].length);
-        if (!/^\s*['"]/.test(argument))
-          throw new Error('nonliteral runner dependency');
+        const literal = argument.match(/^\s*(['"])([^'"]+)\1/);
+        if (literal === null) throw new Error('nonliteral runner dependency');
+        const specifier = literal[2]!;
+        if (path.isAbsolute(specifier)) await visit(specifier);
+        else if (specifier.startsWith('./') || specifier.startsWith('../'))
+          await visit(path.resolve(path.dirname(canonical), specifier));
+        else if (!isBuiltin(specifier))
+          throw new Error('package runner dependencies are unsupported');
       }
       for (const match of contents.matchAll(STATIC_MODULE)) {
         const specifier = match[1]!;
