@@ -653,13 +653,13 @@ async function sessionFixture(mode: string) {
   );
   const fake = path.join(base, 'fake-codex.mjs');
   const previousCommit = (await git(worktree, ['rev-parse', 'HEAD^'])).trim();
-  await writeFile(fake, fakeCodex());
+  await writeFile(fake, fakeCodex(mode));
   return {
     worktree,
     runDirectory,
     options: {
       command: process.execPath,
-      commandPrefixArguments: [fake, mode],
+      commandPrefixArguments: [fake],
       // Native profile/ACL setup runs inside the measured Windows host process.
       // Keep explicit short-timeout tests unchanged while allowing fixture startup.
       timeoutMs: process.platform === 'win32' ? 10_000 : 2_000,
@@ -701,8 +701,8 @@ function selectedTask(): string {
   return `---\ntask_id: AC-004\ntitle: Run sessions\nstatus: ready\npriority: high\nrisk: high\ndepends_on: [AC-003]\nbranch: feat/AC-004-codex-sessions\nowner: none\nlast_updated: 2026-09-02\nqa: not_applicable\ndeployment: not_applicable\npull_request: required\n---\n\n# Outcome\n\nRun role-separated sessions.\n`;
 }
 
-function fakeCodex(): string {
-  return `const mode = process.argv[2];
+function fakeCodex(mode: string): string {
+  return `const mode = ${JSON.stringify(mode)};
 import { writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 let input = '';
