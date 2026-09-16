@@ -159,3 +159,26 @@ test(
     }
   },
 );
+
+test(
+  'Codex adapters reject optional-chained runner dependencies',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.cjs');
+      await writeFile(executable, "require?.('./helper.cjs');\n");
+      await writeFile(path.join(root, 'helper.cjs'), 'module.exports = 1;\n');
+      const adapter = new CodexRunnerAdapter({
+        command: process.execPath,
+        commandPrefixArguments: [executable],
+      });
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex runner dependencies could not be inspected safely/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

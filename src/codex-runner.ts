@@ -179,6 +179,11 @@ async function discoverRunnerResources(
         throw new Error('unsupported runner entry script');
       if (!SCRIPT_RESOURCE.test(canonical)) return;
       const contents = await readFile(canonical, 'utf8');
+      for (const match of contents.matchAll(/\brequire\b/g)) {
+        const call = contents.slice(match.index + match[0].length);
+        if (!/^\s*\(\s*['"]/.test(call))
+          throw new Error('unsupported runner dependency syntax');
+      }
       for (const match of contents.matchAll(/\b(?:import|require)\s*\(/g)) {
         const argument = contents.slice(match.index + match[0].length);
         if (!/^\s*['"]/.test(argument))
