@@ -311,3 +311,34 @@ test(
     }
   },
 );
+
+test(
+  'Codex adapters require and bind manifests for batch command wrappers',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.cmd');
+      const helper = path.join(root, 'helper.cmd');
+      await writeFile(executable, '@call "%~dp0helper.cmd"\r\n');
+      await writeFile(helper, '@exit /b 0\r\n');
+      const missingManifest = new CodexRunnerAdapter({ command: executable });
+      await assert.rejects(
+        () => missingManifest.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex executable or resources could not be resolved safely/,
+      );
+      const adapter = new CodexRunnerAdapter({
+        command: executable,
+        runnerResourceFiles: [executable, helper],
+      });
+      await adapter.prepare(root, 'planner', { runner: 'codex' });
+      await writeFile(helper, '@exit /b 1\r\n');
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex runner resources changed/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

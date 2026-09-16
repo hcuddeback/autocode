@@ -136,6 +136,7 @@ export async function preflightCodexSession(
     copied.command = path.isAbsolute(command)
       ? await realpath(command)
       : await resolveExecutable(command, root);
+    const commandIsWrapper = /\.(?:cmd|bat)$/i.test(copied.command);
     if (
       copied.commandPrefixArguments.some(
         (argument) => !path.isAbsolute(argument),
@@ -147,7 +148,8 @@ export async function preflightCodexSession(
         (copied.runnerResourceFiles.length === 0 ||
           copied.commandPrefixArguments.some(
             (argument) => !copied.runnerResourceFiles.includes(argument),
-          )))
+          ))) ||
+      (commandIsWrapper && !copied.runnerResourceFiles.includes(copied.command))
     )
       throw new Error(
         'Codex prefix arguments require a complete absolute runner-resource manifest',
