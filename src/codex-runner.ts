@@ -1,6 +1,7 @@
 import type { RoleAssignmentConfig, WorkflowRole } from './config.js';
 import { createHash } from 'node:crypto';
 import { lstat, readFile, realpath } from 'node:fs/promises';
+import { isBuiltin } from 'node:module';
 import path from 'node:path';
 import {
   CodexStateTamperingError,
@@ -194,6 +195,8 @@ async function discoverRunnerResources(
         if (path.isAbsolute(specifier)) await visit(specifier);
         else if (specifier.startsWith('./') || specifier.startsWith('../'))
           await visit(path.resolve(path.dirname(canonical), specifier));
+        else if (!isBuiltin(specifier))
+          throw new Error('package runner dependencies are unsupported');
       }
     } catch {
       throw new Error(
