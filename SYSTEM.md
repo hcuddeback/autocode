@@ -192,6 +192,8 @@ The complete final suite passes 317 tests with four declared platform skips and 
 
 The owner-accepted current-chat critical review found and resolved four issues before final validation: runner-registry aliases could misstate adapter identity; adapter evidence was shallow-frozen and depended on the later receipt bound; unexpected top-level result fields could survive validation; and provider-neutral final messages were duplicated in retained receipts. Exact registry identity is now enforced, adapter evidence is bounded/deep-copied/deep-frozen JSON, results are reconstructed from an exact field set, and only planning retains the final message while other phases retain bounded runner identity/evidence. A stale credential-redaction assertion was updated to the new provider-neutral field and its focused regression plus the complete suite pass. Publication and remote repository gates remain; AC-015 is not marked done here.
 
+Verified implementation commit `21f4783` is published on `feat/AC-015-configurable-role-runners` in [PR #25](https://github.com/hcuddeback/autocode/pull/25). The active task is in review. Configured PR checks, remote review, human merge authorization, and post-merge workbook reconciliation remain pending; `tasks/README.md` is intentionally unchanged.
+
 ## AC-001 evidence
 
 - `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` pass.
