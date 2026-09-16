@@ -184,9 +184,9 @@ async function discoverRunnerResources(
       }
       for (const match of contents.matchAll(STATIC_MODULE)) {
         const specifier = match[1]!;
-        if (!specifier.startsWith('./') && !specifier.startsWith('../'))
-          continue;
-        await visit(path.resolve(path.dirname(canonical), specifier));
+        if (path.isAbsolute(specifier)) await visit(specifier);
+        else if (specifier.startsWith('./') || specifier.startsWith('../'))
+          await visit(path.resolve(path.dirname(canonical), specifier));
       }
     } catch {
       throw new Error(

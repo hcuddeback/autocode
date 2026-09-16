@@ -439,7 +439,52 @@ test('credential-bearing role models fail before runner or durable effects', asy
           ...f.options,
           runners: new Map([['codex', adapter]]),
         }),
-      /role models must not contain workspace credentials/,
+      /role runner and model identifiers must not contain workspace credentials/,
+    );
+    assert.equal(prepared, 0);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('credential-bearing runner IDs fail before adapter preparation', async () => {
+  const secret = 'credential-runner-0123456789';
+  const f = await fixture('success', 'local', [secret]);
+  try {
+    const configPath = path.join(f.root, '.autocode', 'config.yaml');
+    const config = parse(await readFile(configPath, 'utf8'));
+    config.roles = Object.fromEntries(
+      ['planner', 'implementer', 'reviewer', 'fixer'].map((role) => [
+        role,
+        { runner: secret },
+      ]),
+    );
+    await writeFile(configPath, stringify(config));
+    let prepared = 0;
+    const adapter: RunnerAdapter = {
+      id: secret,
+      revision: 'credential-runner-fixture-v1',
+      capabilities: {
+        roles: {
+          planner: 'read-only',
+          implementer: 'worktree-write',
+          reviewer: 'read-only',
+          fixer: 'worktree-write',
+        },
+        acceptsModel: true,
+      },
+      async prepare() {
+        prepared++;
+        throw new Error('runner preflight must not be reached');
+      },
+    };
+    await assert.rejects(
+      () =>
+        runProjectWorkflow(f.root, {
+          ...f.options,
+          runners: new Map([[secret, adapter]]),
+        }),
+      /role runner and model identifiers must not contain workspace credentials/,
     );
     assert.equal(prepared, 0);
   } finally {

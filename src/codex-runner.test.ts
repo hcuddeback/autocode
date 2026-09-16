@@ -108,3 +108,32 @@ test(
     }
   },
 );
+
+test(
+  'reused Codex adapters reject changed absolute imported resources',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.mjs');
+      const helper = path.join(root, 'helper.mjs');
+      await writeFile(
+        executable,
+        `import ${JSON.stringify(helper)};\nexport const revision = 1;\n`,
+      );
+      await writeFile(helper, 'export const helper = 1;\n');
+      const adapter = new CodexRunnerAdapter({
+        command: process.execPath,
+        commandPrefixArguments: [executable],
+      });
+      await adapter.prepare(root, 'planner', { runner: 'codex' });
+      await writeFile(helper, 'export const helper = 2;\n');
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex runner resources changed/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

@@ -160,12 +160,16 @@ export async function runProjectWorkflow(
   if (
     Object.values(config.roles).some(
       (assignment) =>
-        assignment.model !== undefined &&
-        redactSecrets(assignment.model, configurationCredentials.secrets) !==
-          assignment.model,
+        redactSecrets(assignment.runner, configurationCredentials.secrets) !==
+          assignment.runner ||
+        (assignment.model !== undefined &&
+          redactSecrets(assignment.model, configurationCredentials.secrets) !==
+            assignment.model),
     )
   )
-    throw new Error('role models must not contain workspace credentials');
+    throw new Error(
+      'role runner and model identifiers must not contain workspace credentials',
+    );
   if (config.fixLoop.maxAttempts > 19)
     throw new Error(
       'integrated workflow supports at most 19 fix rounds within the 64-phase limit',
