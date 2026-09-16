@@ -141,6 +141,7 @@ export async function preflightCodexSession(
       const wrapperResources = await discoverBatchWrapperResources(
         copied.command,
         root,
+        options.command === undefined,
       );
       if (options.command === undefined)
         copied.runnerResourceFiles = wrapperResources;
@@ -188,6 +189,7 @@ export async function preflightCodexSession(
 async function discoverBatchWrapperResources(
   executable: string,
   launchDirectory: string,
+  allowInstalledShimExpansion: boolean,
 ): Promise<string[]> {
   const resources: string[] = [];
   async function visit(wrapper: string): Promise<void> {
@@ -199,6 +201,15 @@ async function discoverBatchWrapperResources(
     const contents = await readFile(canonicalWrapper, 'utf8');
     if (Buffer.byteLength(contents) > 64 * 1024)
       throw new Error('Codex command wrapper is too large');
+    if (
+      !allowInstalledShimExpansion &&
+      /(?:^|[&|])\s*@?\s*(?:call\s+)?"?(?:%(?!~dp0|dp0%)[^%\r\n]+%|![^!\r\n]+!)/im.test(
+        contents,
+      )
+    )
+      throw new Error(
+        'Codex command wrapper executable expansion is unsupported',
+      );
     for (const match of contents.matchAll(
       /\bcall\s+(?:"([^"]+)"|([^\s&|<>]+))/gi,
     )) {

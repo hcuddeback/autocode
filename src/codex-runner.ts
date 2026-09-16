@@ -227,6 +227,8 @@ async function discoverRunnerResources(
         throw new Error('escaped runner dependency syntax is unsupported');
       if (COMPUTED_MODULE_LOADER.test(contents))
         throw new Error('computed runner dependency loaders are unsupported');
+      if (/\b_load\b/.test(contents))
+        throw new Error('private runner dependency loaders are unsupported');
       if (/\bcreateRequire\b/.test(contents))
         throw new Error('alternate runner dependency loaders are unsupported');
       for (const match of contents.matchAll(/\brequire\b/g)) {

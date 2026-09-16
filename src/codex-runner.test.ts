@@ -413,6 +413,34 @@ test(
 );
 
 test(
+  'Codex adapters reject private CommonJS dependency loaders',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.cjs');
+      const helper = path.join(root, 'helper.cjs');
+      await writeFile(
+        executable,
+        "module.constructor._load('./helper.cjs', module);\n",
+      );
+      await writeFile(helper, 'module.exports = 1;\n');
+      const adapter = new CodexRunnerAdapter({
+        command: process.execPath,
+        commandPrefixArguments: [executable],
+        runnerResourceFiles: [executable],
+      });
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex runner dependencies could not be inspected safely/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'runner resource identity preserves case-sensitive canonical paths',
   { skip: process.platform !== 'win32' },
   async (context) => {
@@ -539,6 +567,33 @@ test(
     try {
       const executable = path.join(root, 'runner.cmd');
       await writeFile(executable, '@call helper\r\n');
+      const adapter = new CodexRunnerAdapter({
+        command: executable,
+        runnerResourceFiles: [executable],
+      });
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex executable or resources could not be resolved safely/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'Codex adapters reject assembled batch executable expansions',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.cmd');
+      const helper = path.join(root, 'helper.cmd');
+      await writeFile(
+        executable,
+        '@set A=helper\r\n@set B=.cmd\r\n@%A%%B%\r\n',
+      );
+      await writeFile(helper, '@exit /b 0\r\n');
       const adapter = new CodexRunnerAdapter({
         command: executable,
         runnerResourceFiles: [executable],
