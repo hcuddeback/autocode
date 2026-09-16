@@ -582,6 +582,29 @@ test(
 );
 
 test(
+  'Codex adapters reject extensionless direct batch commands',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.cmd');
+      await writeFile(executable, '@helper\r\n');
+      await writeFile(path.join(root, 'helper.cmd'), '@exit /b 0\r\n');
+      const adapter = new CodexRunnerAdapter({
+        command: executable,
+        runnerResourceFiles: [executable],
+      });
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex executable or resources could not be resolved safely/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'Codex adapters reject assembled batch executable expansions',
   { skip: process.platform !== 'win32' },
   async () => {
@@ -732,12 +755,15 @@ test(
       const executable = path.join(root, 'runner.cmd');
       const helper = path.join(root, 'helper.mjs');
       const nested = path.join(root, 'nested.mjs');
-      await writeFile(executable, '@node "%~dp0helper.mjs"\r\n');
+      await writeFile(
+        executable,
+        `@${JSON.stringify(process.execPath)} "%~dp0helper.mjs"\r\n`,
+      );
       await writeFile(helper, "import './nested.mjs';\n");
       await writeFile(nested, 'export const nested = 1;\n');
       const adapter = new CodexRunnerAdapter({
         command: executable,
-        runnerResourceFiles: [executable, helper],
+        runnerResourceFiles: [executable, process.execPath, helper],
       });
       await assert.rejects(
         () => adapter.prepare(root, 'planner', { runner: 'codex' }),

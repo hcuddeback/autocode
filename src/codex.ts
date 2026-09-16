@@ -210,6 +210,41 @@ async function discoverBatchWrapperResources(
       throw new Error(
         'Codex command wrapper executable expansion is unsupported',
       );
+    if (!allowInstalledShimExpansion) {
+      const builtins = new Set([
+        'call',
+        'echo',
+        'exit',
+        'for',
+        'goto',
+        'if',
+        'rem',
+        'set',
+        'setlocal',
+        'endlocal',
+        'shift',
+        'title',
+      ]);
+      for (const segment of contents.split(/[\r\n&|]+/)) {
+        const command = segment.trim().replace(/^@/, '').trim();
+        if (command === '' || command.startsWith(':') || /^[()]$/.test(command))
+          continue;
+        const token = command
+          .match(/^(?:"([^"]+)"|([^\s]+))/)
+          ?.slice(1)
+          .find(Boolean);
+        if (
+          token !== undefined &&
+          !builtins.has(token.toLowerCase()) &&
+          !/\.(?:bat|cmd|cjs|js|mjs|cts|ts|mts|jsx|tsx|exe|ps1|psm1|psd1|vbs|vbe|wsf|wsh|py|pyw)$/i.test(
+            token,
+          )
+        )
+          throw new Error(
+            'Codex command wrapper command target is unsupported',
+          );
+      }
+    }
     for (const match of contents.matchAll(
       /\bcall\s+(?:"([^"]+)"|([^\s&|<>]+))/gi,
     )) {
