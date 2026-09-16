@@ -167,7 +167,7 @@ export class CodexRunnerAdapter implements RunnerAdapter {
 
 const MODULE_TRIVIA = String.raw`(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\r\n]*(?:\r?\n|$))`;
 const STATIC_MODULE = new RegExp(
-  String.raw`(?:\b(?:import|export)${MODULE_TRIVIA}+(?:[^'";]*?${MODULE_TRIVIA}+from${MODULE_TRIVIA}+)?|\brequire\s*\()\s*['"]([^'"]+)['"]`,
+  String.raw`(?:\b(?:import|export)(?![\w$])${MODULE_TRIVIA}*(?:[^'";]*?${MODULE_TRIVIA}*from${MODULE_TRIVIA}*)?|\brequire\s*\()\s*['"]([^'"]+)['"]`,
   'g',
 );
 const DYNAMIC_MODULE =

@@ -165,6 +165,36 @@ test(
 );
 
 test(
+  'Codex adapters track compact static runner dependencies',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.mjs');
+      const helper = path.join(root, 'helper.mjs');
+      await writeFile(helper, 'export const helper = 1;\n');
+      for (const source of [
+        "import'./helper.mjs';\n",
+        "import{helper}from'./helper.mjs';\n",
+      ]) {
+        await writeFile(executable, source);
+        const adapter = new CodexRunnerAdapter({
+          command: process.execPath,
+          commandPrefixArguments: [executable],
+          runnerResourceFiles: [executable],
+        });
+        await assert.rejects(
+          () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+          /Codex runner dependency is absent from its manifest/,
+        );
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'Codex adapters reject package-resolved runner dependencies',
   { skip: process.platform !== 'win32' },
   async () => {
