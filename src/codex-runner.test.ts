@@ -135,6 +135,32 @@ test(
 );
 
 test(
+  'Codex adapters reject alternate runner dependency loaders',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.mjs');
+      await writeFile(
+        executable,
+        "import { createRequire } from 'node:module';\nconst load = createRequire(import.meta.url);\nload('./helper.cjs');\n",
+      );
+      await writeFile(path.join(root, 'helper.cjs'), 'module.exports = 1;\n');
+      const adapter = new CodexRunnerAdapter({
+        command: process.execPath,
+        commandPrefixArguments: [executable],
+      });
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex runner dependencies could not be inspected safely/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'reused Codex adapters reject changed absolute imported resources',
   { skip: process.platform !== 'win32' },
   async () => {
