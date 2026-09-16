@@ -1,6 +1,6 @@
 # AutoCode system state
 
-**Last verified:** 2026-09-16 AC-015 review-fix verification through `e68d477` on `feat/AC-015-configurable-role-runners` from `main` at `8a842a2`
+**Last verified:** 2026-09-16 AC-015 review-fix verification through `511621a` on `feat/AC-015-configurable-role-runners` from `main` at `8a842a2`
 
 **Stage:** AC-001 through AC-014 remain complete historical delivery; AC-015 is implemented on its feature branch and remains the single active workbook task pending repository gates
 
@@ -200,7 +200,7 @@ Exact-head reviews of that fix found two additional P1 gaps: a direct relative `
 
 Later exact-head reviews found thirty more reported gaps. Reused adapters now refresh cached resources during every preflight and immediately before and after every role invocation, credential-bearing execution IDs persist only as deterministic hashes, transitive relative and absolute static imports from absolute prefix scripts and scripts reached through batch wrappers join the bounded runner-resource snapshot, new execution IDs are normalized through the same credential-aware path before freshness and reviewer-independence comparisons, package-resolved imports, alternate or computed loaders, nonliteral, comment-bearing, compact, Unicode-escaped dynamic or static imports, optional-chained calls, and unsupported entry scripts are rejected when their dependency graph cannot be enumerated, every prefix or primary command wrapper requires a complete trusted absolute resource manifest for filesystem-loaded code, default batch shims discover and bind their complete recursive file-dependency graph, plain relative batch dependencies resolve from the actual launch directory, dynamic batch expansion remaining after an approved wrapper-directory prefix is rejected, unsupported PowerShell, Python, and Windows script dependencies are recognized and rejected, canonical resource identity preserves case-sensitive Windows paths, credential-bearing runner or model assignments fail before adapter or durable effects, and the 256-KiB aggregate result ceiling preserves receipt headroom for secret-redaction expansion. Fresh workflow-order evidence supersedes the earlier evidence-only disposition of a late batch dependency; invocation-time rediscovery now rejects it before the reviewer effect. All forty-one local and configured-review findings are fixed with no deferred finding.
 
-Verified review-fix code head `e68d477` is on `feat/AC-015-configurable-role-runners` in [PR #25](https://github.com/hcuddeback/autocode/pull/25). Unsupported interpreter-driven batch script dependencies are recognized and rejected with focused regression evidence; exact-head Codex re-review, human merge authorization, and post-merge workbook reconciliation remain pending. `tasks/README.md` is intentionally unchanged.
+Verified review-fix code head `511621a` is on `feat/AC-015-configurable-role-runners` in [PR #25](https://github.com/hcuddeback/autocode/pull/25). Extensionless batch calls are rejected and standalone model arguments use workspace-secret redaction; exact-head Codex re-review, human merge authorization, and post-merge workbook reconciliation remain pending. `tasks/README.md` is intentionally unchanged.
 
 ## AC-001 evidence
 
