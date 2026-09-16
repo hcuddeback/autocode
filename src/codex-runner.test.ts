@@ -532,6 +532,28 @@ test(
 );
 
 test(
+  'Codex adapters reject extensionless batch call targets',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.cmd');
+      await writeFile(executable, '@call helper\r\n');
+      const adapter = new CodexRunnerAdapter({
+        command: executable,
+        runnerResourceFiles: [executable],
+      });
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex executable or resources could not be resolved safely/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'default Codex batch shims bind their discovered resources automatically',
   { skip: process.platform !== 'win32' },
   async () => {
