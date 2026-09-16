@@ -65,10 +65,11 @@ export class CodexRunnerAdapter implements RunnerAdapter {
   ): Promise<PreparedRoleRunner> {
     if (assignment.runner !== this.id)
       throw new Error('Codex adapter received a different runner assignment');
-    const options = await preflightCodexSession(root, {
+    const configuredOptions = {
       ...this.options,
       ...(assignment.model === undefined ? {} : { model: assignment.model }),
-    });
+    };
+    const options = await preflightCodexSession(root, configuredOptions);
     const configuration = createHash('sha256')
       .update(
         JSON.stringify({
@@ -85,18 +86,10 @@ export class CodexRunnerAdapter implements RunnerAdapter {
         }),
       )
       .digest('hex');
-    const discovered = await discoverRunnerResources(
-      options.commandPrefixArguments ?? [],
+    const { resourceKey, targets } = await inspectRunnerResources(
+      root,
+      options,
     );
-    const manifest = await Promise.all(
-      (options.runnerResourceFiles ?? []).map((resource) => realpath(resource)),
-    );
-    if (discovered.some((resource) => !manifest.includes(resource)))
-      throw new Error('Codex runner dependency is absent from its manifest');
-    const targets = [options.command!, ...manifest].filter(
-      (target, index, values) => values.indexOf(target) === index,
-    );
-    const resourceKey = JSON.stringify({ root, targets });
     if (this.resourceSnapshot === undefined) {
       const resourceConfiguration = createHash('sha256')
         .update(resourceKey)
@@ -110,6 +103,21 @@ export class CodexRunnerAdapter implements RunnerAdapter {
     }
     const resources = await this.resourceSnapshot.value;
     await assertRunnerResourcesUnchanged(root, resources);
+    const assertCurrentResources = async (): Promise<void> => {
+      try {
+        const currentOptions = await preflightCodexSession(
+          root,
+          configuredOptions,
+        );
+        const current = await inspectRunnerResources(root, currentOptions);
+        if (current.resourceKey !== resourceKey)
+          throw new Error('Codex runner resource set changed');
+        await assertRunnerResourcesUnchanged(root, resources);
+      } catch (error) {
+        if (error instanceof RunnerStateTamperingError) throw error;
+        throw new RunnerStateTamperingError('Codex runner resources changed');
+      }
+    };
     const identity = createHash('sha256')
       .update(JSON.stringify({ configuration, resources }))
       .digest('hex');
@@ -117,7 +125,7 @@ export class CodexRunnerAdapter implements RunnerAdapter {
       assignment,
       identity,
       invoke: async (invocation: RunnerInvocation) => {
-        await assertRunnerResourcesUnchanged(root, resources);
+        await assertCurrentResources();
         let finalMessage: string | undefined;
         let record: CodexSessionRecord;
         try {
@@ -139,12 +147,12 @@ export class CodexRunnerAdapter implements RunnerAdapter {
             },
           );
         } catch (error) {
-          await assertRunnerResourcesUnchanged(root, resources);
+          await assertCurrentResources();
           if (error instanceof CodexStateTamperingError)
             throw new RunnerStateTamperingError(error.message);
           throw error;
         }
-        await assertRunnerResourcesUnchanged(root, resources);
+        await assertCurrentResources();
         if (finalMessage === undefined)
           throw new Error('Codex adapter did not capture a final message');
         return {
@@ -173,6 +181,25 @@ const STATIC_MODULE = new RegExp(
 const DYNAMIC_MODULE =
   /\b(?:import|require)(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\r\n]*(?:\r?\n|$))*\(/g;
 const SCRIPT_RESOURCE = /\.(?:c|m)?(?:j|t)sx?$/i;
+
+async function inspectRunnerResources(
+  root: string,
+  options: CodexSessionOptions,
+): Promise<{ resourceKey: string; targets: string[] }> {
+  const manifest = await Promise.all(
+    (options.runnerResourceFiles ?? []).map((resource) => realpath(resource)),
+  );
+  const discovered = await discoverRunnerResources([
+    ...(options.commandPrefixArguments ?? []),
+    ...manifest.filter((resource) => SCRIPT_RESOURCE.test(resource)),
+  ]);
+  if (discovered.some((resource) => !manifest.includes(resource)))
+    throw new Error('Codex runner dependency is absent from its manifest');
+  const targets = [options.command!, ...manifest].filter(
+    (target, index, values) => values.indexOf(target) === index,
+  );
+  return { resourceKey: JSON.stringify({ root, targets }), targets };
+}
 
 async function discoverRunnerResources(
   prefixArguments: readonly string[],

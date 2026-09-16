@@ -506,6 +506,41 @@ test(
 );
 
 test(
+  'prepared Codex roles rediscover batch dependencies before invocation',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.cmd');
+      const helper = path.join(root, 'late.cmd');
+      await writeFile(
+        executable,
+        '@if exist "%~dp0late.cmd" call "%~dp0late.cmd"\r\n',
+      );
+      const adapter = new CodexRunnerAdapter({
+        command: executable,
+        runnerResourceFiles: [executable],
+      });
+      const reviewer = await adapter.prepare(root, 'reviewer', {
+        runner: 'codex',
+      });
+      await writeFile(helper, '@exit /b 0\r\n');
+      await assert.rejects(
+        () =>
+          reviewer.invoke({
+            role: 'reviewer',
+            effectId: 'review-effect',
+            artifactName: 'review',
+          }),
+        /Codex runner resources changed/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'Codex adapters require transitive batch dependencies in the manifest',
   { skip: process.platform !== 'win32' },
   async () => {
@@ -524,6 +559,32 @@ test(
       await assert.rejects(
         () => adapter.prepare(root, 'planner', { runner: 'codex' }),
         /Codex executable or resources could not be resolved safely/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'Codex adapters traverse scripts reached through batch wrappers',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.cmd');
+      const helper = path.join(root, 'helper.mjs');
+      const nested = path.join(root, 'nested.mjs');
+      await writeFile(executable, '@node "%~dp0helper.mjs"\r\n');
+      await writeFile(helper, "import './nested.mjs';\n");
+      await writeFile(nested, 'export const nested = 1;\n');
+      const adapter = new CodexRunnerAdapter({
+        command: executable,
+        runnerResourceFiles: [executable, helper],
+      });
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex runner dependency is absent from its manifest/,
       );
     } finally {
       await rm(root, { recursive: true, force: true });
