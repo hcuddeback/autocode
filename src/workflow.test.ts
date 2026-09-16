@@ -19,6 +19,7 @@ import test from 'node:test';
 import { parse, stringify } from 'yaml';
 import { createContainedQaAdapter } from './qa-process.js';
 import type { QaCallbacks } from './qa.js';
+import type { RunnerAdapter } from './runner.js';
 import { initializeProject } from './config.js';
 import {
   runProjectWorkflow,
@@ -792,13 +793,57 @@ test('opaque runner evidence is fully redacted without changing runner controls'
 
 test('credential-bearing duplicate execution IDs remain detectable after persistence redaction', async () => {
   const secret = '12345678-1234-4234-8234-123456789abc';
-  const f = await fixture('credential-execution', 'local', [secret]);
+  const f = await fixture('success', 'local', [secret]);
   try {
+    const invoked: string[] = [];
+    const adapter: RunnerAdapter = {
+      id: 'codex',
+      revision: 'identity-fixture-v1',
+      capabilities: {
+        roles: {
+          planner: 'read-only',
+          implementer: 'worktree-write',
+          reviewer: 'read-only',
+          fixer: 'worktree-write',
+        },
+        acceptsModel: true,
+      },
+      async prepare(_root, role, assignment) {
+        return {
+          assignment,
+          identity: 'a'.repeat(64),
+          async invoke(invocation) {
+            invoked.push(role);
+            if (role === 'implementer' || role === 'fixer')
+              await writeFile(path.join(f.root, 'result.txt'), 'good');
+            return {
+              version: 1,
+              role,
+              runner: 'codex',
+              executionId: secret,
+              effectId: invocation.effectId,
+              outcome: 'completed',
+              finalMessage:
+                role === 'planner'
+                  ? 'GENERATED_PLAN_MARKER: write result.txt then verify its content.'
+                  : role === 'reviewer'
+                    ? JSON.stringify({ outcome: 'passed', findings: [] })
+                    : 'Implemented only the fixture result.',
+              evidence: {},
+            };
+          },
+        };
+      },
+    };
     await assert.rejects(
-      () => runProjectWorkflow(f.root, f.options),
+      () =>
+        runProjectWorkflow(f.root, {
+          ...f.options,
+          runners: new Map([['codex', adapter]]),
+        }),
       /effect adapter failed for phase implementation; reconciliation is required/,
     );
-    assert.deepEqual(await f.calls(), ['planning', 'implementation']);
+    assert.deepEqual(invoked, ['planner', 'implementer']);
   } finally {
     await f.cleanup();
   }
