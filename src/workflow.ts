@@ -15,17 +15,23 @@ import {
 import { loadTaskCatalog, selectProjectTask } from './tasks.js';
 import { prepareImplementationPlan } from './planning.js';
 import {
-  CodexStateTamperingError,
   assertCredentialFilesUnchanged,
   assertDirectoryUnchanged,
   discoverWorkspaceCredentials,
   redactSecrets,
-  runPreparedCodexRole,
-  preflightCodexSession,
   snapshotDirectory,
-  type CodexSessionOptions,
-  type CodexSessionRecord,
 } from './codex.js';
+import {
+  createRunnerRegistry,
+  type CodexRunnerOptions,
+} from './codex-runner.js';
+import {
+  resolveRoleRunners,
+  RunnerStateTamperingError,
+  type RunnerRegistry,
+  type RunnerResult,
+} from './runner.js';
+import type { WorkflowRole } from './config.js';
 import {
   runDeterministicVerification,
   resolveExecutable,
@@ -72,6 +78,7 @@ const PAYLOAD_TEXT_FIELDS = new Set([
   'name',
   'description',
   'artifactReferences',
+  'finalMessage',
 ]);
 
 /** Operator policy is protected state, never model output. Missing policy blocks. */
@@ -86,7 +93,10 @@ export interface WorkflowPolicy {
 
 export interface WorkflowOptions {
   resumeOnly?: boolean;
-  codex?: CodexSessionOptions;
+  /** Registered provider-neutral adapters; defaults to the Codex CLI adapter. */
+  runners?: RunnerRegistry;
+  /** Compatibility/testing options for the default Codex adapter. */
+  codex?: CodexRunnerOptions;
   durable?: DurableRunOptions;
   /** Must be created by createContainedQaAdapter; plain callbacks fail preflight. */
   qa?: QaCallbacks;
@@ -196,7 +206,11 @@ export async function runProjectWorkflow(
     policy.qa?.kind === 'required' && options.qa
       ? await snapshotContainedQaAdapter(root, options.qa)
       : undefined;
-  const codexOptions = await preflightCodexSession(root, options.codex);
+  const roleRunners = await resolveRoleRunners(
+    root,
+    config.roles,
+    options.runners ?? createRunnerRegistry(options.codex),
+  );
   const taskPolicy = parse(
     /^---\r?\n([\s\S]*?)\r?\n---/.exec(task.contents)![1]!,
   );
@@ -235,6 +249,7 @@ export async function runProjectWorkflow(
       head,
       branch,
       task: hash(task.contents),
+      roles: config.roles,
       config: hash(configText),
       policy: hash(policyText ?? ''),
       plan: hash(initialPlan),
@@ -398,15 +413,32 @@ export async function runProjectWorkflow(
     return false;
   }
 
-  async function assertFreshSession(record: CodexSessionRecord): Promise<void> {
+  async function assertFreshExecution(record: RunnerResult): Promise<void> {
     for (const id of phaseIds) {
       const stored = (await receipt(id))?.evidence as
-        { record?: CodexSessionRecord; sessionId?: string } | undefined;
-      if ((stored?.record?.sessionId ?? stored?.sessionId) === record.sessionId)
+        RunnerResult | { result?: RunnerResult } | undefined;
+      const executionId =
+        stored && 'executionId' in stored
+          ? stored.executionId
+          : stored?.result?.executionId;
+      if (executionId === record.executionId)
         throw new Error(
-          'all integrated Codex roles require fresh distinct session identities',
+          'all integrated roles require fresh distinct execution identities',
         );
     }
+  }
+
+  function retainedRunnerIdentity(record: RunnerResult) {
+    return {
+      version: record.version,
+      role: record.role,
+      runner: record.runner,
+      ...(record.model === undefined ? {} : { model: record.model }),
+      executionId: record.executionId,
+      effectId: record.effectId,
+      outcome: record.outcome,
+      evidence: record.evidence,
+    };
   }
 
   const existing = await latest();
@@ -457,12 +489,14 @@ export async function runProjectWorkflow(
             if (phase.id.startsWith('fix-') && (await anyPassed()))
               evidence = { skipped: true, reason: 'an earlier round passed' };
             else {
-              const role = phase.id.startsWith('fix-')
-                ? 'fix'
-                : (phase.id as CodexSessionRecord['role']);
+              const role: WorkflowRole = phase.id.startsWith('fix-')
+                ? 'fixer'
+                : phase.id === 'planning'
+                  ? 'planner'
+                  : 'implementer';
               const previousRound =
-                role === 'fix' ? Number(phase.id.slice(4)) - 1 : undefined;
-              const context =
+                role === 'fixer' ? Number(phase.id.slice(4)) - 1 : undefined;
+              const fixContext =
                 previousRound === undefined
                   ? undefined
                   : JSON.stringify({
@@ -472,32 +506,20 @@ export async function runProjectWorkflow(
                         ?.evidence,
                     });
               const generatedPlan =
-                role === 'planning'
+                role === 'planner'
                   ? undefined
-                  : ((await receipt('planning'))?.evidence as { plan?: string })
-                      ?.plan;
-              const record = await runPreparedCodexRole(
-                root,
+                  : ((await receipt('planning'))?.evidence as RunnerResult)
+                      ?.finalMessage;
+              const record = await roleRunners[role].invoke({
                 role,
-                `workflow-${phase.id}`,
-                {
-                  ...codexOptions,
-                  ...(context === undefined ? {} : { fixContext: context }),
-                  ...(generatedPlan === undefined
-                    ? {}
-                    : { planContent: generatedPlan }),
-                },
-              );
-              await assertFreshSession(record);
-              evidence = record;
-              if (role === 'planning')
-                evidence = {
-                  record,
-                  plan: await safeRead(
-                    root,
-                    `${preparedRelative}/workflow-planning/planning/final.txt`,
-                  ),
-                };
+                effectId: context.effectId,
+                artifactName: `workflow-${phase.id}`,
+                ...(fixContext === undefined ? {} : { fixContext }),
+                ...(generatedPlan === undefined ? {} : { plan: generatedPlan }),
+              });
+              await assertFreshExecution(record);
+              evidence =
+                role === 'planner' ? record : retainedRunnerIdentity(record);
             }
           } else if (phase.id.startsWith('verify-')) {
             if (await anyPassed())
@@ -543,31 +565,29 @@ export async function runProjectWorkflow(
                 };
               else {
                 let verdict: ReviewVerdict | undefined;
-                const record = await runPreparedCodexRole(
-                  root,
-                  'review',
-                  `workflow-${phase.id}`,
-                  {
-                    ...codexOptions,
-                    validateFinalMessage(message) {
-                      verdict = parseReview(message);
-                    },
+                const record = await roleRunners.reviewer.invoke({
+                  role: 'reviewer',
+                  effectId: context.effectId,
+                  artifactName: `workflow-${phase.id}`,
+                  validateFinalMessage(message) {
+                    verdict = parseReview(message);
                   },
-                );
-                await assertFreshSession(record);
+                });
+                await assertFreshExecution(record);
                 if (verdict === undefined)
                   throw new Error(
                     'independent review did not retain a validated verdict',
                   );
                 if (
-                  record.sessionId ===
-                  (
-                    (await receipt('implementation'))
-                      ?.evidence as CodexSessionRecord
-                  )?.sessionId
+                  record.executionId ===
+                  ((await receipt('implementation'))?.evidence as RunnerResult)
+                    ?.executionId
                 )
                   throw new Error('review must be independent');
-                evidence = { ...verdict, record };
+                evidence = {
+                  ...verdict,
+                  result: retainedRunnerIdentity(record),
+                };
                 if (verdict.outcome === 'blocked')
                   result = {
                     kind: 'blocked',
@@ -695,7 +715,7 @@ export async function runProjectWorkflow(
           return result;
         } catch (error) {
           if (
-            error instanceof CodexStateTamperingError ||
+            error instanceof RunnerStateTamperingError ||
             error instanceof WorkflowReceiptTamperingError
           )
             return { kind: 'failed', reason: error.message };

@@ -155,7 +155,7 @@ async function fixture(
     `import fs from 'node:fs'; import {randomUUID} from 'node:crypto';
 let input = ''; for await (const chunk of process.stdin) input += chunk;
 const role = input.includes('planning role') ? 'planning' : input.includes('critical-review role') ? 'review' : input.includes('Address only these') ? 'fix' : 'implementation';
-fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({role}) + '\\n');
+fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({role,args:process.argv.slice(2)}) + '\\n');
 const mode = ${JSON.stringify(mode)};
 if (role === 'implementation' && !input.includes('GENERATED_PLAN_MARKER')) process.exit(9);
 if (role === 'implementation') fs.writeFileSync('result.txt', mode === 'fix' || mode === 'never' ? 'broken' : mode === 'review-fix' ? 'needs-review' : 'good');
@@ -194,6 +194,17 @@ console.log(JSON.stringify({type:'turn.completed'}));
         .trim()
         .split('\n')
         .map((line) => JSON.parse(line).role as string),
+    callRecords: async () =>
+      (await readFile(calls, 'utf8'))
+        .trim()
+        .split('\n')
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              readonly role: string;
+              readonly args: string[];
+            },
+        ),
     cleanup: () => rm(directory, { recursive: true, force: true }),
   };
 }
@@ -277,10 +288,8 @@ test('integrated workflow plans, implements, verifies, reviews and completes wit
     const result = await runProjectWorkflow(f.root, f.options);
     assert.equal(result.outcome, 'completed');
     assert.deepEqual(await f.calls(), ['planning', 'implementation', 'review']);
-    assert.equal(
-      (await runProjectWorkflow(f.root, f.options)).outcome,
-      'completed',
-    );
+    const workflow = await runProjectWorkflow(f.root, f.options);
+    assert.equal(workflow.outcome, 'completed');
     assert.deepEqual(await f.calls(), ['planning', 'implementation', 'review']);
     const qa = JSON.parse(
       await readFile(path.join(result.runDirectory, 'qa.json'), 'utf8'),
@@ -289,6 +298,93 @@ test('integrated workflow plans, implements, verifies, reviews and completes wit
     assert.equal(
       await readFile(path.join(f.root, 'result.txt'), 'utf8'),
       'good',
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('configured role models route through the Codex adapter and fixer', async () => {
+  const f = await fixture('fix');
+  try {
+    const configPath = path.join(f.root, '.autocode', 'config.yaml');
+    const config = parse(await readFile(configPath, 'utf8'));
+    config.roles = {
+      planner: { runner: 'codex', model: 'plan-model' },
+      implementer: { runner: 'codex', model: 'code-model' },
+      reviewer: { runner: 'codex', model: 'review-model' },
+      fixer: { runner: 'codex', model: 'fix-model' },
+    };
+    await writeFile(configPath, stringify(config));
+    const workflow = await runProjectWorkflow(f.root, f.options);
+    assert.equal(workflow.outcome, 'completed');
+    const records = await f.callRecords();
+    assert.deepEqual(
+      records.map(({ role, args }) => [
+        role,
+        args[args.indexOf('--model') + 1],
+      ]),
+      [
+        ['planning', 'plan-model'],
+        ['implementation', 'code-model'],
+        ['fix', 'fix-model'],
+        ['review', 'review-model'],
+      ],
+    );
+    const implementation = JSON.parse(
+      await readFile(
+        path.join(workflow.runDirectory, 'implementation.json'),
+        'utf8',
+      ),
+    );
+    const review = JSON.parse(
+      await readFile(path.join(workflow.runDirectory, 'review-1.json'), 'utf8'),
+    );
+    assert.equal(implementation.evidence.model, 'code-model');
+    assert.equal(review.evidence.result.model, 'review-model');
+    assert.notEqual(
+      implementation.evidence.executionId,
+      review.evidence.result.executionId,
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('unknown configured runners fail before model or durable effects', async () => {
+  const f = await fixture();
+  try {
+    const configPath = path.join(f.root, '.autocode', 'config.yaml');
+    const config = parse(await readFile(configPath, 'utf8'));
+    config.roles = {
+      planner: { runner: 'missing' },
+      implementer: { runner: 'codex' },
+      reviewer: { runner: 'codex' },
+      fixer: { runner: 'codex' },
+    };
+    await writeFile(configPath, stringify(config));
+    await assert.rejects(
+      () => runProjectWorkflow(f.root, f.options),
+      /unknown runner: missing/,
+    );
+    await assert.rejects(
+      () => readFile(path.join(f.directory, 'calls.jsonl'), 'utf8'),
+      /ENOENT/,
+    );
+    const head = await git(f.root, ['rev-parse', 'HEAD']);
+    await assert.rejects(
+      () =>
+        readFile(
+          path.join(
+            f.root,
+            '.autocode',
+            'runs',
+            `durable-workflow-ac-001-${head.slice(0, 12)}`,
+            'events.jsonl',
+          ),
+          'utf8',
+        ),
+      /ENOENT/,
     );
   } finally {
     await f.cleanup();
@@ -1010,7 +1106,7 @@ test('verification receipt creation, forgery, mutation and deletion fail closed 
             const receipt = JSON.parse(await readFile(implementation, 'utf8'));
             if (attack === 'deletion') await rm(implementation);
             else if (attack === 'mutation') {
-              receipt.evidence.sessionId = 'forged-session';
+              receipt.evidence.executionId = 'forged-execution';
               await writeFile(implementation, JSON.stringify(receipt));
             } else {
               if (attack === 'current-verification') {
@@ -2248,7 +2344,7 @@ test('credential collisions preserve receipt types, raw review controls and resu
     const planning = JSON.parse(
       await readFile(path.join(result.runDirectory, 'planning.json'), 'utf8'),
     );
-    assert.equal(planning.evidence.plan.includes(secret), false);
+    assert.equal(planning.evidence.finalMessage.includes(secret), false);
     const display = await readFile(
       path.join(
         f.root,
@@ -2499,3 +2595,140 @@ test(
     }
   },
 );
+
+test(
+  'CLI routes explicit models through fix and independent review without replay',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const f = await fixture('fix');
+    try {
+      const binaryDirectory = path.join(f.directory, 'bin');
+      await mkdir(binaryDirectory);
+      await copyFile(process.execPath, path.join(binaryDirectory, 'codex.exe'));
+      const fakeScript = f.options.codex.commandPrefixArguments[0]!;
+      await writeFile(
+        path.join(f.root, 'exec'),
+        (await readFile(fakeScript, 'utf8')).replace(
+          /^fs\.appendFileSync\([^\n]*\n/m,
+          '',
+        ),
+      );
+      await git(f.root, ['add', '--', 'exec']);
+      await git(f.root, ['commit', '-m', 'add CLI role runner stub']);
+      const configPath = path.join(f.root, '.autocode', 'config.yaml');
+      const config = parse(await readFile(configPath, 'utf8'));
+      config.roles = {
+        planner: { runner: 'codex', model: 'plan-model' },
+        implementer: { runner: 'codex', model: 'code-model' },
+        reviewer: { runner: 'codex', model: 'review-model' },
+        fixer: { runner: 'codex', model: 'fix-model' },
+      };
+      await writeFile(configPath, stringify(config));
+      const policyPath = path.join(f.root, '.autocode', 'workflow.json');
+      const policy = JSON.parse(await readFile(policyPath, 'utf8'));
+      const head = await git(f.root, ['rev-parse', 'HEAD']);
+      policy.completion.merge.headCommit = head;
+      policy.completion.merge.signals[0].headCommit = head;
+      await writeFile(policyPath, JSON.stringify(policy));
+      const environment = {
+        ...process.env,
+        PATH: `${binaryDirectory}${path.delimiter}${process.env.PATH ?? ''}`,
+      };
+      const cli = fileURLToPath(new URL('./cli.ts', import.meta.url));
+      const artifactRoot = path.join(
+        f.root,
+        '.autocode',
+        'runs',
+        `AC-001-${head.slice(0, 12)}`,
+      );
+      const sessionPaths = [
+        'workflow-planning/planning/session.json',
+        'workflow-implementation/implementation/session.json',
+        'workflow-fix-1/fix/session.json',
+        'workflow-review-1/review/session.json',
+      ].map((relative) => path.join(artifactRoot, relative));
+      let first: string[] | undefined;
+      for (const command of ['run', 'resume']) {
+        const { stdout } = await execFileAsync(
+          process.execPath,
+          ['--import', 'tsx', cli, command, f.root],
+          {
+            env: environment,
+            cwd: process.cwd(),
+            windowsHide: true,
+            timeout: 120_000,
+          },
+        );
+        assert.match(stdout, /Workflow completed:/);
+        const current = await Promise.all(
+          sessionPaths.map((file) => readFile(file, 'utf8')),
+        );
+        if (first) assert.deepEqual(current, first);
+        else first = current;
+      }
+      const sessions = first!.map(
+        (text) =>
+          JSON.parse(text) as {
+            role: string;
+            sessionId: string;
+            arguments: string[];
+          },
+      );
+      assert.deepEqual(
+        sessions.map((session) => [
+          session.role,
+          session.arguments[session.arguments.indexOf('--model') + 1],
+        ]),
+        [
+          ['planning', 'plan-model'],
+          ['implementation', 'code-model'],
+          ['fix', 'fix-model'],
+          ['review', 'review-model'],
+        ],
+      );
+      assert.equal(
+        new Set(sessions.map((session) => session.sessionId)).size,
+        sessions.length,
+      );
+    } finally {
+      await f.cleanup();
+    }
+  },
+);
+
+test('CLI rejects an unsupported runner before effects', async () => {
+  const f = await fixture();
+  try {
+    const configPath = path.join(f.root, '.autocode', 'config.yaml');
+    const config = parse(await readFile(configPath, 'utf8'));
+    config.roles = {
+      planner: { runner: 'unsupported' },
+      implementer: { runner: 'codex' },
+      reviewer: { runner: 'codex' },
+      fixer: { runner: 'codex' },
+    };
+    await writeFile(configPath, stringify(config));
+    const cli = fileURLToPath(new URL('./cli.ts', import.meta.url));
+    await assert.rejects(
+      () =>
+        execFileAsync(
+          process.execPath,
+          ['--import', 'tsx', cli, 'run', f.root],
+          { cwd: process.cwd(), windowsHide: true, timeout: 30_000 },
+        ),
+      (error: unknown) => {
+        assert.match(
+          (error as { stderr: string }).stderr,
+          /unknown runner: unsupported/,
+        );
+        return true;
+      },
+    );
+    await assert.rejects(
+      () => readFile(path.join(f.directory, 'calls.jsonl'), 'utf8'),
+      /ENOENT/,
+    );
+  } finally {
+    await f.cleanup();
+  }
+});

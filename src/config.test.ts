@@ -113,6 +113,102 @@ test('validation accepts a bounded fix-loop policy', () => {
   assert.equal(config.verification.commands.length, 0);
 });
 
+test('role assignments default to Codex and accept explicit per-role models', () => {
+  const defaults = validateConfig({
+    version: 1,
+    stateDirectory: '.autocode',
+    telemetry: false,
+  });
+  assert.deepEqual(defaults.roles, {
+    planner: { runner: 'codex' },
+    implementer: { runner: 'codex' },
+    reviewer: { runner: 'codex' },
+    fixer: { runner: 'codex' },
+  });
+  const explicit = validateConfig({
+    version: 1,
+    stateDirectory: '.autocode',
+    telemetry: false,
+    roles: {
+      planner: { runner: 'codex', model: 'gpt-5.6-plan' },
+      implementer: { runner: 'codex', model: 'gpt-5.6-code' },
+      reviewer: { runner: 'codex', model: 'gpt-5.6-review' },
+      fixer: { runner: 'codex', model: 'gpt-5.6-code' },
+    },
+  });
+  assert.equal(explicit.roles.reviewer.model, 'gpt-5.6-review');
+});
+
+test('role assignment validation rejects missing, extra and invalid identities', () => {
+  const base = {
+    version: 1,
+    stateDirectory: '.autocode',
+    telemetry: false,
+  } as const;
+  assert.throws(
+    () =>
+      validateConfig({
+        ...base,
+        roles: {
+          planner: { runner: 'codex' },
+          implementer: { runner: 'codex' },
+          reviewer: { runner: 'codex' },
+        },
+      }),
+    /roles\.fixer assignment is required/,
+  );
+  assert.throws(
+    () =>
+      validateConfig({
+        ...base,
+        roles: {
+          planner: { runner: 'codex' },
+          implementer: { runner: 'codex' },
+          reviewer: { runner: 'codex' },
+          fixer: { runner: 'codex' },
+          publisher: { runner: 'codex' },
+        },
+      }),
+    /unknown roles key: publisher/,
+  );
+  for (const assignment of [
+    { runner: 'Codex' },
+    { runner: 'codex', model: '' },
+    { runner: 'codex', model: 'model with spaces' },
+    { runner: 'codex', token: 'secret' },
+  ])
+    assert.throws(
+      () =>
+        validateConfig({
+          ...base,
+          roles: {
+            planner: assignment,
+            implementer: { runner: 'codex' },
+            reviewer: { runner: 'codex' },
+            fixer: { runner: 'codex' },
+          },
+        }),
+      /roles\.planner/,
+    );
+});
+
+test('YAML configuration rejects duplicate role assignments', () => {
+  assert.throws(
+    () =>
+      parse(`version: 1
+stateDirectory: .autocode
+telemetry: false
+roles:
+  planner: { runner: codex }
+  planner: { runner: codex }
+  implementer: { runner: codex }
+  reviewer: { runner: codex }
+  fixer: { runner: codex }
+`),
+    /Map keys must be unique/,
+  );
+});
+
 test('validation rejects unsafe fix-loop policies', () => {
   for (const maxAttempts of [0, -1, 1.5, 21, '3']) {
     assert.throws(

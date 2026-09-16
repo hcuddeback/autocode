@@ -1,8 +1,8 @@
 # AutoCode system state
 
-**Last verified:** 2026-09-15 documentation/code audit against `main` at `be5b144`
+**Last verified:** 2026-09-15 AC-015 implementation verification on `feat/AC-015-configurable-role-runners` from `main` at `8a842a2`
 
-**Stage:** AC-001 through AC-014 remain complete historical delivery; AC-015 is the single ready task in the canonical MVP 1 workbook
+**Stage:** AC-001 through AC-014 remain complete historical delivery; AC-015 is implemented on its feature branch and remains the single active workbook task pending repository gates
 
 **Current release target:** MVP 1 — ordered JIT task workbook
 
@@ -12,8 +12,8 @@
 
 - The clean public repository exists.
 - Product acceptance, target architecture, workflow, security, release, and the canonical task workbook are documented.
-- A strict TypeScript foundation initializes local state, selects one dependency-ready materialized task, prepares commit-bound planning artifacts, invokes scoped role-separated Codex sessions, runs configured deterministic checks with retained evidence, applies reusable review/QA/fix policies, enforces configured completion gates, and executes bounded ordered effect phases through durable pause/resume checkpoints, reconciliation, and persisted pacing/retry budgets.
-- The target architecture separates planner, implementer, reviewer, and fixer roles from runner adapters and optional models. The implementation does not yet conform: config has no role assignments and `workflow.ts` directly consumes Codex-specific options/session records.
+- A strict TypeScript foundation initializes local state, selects one dependency-ready materialized task, prepares commit-bound planning artifacts, resolves planner/implementer/reviewer/fixer assignments, runs configured deterministic checks with retained evidence, applies reusable review/QA/fix policies, enforces configured completion gates, and executes bounded ordered effect phases through durable pause/resume checkpoints, reconciliation, and persisted pacing/retry budgets.
+- Version-1 configuration accepts a complete role-to-runner/optional-model map and safely defaults existing files without that map to Codex. Core workflow sequencing consumes provider-neutral capability and bounded result contracts; `codex-runner.ts` owns Codex role mapping, model arguments, contained invocation, event/session translation, and evidence identity.
 
 ## Evidence level
 
@@ -32,12 +32,13 @@
 | Durable pause/resume exists    | Unit and forced-interruption subprocess tests         | High                                          |
 | Durable pacing/retry exists    | Restart, budget, cooldown, and backoff tests          | High                                          |
 | Local workflow is integrated   | AC-012 phase fixtures, including process interruption | See latest AC-012 boundary verification below |
+| Configurable roles exist       | AC-015 schema, runner-contract, workflow and CLI QA   | High on the feature branch                    |
 
 ## Known gaps and blockers
 
 - The former MVP 2 sequential batch description is superseded by D-008: ordered workbook execution is the MVP 1 product target. `tasks/README.md` is the single sequencing/state authority; only AC-015 is materialized and ready.
-- Configurable role/runner/model resolution, workbook parsing/eligibility, durable task ownership, state updates/continuation, required CLI QA adapters/QA-fix rounds, and final immutable summaries are absent.
-- Remote lifecycle adapters are deferred under D-007/D-008; repository task completion updates remain operator-managed until the workbook state task implements a safe boundary. Fresh scoped Codex sessions provide the current implementation, not a provider-neutral contract.
+- Additional production runners, workbook parsing/eligibility, durable task ownership, state updates/continuation, general required-QA adapters/QA-fix rounds, and final immutable summaries are absent.
+- Remote lifecycle adapters are deferred under D-007/D-008; repository task completion updates remain operator-managed until the workbook state task implements a safe boundary. Codex remains the only production runner and authenticated compatibility remains AC-019 scope.
 - PR #13 merged as `63e8a49`. AC-012 merged in PR #14 as 6d72cfd after verified head 0a4e877. Integrated Codex, QA and verification share Windows AppContainer/Job containment; protected metadata writes and credential access are denied before execution, sanitized environments omit operator tokens, and tampering durably terminates runs. Fresh receipts cannot be pre-created; interrupted QA/completion require operator reconciliation. The latest boundary corrections below preserve concurrent ACL hardening and prevent trusted-host Git helpers from escaping containment. All review conversations and configured GitGuardian gates passed; the owner merged the PR. Node captured-child pipes, cross-volume batch execution and live authenticated compatibility remain unaccepted; unsupported commands fail closed.
 - D-005 permits owner-accepted critical chat review and scoped publication after checks/QA. The owner ended further continuous bot-review requests for PR #14; final verified dispositions and configured merge gates passed before human merge.
 - Linux and macOS subprocess execution fail closed; PRODUCT's three-platform acceptance remains open.
@@ -182,6 +183,14 @@ The full serialized suite after these source changes passed 201 tests with four 
 **Evidence expected:** Configuration/adapter contract tests and disposable contained CLI QA prove safe defaults, explicit role/model mapping, distinct review identity, fail-closed invalid assignments, fresh evidence, and resume without repeated effects.
 
 **Stop condition:** Do not implement workbook scheduling, a second production runner, hosted services, direct provider APIs, or parallel execution in AC-015.
+
+## AC-015 feature-branch evidence, 2026-09-15
+
+Version-1 configuration now validates exactly one planner, implementer, reviewer and fixer assignment when `roles` is present, with the documented compatibility default of Codex and its default model when the section is absent. `runner.ts` defines role authority, adapter capabilities, preflight resolution, stable effect identity, and bounded immutable JSON-safe results. Unknown runners, malformed models, capability mismatch, registry identity mismatch and invalid adapter results fail before durable/model effects. `codex-runner.ts` preserves the existing contained Codex path while applying configured models and translating Codex sessions to provider-neutral results. Workflow receipts retain runner/model/execution/effect identity, bind configuration freshness, enforce globally fresh executions and a reviewer identity distinct from implementation, and resume current completed effects without replay.
+
+The complete final suite passes 317 tests with four declared platform skips and no failures or cancellations. Disposable fake-runner workflow QA passes explicit per-role model selection and fix routing, while an unknown runner produces no model or durable effects. CLI QA passes default migration, explicit model routing through plan, implementation, fix and independent review, then resumes without changing any session artifact; unsupported CLI assignment fails before effects. Formatting, lint, typecheck, clean build and built CLI help pass.
+
+The owner-accepted current-chat critical review found and resolved four issues before final validation: runner-registry aliases could misstate adapter identity; adapter evidence was shallow-frozen and depended on the later receipt bound; unexpected top-level result fields could survive validation; and provider-neutral final messages were duplicated in retained receipts. Exact registry identity is now enforced, adapter evidence is bounded/deep-copied/deep-frozen JSON, results are reconstructed from an exact field set, and only planning retains the final message while other phases retain bounded runner identity/evidence. A stale credential-redaction assertion was updated to the new provider-neutral field and its focused regression plus the complete suite pass. Publication and remote repository gates remain; AC-015 is not marked done here.
 
 ## AC-001 evidence
 
