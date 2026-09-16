@@ -140,6 +140,7 @@ export async function preflightCodexSession(
     if (commandIsWrapper) {
       const wrapperResources = await discoverBatchWrapperResources(
         copied.command,
+        root,
       );
       if (options.command === undefined)
         copied.runnerResourceFiles = wrapperResources;
@@ -186,6 +187,7 @@ export async function preflightCodexSession(
 
 async function discoverBatchWrapperResources(
   executable: string,
+  launchDirectory: string,
 ): Promise<string[]> {
   const resources: string[] = [];
   async function visit(wrapper: string): Promise<void> {
@@ -212,7 +214,7 @@ async function discoverBatchWrapperResources(
       else {
         if (/[%!]/.test(reference))
           throw new Error('Codex command wrapper dependency is dynamic');
-        candidate = path.resolve(directory, reference);
+        candidate = path.resolve(launchDirectory, reference);
       }
       let canonical: string;
       try {

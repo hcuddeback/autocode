@@ -180,6 +180,9 @@ const STATIC_MODULE = new RegExp(
 );
 const DYNAMIC_MODULE =
   /\b(?:import|require)(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\r\n]*(?:\r?\n|$))*\(/g;
+const COMPUTED_MODULE_LOADER = new RegExp(
+  String.raw`\bmodule${MODULE_TRIVIA}*(?:\?\.${MODULE_TRIVIA}*)?\[`,
+);
 const SCRIPT_RESOURCE = /\.(?:c|m)?(?:j|t)sx?$/i;
 
 async function inspectRunnerResources(
@@ -222,6 +225,8 @@ async function discoverRunnerResources(
       const contents = await readFile(canonical, 'utf8');
       if (/\\u(?:\{[0-9a-f]+\}|[0-9a-f]{4})/i.test(contents))
         throw new Error('escaped runner dependency syntax is unsupported');
+      if (COMPUTED_MODULE_LOADER.test(contents))
+        throw new Error('computed runner dependency loaders are unsupported');
       if (/\bcreateRequire\b/.test(contents))
         throw new Error('alternate runner dependency loaders are unsupported');
       for (const match of contents.matchAll(/\brequire\b/g)) {

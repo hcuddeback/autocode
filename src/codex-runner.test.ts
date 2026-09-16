@@ -388,6 +388,31 @@ test(
 );
 
 test(
+  'Codex adapters reject computed CommonJS dependency loaders',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.cjs');
+      const helper = path.join(root, 'helper.cjs');
+      await writeFile(executable, "module['requ' + 'ire']('./helper.cjs');\n");
+      await writeFile(helper, 'module.exports = 1;\n');
+      const adapter = new CodexRunnerAdapter({
+        command: process.execPath,
+        commandPrefixArguments: [executable],
+        runnerResourceFiles: [executable],
+      });
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex runner dependencies could not be inspected safely/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'runner resource identity preserves case-sensitive canonical paths',
   { skip: process.platform !== 'win32' },
   async (context) => {
@@ -447,6 +472,34 @@ test(
       );
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'batch wrapper relative dependencies resolve from the launch directory',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-project-'));
+    const wrapperRoot = await mkdtemp(
+      path.join(os.tmpdir(), 'autocode-runner-'),
+    );
+    try {
+      const executable = path.join(wrapperRoot, 'runner.cmd');
+      const helper = path.join(root, 'helper.cmd');
+      await writeFile(executable, '@call .\\helper.cmd\r\n');
+      await writeFile(helper, '@exit /b 0\r\n');
+      const adapter = new CodexRunnerAdapter({
+        command: executable,
+        runnerResourceFiles: [executable],
+      });
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex executable or resources could not be resolved safely/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(wrapperRoot, { recursive: true, force: true });
     }
   },
 );
