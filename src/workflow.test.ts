@@ -19,8 +19,13 @@ import test from 'node:test';
 import { parse, stringify } from 'yaml';
 import { createContainedQaAdapter } from './qa-process.js';
 import type { QaCallbacks } from './qa.js';
+import type { RunnerAdapter } from './runner.js';
 import { initializeProject } from './config.js';
-import { runProjectWorkflow, parseReview } from './workflow.js';
+import {
+  runProjectWorkflow,
+  parseReview,
+  redactWorkflowPayload,
+} from './workflow.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -155,7 +160,7 @@ async function fixture(
     `import fs from 'node:fs'; import {randomUUID} from 'node:crypto';
 let input = ''; for await (const chunk of process.stdin) input += chunk;
 const role = input.includes('planning role') ? 'planning' : input.includes('critical-review role') ? 'review' : input.includes('Address only these') ? 'fix' : 'implementation';
-fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({role}) + '\\n');
+fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({role,args:process.argv.slice(2)}) + '\\n');
 const mode = ${JSON.stringify(mode)};
 if (role === 'implementation' && !input.includes('GENERATED_PLAN_MARKER')) process.exit(9);
 if (role === 'implementation') fs.writeFileSync('result.txt', mode === 'fix' || mode === 'never' ? 'broken' : mode === 'review-fix' ? 'needs-review' : 'good');
@@ -172,7 +177,8 @@ if (${JSON.stringify(credentials)}.length) {
     final = JSON.stringify(verdict);
   }
 }
-console.log(JSON.stringify({type:'thread.started',thread_id:randomUUID()}));
+const executionId = mode === 'credential-execution' ? ${JSON.stringify(credentials[0] ?? '')} : randomUUID();
+console.log(JSON.stringify({type:'thread.started',thread_id:executionId}));
 console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:final}}));
 console.log(JSON.stringify({type:'turn.completed'}));
 `,
@@ -184,6 +190,7 @@ console.log(JSON.stringify({type:'turn.completed'}));
       codex: {
         command: process.execPath,
         commandPrefixArguments: [fake],
+        runnerResourceFiles: [fake],
         timeoutMs: 10_000,
         sandboxWriteDirectories: [directory],
         sandboxWriteFiles: [calls],
@@ -194,6 +201,17 @@ console.log(JSON.stringify({type:'turn.completed'}));
         .trim()
         .split('\n')
         .map((line) => JSON.parse(line).role as string),
+    callRecords: async () =>
+      (await readFile(calls, 'utf8'))
+        .trim()
+        .split('\n')
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              readonly role: string;
+              readonly args: string[];
+            },
+        ),
     cleanup: () => rm(directory, { recursive: true, force: true }),
   };
 }
@@ -259,7 +277,12 @@ async function withOperatorMutation<T>(
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
-      if (ended || Date.now() > deadline)
+      if (ended) {
+        const result = await execution;
+        if ('error' in result) throw result.error;
+        throw new Error('Command ended before operator mutation handshake');
+      }
+      if (Date.now() > deadline)
         throw new Error('Command ended before operator mutation handshake');
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
@@ -277,10 +300,8 @@ test('integrated workflow plans, implements, verifies, reviews and completes wit
     const result = await runProjectWorkflow(f.root, f.options);
     assert.equal(result.outcome, 'completed');
     assert.deepEqual(await f.calls(), ['planning', 'implementation', 'review']);
-    assert.equal(
-      (await runProjectWorkflow(f.root, f.options)).outcome,
-      'completed',
-    );
+    const workflow = await runProjectWorkflow(f.root, f.options);
+    assert.equal(workflow.outcome, 'completed');
     assert.deepEqual(await f.calls(), ['planning', 'implementation', 'review']);
     const qa = JSON.parse(
       await readFile(path.join(result.runDirectory, 'qa.json'), 'utf8'),
@@ -290,6 +311,206 @@ test('integrated workflow plans, implements, verifies, reviews and completes wit
       await readFile(path.join(f.root, 'result.txt'), 'utf8'),
       'good',
     );
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('configured role models route through the Codex adapter and fixer', async () => {
+  const f = await fixture('fix');
+  try {
+    const configPath = path.join(f.root, '.autocode', 'config.yaml');
+    const config = parse(await readFile(configPath, 'utf8'));
+    config.roles = {
+      planner: { runner: 'codex', model: 'plan-model' },
+      implementer: { runner: 'codex', model: 'code-model' },
+      reviewer: { runner: 'codex', model: 'review-model' },
+      fixer: { runner: 'codex', model: 'fix-model' },
+    };
+    await writeFile(configPath, stringify(config));
+    const workflow = await runProjectWorkflow(f.root, f.options);
+    assert.equal(workflow.outcome, 'completed');
+    const records = await f.callRecords();
+    assert.deepEqual(
+      records.map(({ role, args }) => [
+        role,
+        args[args.indexOf('--model') + 1],
+      ]),
+      [
+        ['planning', 'plan-model'],
+        ['implementation', 'code-model'],
+        ['fix', 'fix-model'],
+        ['review', 'review-model'],
+      ],
+    );
+    const implementation = JSON.parse(
+      await readFile(
+        path.join(workflow.runDirectory, 'implementation.json'),
+        'utf8',
+      ),
+    );
+    const review = JSON.parse(
+      await readFile(path.join(workflow.runDirectory, 'review-1.json'), 'utf8'),
+    );
+    assert.equal(implementation.evidence.model, 'code-model');
+    assert.equal(review.evidence.result.model, 'review-model');
+    assert.notEqual(
+      implementation.evidence.executionId,
+      review.evidence.result.executionId,
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('unknown configured runners fail before model or durable effects', async () => {
+  const f = await fixture();
+  try {
+    const configPath = path.join(f.root, '.autocode', 'config.yaml');
+    const config = parse(await readFile(configPath, 'utf8'));
+    config.roles = {
+      planner: { runner: 'missing' },
+      implementer: { runner: 'codex' },
+      reviewer: { runner: 'codex' },
+      fixer: { runner: 'codex' },
+    };
+    await writeFile(configPath, stringify(config));
+    await assert.rejects(
+      () => runProjectWorkflow(f.root, f.options),
+      /unknown runner: missing/,
+    );
+    await assert.rejects(
+      () => readFile(path.join(f.directory, 'calls.jsonl'), 'utf8'),
+      /ENOENT/,
+    );
+    const head = await git(f.root, ['rev-parse', 'HEAD']);
+    await assert.rejects(
+      () =>
+        readFile(
+          path.join(
+            f.root,
+            '.autocode',
+            'runs',
+            `durable-workflow-ac-001-${head.slice(0, 12)}`,
+            'events.jsonl',
+          ),
+          'utf8',
+        ),
+      /ENOENT/,
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('credential-bearing role models fail before runner or durable effects', async () => {
+  const secret = 'credential-model-0123456789';
+  const f = await fixture('success', 'local', [secret]);
+  try {
+    const configPath = path.join(f.root, '.autocode', 'config.yaml');
+    const config = parse(await readFile(configPath, 'utf8'));
+    config.roles = Object.fromEntries(
+      ['planner', 'implementer', 'reviewer', 'fixer'].map((role) => [
+        role,
+        { runner: 'codex', model: secret },
+      ]),
+    );
+    await writeFile(configPath, stringify(config));
+    let prepared = 0;
+    const adapter: RunnerAdapter = {
+      id: 'codex',
+      revision: 'credential-model-fixture-v1',
+      capabilities: {
+        roles: {
+          planner: 'read-only',
+          implementer: 'worktree-write',
+          reviewer: 'read-only',
+          fixer: 'worktree-write',
+        },
+        acceptsModel: true,
+      },
+      async prepare() {
+        prepared++;
+        throw new Error('runner preflight must not be reached');
+      },
+    };
+    await assert.rejects(
+      () =>
+        runProjectWorkflow(f.root, {
+          ...f.options,
+          runners: new Map([['codex', adapter]]),
+        }),
+      /role runner and model identifiers must not contain workspace credentials/,
+    );
+    assert.equal(prepared, 0);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('credential-bearing runner IDs fail before adapter preparation', async () => {
+  const secret = 'credential-runner-0123456789';
+  const f = await fixture('success', 'local', [secret]);
+  try {
+    const configPath = path.join(f.root, '.autocode', 'config.yaml');
+    const config = parse(await readFile(configPath, 'utf8'));
+    config.roles = Object.fromEntries(
+      ['planner', 'implementer', 'reviewer', 'fixer'].map((role) => [
+        role,
+        { runner: secret },
+      ]),
+    );
+    await writeFile(configPath, stringify(config));
+    let prepared = 0;
+    const adapter: RunnerAdapter = {
+      id: secret,
+      revision: 'credential-runner-fixture-v1',
+      capabilities: {
+        roles: {
+          planner: 'read-only',
+          implementer: 'worktree-write',
+          reviewer: 'read-only',
+          fixer: 'worktree-write',
+        },
+        acceptsModel: true,
+      },
+      async prepare() {
+        prepared++;
+        throw new Error('runner preflight must not be reached');
+      },
+    };
+    await assert.rejects(
+      () =>
+        runProjectWorkflow(f.root, {
+          ...f.options,
+          runners: new Map([[secret, adapter]]),
+        }),
+      /role runner and model identifiers must not contain workspace credentials/,
+    );
+    assert.equal(prepared, 0);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('runner executable changes invalidate completed receipts without replay', async () => {
+  const f = await fixture();
+  try {
+    assert.equal(
+      (await runProjectWorkflow(f.root, f.options)).outcome,
+      'completed',
+    );
+    const calls = await f.calls();
+    const executable = f.options.codex.commandPrefixArguments[0]!;
+    await writeFile(
+      executable,
+      `${await readFile(executable, 'utf8')}\n// changed adapter runtime\n`,
+    );
+    await assert.rejects(
+      () => runProjectWorkflow(f.root, f.options),
+      /invalid workflow receipt/,
+    );
+    assert.deepEqual(await f.calls(), calls);
   } finally {
     await f.cleanup();
   }
@@ -626,6 +847,97 @@ test('review schema rejects conflicting outcomes, duplicate findings and unknown
     },
   ])
     assert.throws(() => parseReview(JSON.stringify(value)));
+});
+
+test('opaque runner evidence is fully redacted without changing runner controls', () => {
+  const secret = 'sensitive-runner-evidence-secret';
+  const payload = {
+    version: 1,
+    role: 'planner',
+    runner: 'codex',
+    model: 'true',
+    executionId: 'true',
+    effectId: 'null',
+    outcome: 'completed',
+    finalMessage: `plan ${secret}`,
+    evidence: {
+      output: secret,
+      [secret]: 'opaque-key-value',
+      nested: [secret, { arbitrary: secret }],
+      controlCollision: 'true',
+    },
+  };
+  const redacted = redactWorkflowPayload(payload, [
+    secret,
+    'true',
+    'null',
+  ]) as typeof payload;
+  assert.equal(redacted.model, 'true');
+  assert.match(redacted.executionId, /^redacted-[a-f0-9]{24}$/);
+  assert.notEqual(redacted.executionId, 'true');
+  assert.equal(redacted.effectId, 'null');
+  assert.equal(redacted.outcome, 'completed');
+  assert.equal(redacted.finalMessage.includes(secret), false);
+  assert.equal(JSON.stringify(redacted.evidence).includes(secret), false);
+  assert.equal(JSON.stringify(redacted.evidence).includes('true'), false);
+});
+
+test('credential-bearing duplicate execution IDs remain detectable after persistence redaction', async () => {
+  const secret = '12345678-1234-4234-8234-123456789abc';
+  const f = await fixture('success', 'local', [secret]);
+  try {
+    const invoked: string[] = [];
+    const adapter: RunnerAdapter = {
+      id: 'codex',
+      revision: 'identity-fixture-v1',
+      capabilities: {
+        roles: {
+          planner: 'read-only',
+          implementer: 'worktree-write',
+          reviewer: 'read-only',
+          fixer: 'worktree-write',
+        },
+        acceptsModel: true,
+      },
+      async prepare(_root, role, assignment) {
+        return {
+          assignment,
+          identity: 'a'.repeat(64),
+          async invoke(invocation) {
+            invoked.push(role);
+            if (role === 'implementer' || role === 'fixer')
+              await writeFile(path.join(f.root, 'result.txt'), 'good');
+            return {
+              version: 1,
+              role,
+              runner: 'codex',
+              executionId: secret,
+              effectId: invocation.effectId,
+              outcome: 'completed',
+              finalMessage:
+                role === 'planner'
+                  ? 'GENERATED_PLAN_MARKER: write result.txt then verify its content.'
+                  : role === 'reviewer'
+                    ? JSON.stringify({ outcome: 'passed', findings: [] })
+                    : 'Implemented only the fixture result.',
+              evidence: {},
+            };
+          },
+        };
+      },
+    };
+    await assert.rejects(
+      () =>
+        runProjectWorkflow(f.root, {
+          ...f.options,
+          runners: new Map([['codex', adapter]]),
+        }),
+      /effect adapter failed for phase implementation; reconciliation is required/,
+    );
+    assert.deepEqual(invoked, ['planner', 'implementer']);
+  } finally {
+    await f.cleanup();
+  }
 });
 
 async function git(root: string, args: string[]): Promise<string> {
@@ -1010,7 +1322,7 @@ test('verification receipt creation, forgery, mutation and deletion fail closed 
             const receipt = JSON.parse(await readFile(implementation, 'utf8'));
             if (attack === 'deletion') await rm(implementation);
             else if (attack === 'mutation') {
-              receipt.evidence.sessionId = 'forged-session';
+              receipt.evidence.executionId = 'forged-execution';
               await writeFile(implementation, JSON.stringify(receipt));
             } else {
               if (attack === 'current-verification') {
@@ -2248,7 +2560,7 @@ test('credential collisions preserve receipt types, raw review controls and resu
     const planning = JSON.parse(
       await readFile(path.join(result.runDirectory, 'planning.json'), 'utf8'),
     );
-    assert.equal(planning.evidence.plan.includes(secret), false);
+    assert.equal(planning.evidence.finalMessage.includes(secret), false);
     const display = await readFile(
       path.join(
         f.root,
@@ -2499,3 +2811,140 @@ test(
     }
   },
 );
+
+test(
+  'CLI routes explicit models through fix and independent review without replay',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const f = await fixture('fix');
+    try {
+      const binaryDirectory = path.join(f.directory, 'bin');
+      await mkdir(binaryDirectory);
+      await copyFile(process.execPath, path.join(binaryDirectory, 'codex.exe'));
+      const fakeScript = f.options.codex.commandPrefixArguments[0]!;
+      await writeFile(
+        path.join(f.root, 'exec'),
+        (await readFile(fakeScript, 'utf8')).replace(
+          /^fs\.appendFileSync\([^\n]*\n/m,
+          '',
+        ),
+      );
+      await git(f.root, ['add', '--', 'exec']);
+      await git(f.root, ['commit', '-m', 'add CLI role runner stub']);
+      const configPath = path.join(f.root, '.autocode', 'config.yaml');
+      const config = parse(await readFile(configPath, 'utf8'));
+      config.roles = {
+        planner: { runner: 'codex', model: 'plan-model' },
+        implementer: { runner: 'codex', model: 'code-model' },
+        reviewer: { runner: 'codex', model: 'review-model' },
+        fixer: { runner: 'codex', model: 'fix-model' },
+      };
+      await writeFile(configPath, stringify(config));
+      const policyPath = path.join(f.root, '.autocode', 'workflow.json');
+      const policy = JSON.parse(await readFile(policyPath, 'utf8'));
+      const head = await git(f.root, ['rev-parse', 'HEAD']);
+      policy.completion.merge.headCommit = head;
+      policy.completion.merge.signals[0].headCommit = head;
+      await writeFile(policyPath, JSON.stringify(policy));
+      const environment = {
+        ...process.env,
+        PATH: `${binaryDirectory}${path.delimiter}${process.env.PATH ?? ''}`,
+      };
+      const cli = fileURLToPath(new URL('./cli.ts', import.meta.url));
+      const artifactRoot = path.join(
+        f.root,
+        '.autocode',
+        'runs',
+        `AC-001-${head.slice(0, 12)}`,
+      );
+      const sessionPaths = [
+        'workflow-planning/planning/session.json',
+        'workflow-implementation/implementation/session.json',
+        'workflow-fix-1/fix/session.json',
+        'workflow-review-1/review/session.json',
+      ].map((relative) => path.join(artifactRoot, relative));
+      let first: string[] | undefined;
+      for (const command of ['run', 'resume']) {
+        const { stdout } = await execFileAsync(
+          process.execPath,
+          ['--import', 'tsx', cli, command, f.root],
+          {
+            env: environment,
+            cwd: process.cwd(),
+            windowsHide: true,
+            timeout: 120_000,
+          },
+        );
+        assert.match(stdout, /Workflow completed:/);
+        const current = await Promise.all(
+          sessionPaths.map((file) => readFile(file, 'utf8')),
+        );
+        if (first) assert.deepEqual(current, first);
+        else first = current;
+      }
+      const sessions = first!.map(
+        (text) =>
+          JSON.parse(text) as {
+            role: string;
+            sessionId: string;
+            arguments: string[];
+          },
+      );
+      assert.deepEqual(
+        sessions.map((session) => [
+          session.role,
+          session.arguments[session.arguments.indexOf('--model') + 1],
+        ]),
+        [
+          ['planning', 'plan-model'],
+          ['implementation', 'code-model'],
+          ['fix', 'fix-model'],
+          ['review', 'review-model'],
+        ],
+      );
+      assert.equal(
+        new Set(sessions.map((session) => session.sessionId)).size,
+        sessions.length,
+      );
+    } finally {
+      await f.cleanup();
+    }
+  },
+);
+
+test('CLI rejects an unsupported runner before effects', async () => {
+  const f = await fixture();
+  try {
+    const configPath = path.join(f.root, '.autocode', 'config.yaml');
+    const config = parse(await readFile(configPath, 'utf8'));
+    config.roles = {
+      planner: { runner: 'unsupported' },
+      implementer: { runner: 'codex' },
+      reviewer: { runner: 'codex' },
+      fixer: { runner: 'codex' },
+    };
+    await writeFile(configPath, stringify(config));
+    const cli = fileURLToPath(new URL('./cli.ts', import.meta.url));
+    await assert.rejects(
+      () =>
+        execFileAsync(
+          process.execPath,
+          ['--import', 'tsx', cli, 'run', f.root],
+          { cwd: process.cwd(), windowsHide: true, timeout: 30_000 },
+        ),
+      (error: unknown) => {
+        assert.match(
+          (error as { stderr: string }).stderr,
+          /unknown runner: unsupported/,
+        );
+        return true;
+      },
+    );
+    await assert.rejects(
+      () => readFile(path.join(f.directory, 'calls.jsonl'), 'utf8'),
+      /ENOENT/,
+    );
+  } finally {
+    await f.cleanup();
+  }
+});

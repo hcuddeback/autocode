@@ -32,7 +32,7 @@ The workflow uses four stable responsibilities:
 | Reviewer    | Read-only, independent of implementation                       | Validated findings or pass/block verdict |
 | Fixer       | Selected worktree writes limited to retained failures/findings | Scoped correction and execution identity |
 
-Each role resolves through configuration to a runner and optional model. The adapter owns provider-specific invocation and translates output to provider-neutral evidence. Codex CLI is the first and currently only implemented runner. AC-015 adds the configuration/adapter boundary; current code directly invokes Codex-specific types.
+Each role resolves through configuration to a runner and optional model. The adapter owns provider-specific invocation and translates output to provider-neutral evidence. Codex CLI is the first and currently only implemented production runner. Existing version-1 configuration without a `roles` map defaults all four roles to Codex; explicit maps must be complete and capability-compatible. Core workflow sequencing now consumes bounded runner results rather than Codex event/session types.
 
 ## Task kernel
 
@@ -59,7 +59,7 @@ Important present limits:
 
 - `select` scans task files by filename; it does not read a canonical workbook sequence or detect graph cycles.
 - The runner does not claim/update task ownership, change task metadata, move completed records, or select a successor.
-- Role execution and evidence use Codex-specific options/session types.
+- Only the Codex production adapter is registered; additional runner compatibility is not yet accepted.
 - Required QA needs an API-supplied contained adapter; the CLI does not configure scenarios.
 - QA findings do not enter automatic bounded fix/revalidation/review/QA recovery.
 - A PR-required task stops as `blocked` at the verified local boundary and has no immutable final handoff summary.

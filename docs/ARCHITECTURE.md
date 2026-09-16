@@ -90,13 +90,14 @@ Successful existing receipts can reconcile without repeating their effect when e
 
 - `tasks.ts` loads task contracts and selects one ready task; it does not parse workbook order, detect dependency cycles, own work durably, or continue.
 - `planning.ts` prepares commit/task-bound artifacts.
-- `codex.ts` hard-codes the four current role strings and Codex options/results.
-- `workflow.ts` directly invokes Codex roles and executes one task through verification/review/fix/QA/completion phases.
+- `runner.ts` owns provider-neutral roles, capabilities, assignment resolution, invocation, and bounded result validation.
+- `codex-runner.ts` maps those roles to the contained Codex process/session implementation in `codex.ts`.
+- `workflow.ts` invokes resolved roles and executes one task through verification/review/fix/QA/completion phases.
 - `verification.ts`, `qa.ts`, `pr-review.ts`, and `completion-gates.ts` provide bounded policy/evidence components.
 - `durable-run.ts` provides locks, effect identity, reconciliation, retry/pacing, and persisted transitions for one phase list.
 - `windows-sandbox.ts` provides the accepted Windows containment path; Linux/macOS fail closed.
 
-AC-015 begins by separating role/runner/model contracts. Later canonical workbook rows add scheduling, ownership, QA recovery, summary/state continuation, compatibility, end-to-end acceptance, and release gates in that order.
+AC-015 separates the role/runner/model contracts while retaining Codex as the only production adapter. Later canonical workbook rows add scheduling, ownership, QA recovery, summary/state continuation, compatibility, end-to-end acceptance, and release gates in that order.
 
 ## Failure and recovery
 

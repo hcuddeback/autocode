@@ -33,10 +33,13 @@ const CONFIG_KEYS = new Set([
   'telemetry',
   'verification',
   'fixLoop',
+  'roles',
 ]);
 const VERIFICATION_KEYS = new Set(['commands', 'timeoutMs', 'maxOutputBytes']);
 const COMMAND_KEYS = new Set(['name', 'command', 'args']);
 const FIX_LOOP_KEYS = new Set(['maxAttempts']);
+const ROLE_KEYS = ['planner', 'implementer', 'reviewer', 'fixer'] as const;
+const ROLE_ASSIGNMENT_KEYS = new Set(['runner', 'model']);
 const SHELL_EXECUTABLES = new Set([
   'bash',
   'cmd',
@@ -68,11 +71,30 @@ export interface AutoCodeConfig {
   telemetry: false;
   verification: VerificationConfig;
   fixLoop: FixLoopConfig;
+  roles: RoleAssignmentsConfig;
 }
 
 export interface FixLoopConfig {
   maxAttempts: number;
 }
+
+export type WorkflowRole = (typeof ROLE_KEYS)[number];
+
+export interface RoleAssignmentConfig {
+  runner: string;
+  model?: string;
+}
+
+export type RoleAssignmentsConfig = Readonly<
+  Record<WorkflowRole, Readonly<RoleAssignmentConfig>>
+>;
+
+export const DEFAULT_ROLE_ASSIGNMENTS: RoleAssignmentsConfig = Object.freeze({
+  planner: Object.freeze({ runner: 'codex' }),
+  implementer: Object.freeze({ runner: 'codex' }),
+  reviewer: Object.freeze({ runner: 'codex' }),
+  fixer: Object.freeze({ runner: 'codex' }),
+});
 
 const defaultConfig: AutoCodeConfig = {
   version: 1,
@@ -86,6 +108,7 @@ const defaultConfig: AutoCodeConfig = {
   fixLoop: {
     maxAttempts: 3,
   },
+  roles: DEFAULT_ROLE_ASSIGNMENTS,
 };
 
 export function validateConfig(value: unknown): AutoCodeConfig {
@@ -112,7 +135,57 @@ export function validateConfig(value: unknown): AutoCodeConfig {
 
   const verification = validateVerificationConfig(config.verification);
   const fixLoop = validateFixLoopConfig(config.fixLoop);
-  return { ...defaultConfig, verification, fixLoop };
+  const roles = validateRoleAssignments(config.roles);
+  return { ...defaultConfig, verification, fixLoop, roles };
+}
+
+function validateRoleAssignments(value: unknown): RoleAssignmentsConfig {
+  if (value === undefined) return DEFAULT_ROLE_ASSIGNMENTS;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('roles configuration must be a mapping');
+  }
+  const record = value as Record<string, unknown>;
+  const unexpected = Object.keys(record).find(
+    (key) => !(ROLE_KEYS as readonly string[]).includes(key),
+  );
+  if (unexpected !== undefined)
+    throw new Error(`unknown roles key: ${unexpected}`);
+  const missing = ROLE_KEYS.find((role) => !(role in record));
+  if (missing !== undefined)
+    throw new Error(`roles.${missing} assignment is required`);
+  return Object.freeze(
+    Object.fromEntries(
+      ROLE_KEYS.map((role) => [
+        role,
+        validateRoleAssignment(record[role], role),
+      ]),
+    ) as unknown as Record<WorkflowRole, Readonly<RoleAssignmentConfig>>,
+  );
+}
+
+function validateRoleAssignment(
+  value: unknown,
+  role: WorkflowRole,
+): Readonly<RoleAssignmentConfig> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    throw new Error(`roles.${role} must be a mapping`);
+  const record = value as Record<string, unknown>;
+  rejectUnknownKeys(record, ROLE_ASSIGNMENT_KEYS, `roles.${role}`);
+  if (
+    typeof record.runner !== 'string' ||
+    !/^[a-z][a-z0-9-]{0,63}$/.test(record.runner)
+  )
+    throw new Error(`roles.${role}.runner is invalid`);
+  if (
+    record.model !== undefined &&
+    (typeof record.model !== 'string' ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(record.model))
+  )
+    throw new Error(`roles.${role}.model is invalid`);
+  return Object.freeze({
+    runner: record.runner,
+    ...(record.model === undefined ? {} : { model: record.model }),
+  });
 }
 
 function validateFixLoopConfig(value: unknown): FixLoopConfig {
