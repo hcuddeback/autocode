@@ -18,6 +18,7 @@ const assignments: RoleAssignmentsConfig = {
 function adapter(overrides: Partial<RunnerAdapter> = {}): RunnerAdapter {
   return {
     id: 'fake',
+    revision: 'fake-v1',
     capabilities: {
       roles: {
         planner: 'read-only',
@@ -30,6 +31,7 @@ function adapter(overrides: Partial<RunnerAdapter> = {}): RunnerAdapter {
     async prepare(_root, role, assignment) {
       return {
         assignment,
+        identity: 'a'.repeat(64),
         async invoke(invocation: RunnerInvocation): Promise<RunnerResult> {
           return {
             version: 1,
@@ -115,6 +117,7 @@ test('model rejection and malformed adapter results fail closed', async () => {
     async prepare(_root, role: WorkflowRole, assignment) {
       return {
         assignment,
+        identity: 'a'.repeat(64),
         async invoke(invocation) {
           return {
             version: 1,
@@ -156,6 +159,7 @@ test('adapter evidence must be bounded immutable plain JSON', async () => {
     async prepare(_root, role, assignment) {
       return {
         assignment,
+        identity: 'a'.repeat(64),
         async invoke(invocation) {
           return {
             version: 1,
@@ -187,5 +191,75 @@ test('adapter evidence must be bounded immutable plain JSON', async () => {
         artifactName: 'plan',
       }),
     /evidence exceeds nesting limit/,
+  );
+});
+
+test('adapter revision, capabilities and preflight identity change receipt identity', async () => {
+  const base = await resolveRoleRunners(
+    'C:/fixture',
+    assignments,
+    new Map([['fake', adapter()]]),
+  );
+  const revision = await resolveRoleRunners(
+    'C:/fixture',
+    assignments,
+    new Map([['fake', adapter({ revision: 'fake-v2' })]]),
+  );
+  const preflight = await resolveRoleRunners(
+    'C:/fixture',
+    assignments,
+    new Map([
+      [
+        'fake',
+        adapter({
+          async prepare(_root, role, assignment) {
+            const prepared = await adapter().prepare(_root, role, assignment);
+            return { ...prepared, identity: 'b'.repeat(64) };
+          },
+        }),
+      ],
+    ]),
+  );
+  assert.notEqual(base.planner.identity, revision.planner.identity);
+  assert.notEqual(base.planner.identity, preflight.planner.identity);
+});
+
+test('aggregate runner results must fit a workflow receipt', async () => {
+  const oversized = adapter({
+    async prepare(_root, role, assignment) {
+      return {
+        assignment,
+        identity: 'a'.repeat(64),
+        async invoke(invocation) {
+          return {
+            version: 1,
+            role,
+            runner: assignment.runner,
+            ...(assignment.model === undefined
+              ? {}
+              : { model: assignment.model }),
+            executionId: `${role}-execution`,
+            effectId: invocation.effectId,
+            outcome: 'completed',
+            finalMessage: 'm'.repeat(400 * 1024),
+            evidence: { output: 'e'.repeat(200 * 1024) },
+          };
+        },
+      };
+    },
+  });
+  const resolved = await resolveRoleRunners(
+    'C:/fixture',
+    assignments,
+    new Map([['fake', oversized]]),
+  );
+  await assert.rejects(
+    () =>
+      resolved.planner.invoke({
+        role: 'planner',
+        effectId: 'effect-plan',
+        artifactName: 'plan',
+      }),
+    /result exceeds receipt limit/,
   );
 });

@@ -395,6 +395,29 @@ test('unknown configured runners fail before model or durable effects', async ()
   }
 });
 
+test('runner executable changes invalidate completed receipts without replay', async () => {
+  const f = await fixture();
+  try {
+    assert.equal(
+      (await runProjectWorkflow(f.root, f.options)).outcome,
+      'completed',
+    );
+    const calls = await f.calls();
+    const executable = f.options.codex.commandPrefixArguments[0]!;
+    await writeFile(
+      executable,
+      `${await readFile(executable, 'utf8')}\n// changed adapter runtime\n`,
+    );
+    await assert.rejects(
+      () => runProjectWorkflow(f.root, f.options),
+      /invalid workflow receipt/,
+    );
+    assert.deepEqual(await f.calls(), calls);
+  } finally {
+    await f.cleanup();
+  }
+});
+
 test('resume rejects legacy process containment receipts', async () => {
   const f = await fixture();
   try {

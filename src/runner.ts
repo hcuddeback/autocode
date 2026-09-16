@@ -3,6 +3,7 @@ import type {
   RoleAssignmentsConfig,
   WorkflowRole,
 } from './config.js';
+import { createHash } from 'node:crypto';
 
 export type RoleAuthority = 'read-only' | 'worktree-write';
 
@@ -42,11 +43,15 @@ export interface RunnerResult {
 
 export interface PreparedRoleRunner {
   readonly assignment: Readonly<RoleAssignmentConfig>;
+  /** SHA-256 of adapter/runtime inputs established during effect-free preflight. */
+  readonly identity: string;
   invoke(invocation: RunnerInvocation): Promise<RunnerResult>;
 }
 
 export interface RunnerAdapter {
   readonly id: string;
+  /** Bump whenever adapter behavior or result translation changes. */
+  readonly revision: string;
   readonly capabilities: RunnerCapabilities;
   prepare(
     root: string,
@@ -68,6 +73,7 @@ const ROLES: readonly WorkflowRole[] = [
 ];
 const MAX_FINAL_MESSAGE_BYTES = 1024 * 1024;
 const MAX_EVIDENCE_BYTES = 1024 * 1024;
+const MAX_RUNNER_RESULT_BYTES = 512 * 1024;
 const MAX_EVIDENCE_DEPTH = 16;
 const MAX_EVIDENCE_ENTRIES = 4096;
 
@@ -96,6 +102,8 @@ export async function resolveRoleRunners(
       throw new Error(
         `runner registry identity mismatch for ${assignment.runner}`,
       );
+    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(adapter.revision))
+      throw new Error(`runner ${adapter.id} has an invalid revision`);
     const authority = adapter.capabilities.roles[role];
     if (authority !== ROLE_AUTHORITY[role])
       throw new Error(
@@ -109,8 +117,24 @@ export async function resolveRoleRunners(
       prepared.assignment.model !== assignment.model
     )
       throw new Error(`runner ${adapter.id} changed the configured assignment`);
+    if (!/^[a-f0-9]{64}$/.test(prepared.identity))
+      throw new Error(
+        `runner ${adapter.id} returned an invalid preflight identity`,
+      );
+    const identity = createHash('sha256')
+      .update(
+        JSON.stringify({
+          runner: adapter.id,
+          revision: adapter.revision,
+          capabilities: adapter.capabilities,
+          assignment,
+          preflight: prepared.identity,
+        }),
+      )
+      .digest('hex');
     resolved[role] = Object.freeze({
       assignment,
+      identity,
       async invoke(invocation: RunnerInvocation) {
         if (invocation.role !== role)
           throw new Error(
@@ -167,7 +191,7 @@ export function validateRunnerResult(
   if (Buffer.byteLength(JSON.stringify(evidence)) > MAX_EVIDENCE_BYTES)
     throw new Error(`runner ${assignment.runner} evidence exceeds limit`);
   invocation.validateFinalMessage?.(value.finalMessage);
-  return Object.freeze({
+  const result: RunnerResult = {
     version: 1,
     role: value.role,
     runner: value.runner,
@@ -177,7 +201,10 @@ export function validateRunnerResult(
     outcome: 'completed',
     finalMessage: value.finalMessage,
     evidence,
-  });
+  };
+  if (Buffer.byteLength(JSON.stringify(result)) > MAX_RUNNER_RESULT_BYTES)
+    throw new Error(`runner ${assignment.runner} result exceeds receipt limit`);
+  return Object.freeze(result);
 }
 
 function copyEvidence(

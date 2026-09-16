@@ -1,4 +1,6 @@
 import type { RoleAssignmentConfig, WorkflowRole } from './config.js';
+import { createHash } from 'node:crypto';
+import path from 'node:path';
 import {
   CodexStateTamperingError,
   preflightCodexSession,
@@ -13,6 +15,7 @@ import {
   type RunnerInvocation,
   type RunnerRegistry,
 } from './runner.js';
+import { snapshotQaInputs, type QaInputSnapshot } from './qa-inputs.js';
 
 const CODEX_ROLE: Readonly<Record<WorkflowRole, CodexSessionRecord['role']>> =
   Object.freeze({
@@ -34,6 +37,7 @@ export type CodexRunnerOptions = Omit<
 
 export class CodexRunnerAdapter implements RunnerAdapter {
   readonly id = 'codex';
+  readonly revision = 'codex-cli-adapter-v1';
   readonly capabilities = Object.freeze({
     roles: Object.freeze({
       planner: 'read-only' as const,
@@ -43,6 +47,8 @@ export class CodexRunnerAdapter implements RunnerAdapter {
     }),
     acceptsModel: true,
   });
+  private resourceSnapshot:
+    { key: string; value: Promise<QaInputSnapshot> } | undefined;
 
   constructor(private readonly options: CodexRunnerOptions = {}) {}
 
@@ -57,8 +63,46 @@ export class CodexRunnerAdapter implements RunnerAdapter {
       ...this.options,
       ...(assignment.model === undefined ? {} : { model: assignment.model }),
     });
+    const configuration = createHash('sha256')
+      .update(
+        JSON.stringify({
+          revision: this.revision,
+          role,
+          assignment,
+          command: options.command,
+          commandPrefixArguments: options.commandPrefixArguments,
+          timeoutMs: options.timeoutMs,
+          maxOutputBytes: options.maxOutputBytes,
+          sandboxWriteDirectories: options.sandboxWriteDirectories,
+          sandboxWriteFiles: options.sandboxWriteFiles,
+        }),
+      )
+      .digest('hex');
+    const targets = [
+      options.command!,
+      ...(options.commandPrefixArguments ?? []).filter((argument) =>
+        path.isAbsolute(argument),
+      ),
+    ].filter((target, index, values) => values.indexOf(target) === index);
+    const resourceKey = JSON.stringify({ root, targets });
+    if (this.resourceSnapshot === undefined) {
+      const resourceConfiguration = createHash('sha256')
+        .update(resourceKey)
+        .digest('hex');
+      this.resourceSnapshot = {
+        key: resourceKey,
+        value: snapshotQaInputs(root, resourceConfiguration, targets),
+      };
+    } else if (this.resourceSnapshot.key !== resourceKey) {
+      throw new Error('Codex preflight resources changed between roles');
+    }
+    const resources = await this.resourceSnapshot.value;
+    const identity = createHash('sha256')
+      .update(JSON.stringify({ configuration, resources }))
+      .digest('hex');
     return {
       assignment,
+      identity,
       invoke: async (invocation: RunnerInvocation) => {
         let finalMessage: string | undefined;
         let record: CodexSessionRecord;

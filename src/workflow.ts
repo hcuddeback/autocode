@@ -241,6 +241,12 @@ export async function runProjectWorkflow(
   )
     throw new Error('workflow preparation is stale');
   const initialPlan = await safeRead(root, `${preparedRelative}/plan.md`);
+  const runnerIdentities = {
+    planner: roleRunners.planner.identity,
+    implementer: roleRunners.implementer.identity,
+    reviewer: roleRunners.reviewer.identity,
+    fixer: roleRunners.fixer.identity,
+  };
   const binding = hash(
     JSON.stringify({
       processContainment: 'windows-appcontainer-job-v18',
@@ -250,6 +256,7 @@ export async function runProjectWorkflow(
       branch,
       task: hash(task.contents),
       roles: config.roles,
+      runnerIdentities,
       config: hash(configText),
       policy: hash(policyText ?? ''),
       plan: hash(initialPlan),
