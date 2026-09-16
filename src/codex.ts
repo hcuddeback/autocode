@@ -203,14 +203,14 @@ async function discoverBatchWrapperResources(
     )) {
       const reference = (match[1] ?? match[2])!;
       let candidate: string;
-      if (/^(?:%~dp0|%dp0%)/i.test(reference))
-        candidate = path.resolve(
-          directory,
-          reference.replace(/^(?:%~dp0|%dp0%)[\\/]*/i, ''),
-        );
-      else if (path.isAbsolute(reference)) candidate = reference;
+      if (/^(?:%~dp0|%dp0%)/i.test(reference)) {
+        const relative = reference.replace(/^(?:%~dp0|%dp0%)[\\/]*/i, '');
+        if (/[%!]/.test(relative))
+          throw new Error('Codex command wrapper dependency is dynamic');
+        candidate = path.resolve(directory, relative);
+      } else if (path.isAbsolute(reference)) candidate = reference;
       else {
-        if (reference.includes('%'))
+        if (/[%!]/.test(reference))
           throw new Error('Codex command wrapper dependency is dynamic');
         candidate = path.resolve(directory, reference);
       }

@@ -530,3 +530,30 @@ test(
     }
   },
 );
+
+test(
+  'Codex adapters reject dynamic batch dependencies after directory prefixes',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.cmd');
+      const helper = path.join(root, 'helper.cmd');
+      await writeFile(
+        executable,
+        '@set "DEP=helper"\r\n@call "%~dp0%DEP%.cmd"\r\n',
+      );
+      await writeFile(helper, '@exit /b 0\r\n');
+      const adapter = new CodexRunnerAdapter({
+        command: executable,
+        runnerResourceFiles: [executable],
+      });
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex executable or resources could not be resolved safely/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
