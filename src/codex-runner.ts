@@ -177,10 +177,10 @@ async function discoverRunnerResources(
   async function visit(target: string, entry = false): Promise<void> {
     try {
       const canonical = await realpath(target);
-      if (visited.has(canonical.toLowerCase())) return;
+      if (visited.has(canonical)) return;
       const info = await lstat(canonical);
       if (!info.isFile() || info.isSymbolicLink()) throw new Error();
-      visited.add(canonical.toLowerCase());
+      visited.add(canonical);
       resources.push(canonical);
       if (resources.length > 31)
         throw new Error('runner dependency limit exceeded');

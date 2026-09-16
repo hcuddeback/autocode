@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -272,6 +272,39 @@ test(
       await assert.rejects(
         () => adapter.prepare(root, 'planner', { runner: 'codex' }),
         /Codex runner dependencies could not be inspected safely/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'runner resource identity preserves case-sensitive canonical paths',
+  { skip: process.platform !== 'win32' },
+  async (context) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'Runner.mjs');
+      const helper = path.join(root, 'runner.mjs');
+      await writeFile(executable, "import './runner.mjs';\n");
+      await writeFile(helper, 'export const helper = 1;\n');
+      const executableCanonical = await realpath(executable);
+      const helperCanonical = await realpath(helper);
+      if (executableCanonical === helperCanonical) {
+        context.skip('fixture directory is not case-sensitive');
+        return;
+      }
+      const adapter = new CodexRunnerAdapter({
+        command: process.execPath,
+        commandPrefixArguments: [executable],
+        runnerResourceFiles: [executable, helper],
+      });
+      await adapter.prepare(root, 'planner', { runner: 'codex' });
+      await writeFile(helper, 'export const helper = 2;\n');
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex runner resources changed/,
       );
     } finally {
       await rm(root, { recursive: true, force: true });
