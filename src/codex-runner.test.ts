@@ -479,3 +479,29 @@ test(
     }
   },
 );
+
+test(
+  'Codex adapters require transitive batch dependencies in the manifest',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.cmd');
+      const helper = path.join(root, 'helper.cmd');
+      const nested = path.join(root, 'nested.cmd');
+      await writeFile(executable, '@call "%~dp0helper.cmd"\r\n');
+      await writeFile(helper, '@call "%~dp0nested.cmd"\r\n');
+      await writeFile(nested, '@exit /b 0\r\n');
+      const adapter = new CodexRunnerAdapter({
+        command: executable,
+        runnerResourceFiles: [executable, helper],
+      });
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex executable or resources could not be resolved safely/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

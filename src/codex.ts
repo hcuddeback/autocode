@@ -187,35 +187,46 @@ export async function preflightCodexSession(
 async function discoverBatchWrapperResources(
   executable: string,
 ): Promise<string[]> {
-  const contents = await readFile(executable, 'utf8');
-  if (Buffer.byteLength(contents) > 64 * 1024)
-    throw new Error('Codex command wrapper is too large');
-  const resources = [executable];
-  const directory = path.dirname(executable);
-  for (const match of contents.matchAll(
-    /"([^"]+\.(?:bat|cmd|cjs|js|mjs|exe))"|([^\s"'()]+\.(?:bat|cmd|cjs|js|mjs|exe))/gi,
-  )) {
-    const reference = (match[1] ?? match[2])!;
-    let candidate: string;
-    if (/^(?:%~dp0|%dp0%)/i.test(reference))
-      candidate = path.resolve(
-        directory,
-        reference.replace(/^(?:%~dp0|%dp0%)[\\/]*/i, ''),
-      );
-    else if (path.isAbsolute(reference)) candidate = reference;
-    else {
-      if (reference.includes('%'))
-        throw new Error('Codex command wrapper dependency is dynamic');
-      candidate = path.resolve(directory, reference);
-    }
-    try {
-      const canonical = await realpath(candidate);
-      if ((await lstat(canonical)).isFile() && !resources.includes(canonical))
-        resources.push(canonical);
-    } catch {
-      // A non-existent conditional branch is not an executable dependency.
+  const resources: string[] = [];
+  async function visit(wrapper: string): Promise<void> {
+    const canonicalWrapper = await realpath(wrapper);
+    if (resources.includes(canonicalWrapper)) return;
+    resources.push(canonicalWrapper);
+    if (resources.length > 31)
+      throw new Error('Codex command wrapper dependency limit exceeded');
+    const contents = await readFile(canonicalWrapper, 'utf8');
+    if (Buffer.byteLength(contents) > 64 * 1024)
+      throw new Error('Codex command wrapper is too large');
+    const directory = path.dirname(canonicalWrapper);
+    for (const match of contents.matchAll(
+      /"([^"]+\.(?:bat|cmd|cjs|js|mjs|exe))"|([^\s"'()]+\.(?:bat|cmd|cjs|js|mjs|exe))/gi,
+    )) {
+      const reference = (match[1] ?? match[2])!;
+      let candidate: string;
+      if (/^(?:%~dp0|%dp0%)/i.test(reference))
+        candidate = path.resolve(
+          directory,
+          reference.replace(/^(?:%~dp0|%dp0%)[\\/]*/i, ''),
+        );
+      else if (path.isAbsolute(reference)) candidate = reference;
+      else {
+        if (reference.includes('%'))
+          throw new Error('Codex command wrapper dependency is dynamic');
+        candidate = path.resolve(directory, reference);
+      }
+      let canonical: string;
+      try {
+        canonical = await realpath(candidate);
+        if (!(await lstat(canonical)).isFile()) continue;
+      } catch {
+        // A newly created dependency is rejected by the next role preflight.
+        continue;
+      }
+      if (/\.(?:cmd|bat)$/i.test(canonical)) await visit(canonical);
+      else if (!resources.includes(canonical)) resources.push(canonical);
     }
   }
+  await visit(executable);
   return resources;
 }
 
