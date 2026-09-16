@@ -883,7 +883,10 @@ export function redactWorkflowPayload(
   redactAllText = false,
 ): unknown {
   if (typeof value === 'string') {
-    if (field === 'id' && redactSecrets(value, secrets) !== value)
+    if (
+      (field === 'id' || field === 'executionId') &&
+      redactSecrets(value, secrets) !== value
+    )
       return `redacted-${hash(value).slice(0, 24)}`;
     return redactAllText || PAYLOAD_TEXT_FIELDS.has(field)
       ? redactSecrets(value, secrets)

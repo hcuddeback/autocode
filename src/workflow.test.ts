@@ -780,7 +780,8 @@ test('opaque runner evidence is fully redacted without changing runner controls'
     'null',
   ]) as typeof payload;
   assert.equal(redacted.model, 'true');
-  assert.equal(redacted.executionId, 'true');
+  assert.match(redacted.executionId, /^redacted-[a-f0-9]{24}$/);
+  assert.notEqual(redacted.executionId, 'true');
   assert.equal(redacted.effectId, 'null');
   assert.equal(redacted.outcome, 'completed');
   assert.equal(redacted.finalMessage.includes(secret), false);
