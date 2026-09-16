@@ -15,7 +15,11 @@ import {
   type RunnerInvocation,
   type RunnerRegistry,
 } from './runner.js';
-import { snapshotQaInputs, type QaInputSnapshot } from './qa-inputs.js';
+import {
+  refreshQaInputs,
+  snapshotQaInputs,
+  type QaInputSnapshot,
+} from './qa-inputs.js';
 
 const CODEX_ROLE: Readonly<Record<WorkflowRole, CodexSessionRecord['role']>> =
   Object.freeze({
@@ -104,6 +108,7 @@ export class CodexRunnerAdapter implements RunnerAdapter {
       assignment,
       identity,
       invoke: async (invocation: RunnerInvocation) => {
+        await assertRunnerResourcesUnchanged(root, resources);
         let finalMessage: string | undefined;
         let record: CodexSessionRecord;
         try {
@@ -125,10 +130,12 @@ export class CodexRunnerAdapter implements RunnerAdapter {
             },
           );
         } catch (error) {
+          await assertRunnerResourcesUnchanged(root, resources);
           if (error instanceof CodexStateTamperingError)
             throw new RunnerStateTamperingError(error.message);
           throw error;
         }
+        await assertRunnerResourcesUnchanged(root, resources);
         if (finalMessage === undefined)
           throw new Error('Codex adapter did not capture a final message');
         return {
@@ -146,6 +153,23 @@ export class CodexRunnerAdapter implements RunnerAdapter {
         };
       },
     };
+  }
+}
+
+export async function assertRunnerResourcesUnchanged(
+  root: string,
+  expected: QaInputSnapshot,
+): Promise<void> {
+  try {
+    const current = await refreshQaInputs(root, expected);
+    if (
+      current.configuration !== expected.configuration ||
+      current.fingerprint !== expected.fingerprint ||
+      JSON.stringify(current.targets) !== JSON.stringify(expected.targets)
+    )
+      throw new Error('runner resources changed');
+  } catch {
+    throw new RunnerStateTamperingError('Codex runner resources changed');
   }
 }
 

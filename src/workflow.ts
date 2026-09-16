@@ -896,15 +896,20 @@ export function redactWorkflowPayload(
   if (value !== null && typeof value === 'object') {
     const runnerPayload = isRunnerPayload(value);
     return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [
-        key,
-        redactWorkflowPayload(
-          entry,
-          secrets,
-          key,
-          redactAllText || (runnerPayload && key === 'evidence'),
-        ),
-      ]),
+      Object.entries(value).map(([key, entry]) => {
+        const redactedKey = redactAllText ? redactSecrets(key, secrets) : key;
+        const retainedKey =
+          redactedKey === key ? key : `redacted-${hash(key).slice(0, 24)}`;
+        return [
+          retainedKey,
+          redactWorkflowPayload(
+            entry,
+            secrets,
+            key,
+            redactAllText || (runnerPayload && key === 'evidence'),
+          ),
+        ];
+      }),
     );
   }
   return value;

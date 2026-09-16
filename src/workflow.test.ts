@@ -274,7 +274,12 @@ async function withOperatorMutation<T>(
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
-      if (ended || Date.now() > deadline)
+      if (ended) {
+        const result = await execution;
+        if ('error' in result) throw result.error;
+        throw new Error('Command ended before operator mutation handshake');
+      }
+      if (Date.now() > deadline)
         throw new Error('Command ended before operator mutation handshake');
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
@@ -764,6 +769,7 @@ test('opaque runner evidence is fully redacted without changing runner controls'
     finalMessage: `plan ${secret}`,
     evidence: {
       output: secret,
+      [secret]: 'opaque-key-value',
       nested: [secret, { arbitrary: secret }],
       controlCollision: 'true',
     },
