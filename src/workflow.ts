@@ -869,28 +869,54 @@ function hash(text: string): string {
 }
 
 /** Redact payload text, never JSON syntax, validated controls, or freshness metadata. */
-function redactWorkflowPayload(
+export function redactWorkflowPayload(
   value: unknown,
   secrets: readonly string[],
   field = '',
+  redactAllText = false,
 ): unknown {
   if (typeof value === 'string') {
     if (field === 'id' && redactSecrets(value, secrets) !== value)
       return `redacted-${hash(value).slice(0, 24)}`;
-    return PAYLOAD_TEXT_FIELDS.has(field)
+    return redactAllText || PAYLOAD_TEXT_FIELDS.has(field)
       ? redactSecrets(value, secrets)
       : value;
   }
   if (Array.isArray(value))
-    return value.map((entry) => redactWorkflowPayload(entry, secrets, field));
-  if (value !== null && typeof value === 'object')
+    return value.map((entry) =>
+      redactWorkflowPayload(entry, secrets, field, redactAllText),
+    );
+  if (value !== null && typeof value === 'object') {
+    const runnerPayload = isRunnerPayload(value);
     return Object.fromEntries(
       Object.entries(value).map(([key, entry]) => [
         key,
-        redactWorkflowPayload(entry, secrets, key),
+        redactWorkflowPayload(
+          entry,
+          secrets,
+          key,
+          redactAllText || (runnerPayload && key === 'evidence'),
+        ),
       ]),
     );
+  }
   return value;
+}
+
+function isRunnerPayload(value: object): boolean {
+  const record = value as Record<string, unknown>;
+  return (
+    record.version === 1 &&
+    ['planner', 'implementer', 'reviewer', 'fixer'].includes(
+      record.role as string,
+    ) &&
+    typeof record.runner === 'string' &&
+    typeof record.executionId === 'string' &&
+    typeof record.effectId === 'string' &&
+    record.outcome === 'completed' &&
+    typeof record.evidence === 'object' &&
+    record.evidence !== null
+  );
 }
 
 async function git(root: string, args: string[]): Promise<string> {

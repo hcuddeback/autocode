@@ -20,7 +20,11 @@ import { parse, stringify } from 'yaml';
 import { createContainedQaAdapter } from './qa-process.js';
 import type { QaCallbacks } from './qa.js';
 import { initializeProject } from './config.js';
-import { runProjectWorkflow, parseReview } from './workflow.js';
+import {
+  runProjectWorkflow,
+  parseReview,
+  redactWorkflowPayload,
+} from './workflow.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -722,6 +726,37 @@ test('review schema rejects conflicting outcomes, duplicate findings and unknown
     },
   ])
     assert.throws(() => parseReview(JSON.stringify(value)));
+});
+
+test('opaque runner evidence is fully redacted without changing runner controls', () => {
+  const secret = 'sensitive-runner-evidence-secret';
+  const payload = {
+    version: 1,
+    role: 'planner',
+    runner: 'codex',
+    model: 'true',
+    executionId: 'true',
+    effectId: 'null',
+    outcome: 'completed',
+    finalMessage: `plan ${secret}`,
+    evidence: {
+      output: secret,
+      nested: [secret, { arbitrary: secret }],
+      controlCollision: 'true',
+    },
+  };
+  const redacted = redactWorkflowPayload(payload, [
+    secret,
+    'true',
+    'null',
+  ]) as typeof payload;
+  assert.equal(redacted.model, 'true');
+  assert.equal(redacted.executionId, 'true');
+  assert.equal(redacted.effectId, 'null');
+  assert.equal(redacted.outcome, 'completed');
+  assert.equal(redacted.finalMessage.includes(secret), false);
+  assert.equal(JSON.stringify(redacted.evidence).includes(secret), false);
+  assert.equal(JSON.stringify(redacted.evidence).includes('true'), false);
 });
 
 async function git(root: string, args: string[]): Promise<string> {
