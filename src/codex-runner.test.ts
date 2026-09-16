@@ -505,6 +505,33 @@ test(
 );
 
 test(
+  'Codex adapters reject unsupported batch script dependencies',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.cmd');
+      const helper = path.join(root, 'helper.ps1');
+      await writeFile(
+        executable,
+        '@powershell.exe -File "%~dp0helper.ps1"\r\n',
+      );
+      await writeFile(helper, 'exit 0\r\n');
+      const adapter = new CodexRunnerAdapter({
+        command: executable,
+        runnerResourceFiles: [executable],
+      });
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex executable or resources could not be resolved safely/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'default Codex batch shims bind their discovered resources automatically',
   { skip: process.platform !== 'win32' },
   async () => {

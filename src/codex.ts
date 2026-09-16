@@ -201,7 +201,7 @@ async function discoverBatchWrapperResources(
       throw new Error('Codex command wrapper is too large');
     const directory = path.dirname(canonicalWrapper);
     for (const match of contents.matchAll(
-      /"([^"]+\.(?:bat|cmd|cjs|js|mjs|exe))"|([^\s"'()]+\.(?:bat|cmd|cjs|js|mjs|exe))/gi,
+      /"([^"]+\.(?:bat|cmd|cjs|js|mjs|cts|ts|mts|jsx|tsx|exe|ps1|psm1|psd1|vbs|vbe|wsf|wsh|py|pyw))"|([^\s"'()]+\.(?:bat|cmd|cjs|js|mjs|cts|ts|mts|jsx|tsx|exe|ps1|psm1|psd1|vbs|vbe|wsf|wsh|py|pyw))/gi,
     )) {
       const reference = (match[1] ?? match[2])!;
       let candidate: string;
@@ -224,6 +224,10 @@ async function discoverBatchWrapperResources(
         // A newly created dependency is rejected by the next role preflight.
         continue;
       }
+      if (/\.(?:ps1|psm1|psd1|vbs|vbe|wsf|wsh|py|pyw)$/i.test(canonical))
+        throw new Error(
+          'Codex command wrapper script dependency is unsupported',
+        );
       if (/\.(?:cmd|bat)$/i.test(canonical)) await visit(canonical);
       else if (!resources.includes(canonical)) resources.push(canonical);
     }
