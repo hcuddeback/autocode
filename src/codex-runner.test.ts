@@ -363,6 +363,31 @@ test(
 );
 
 test(
+  'Codex adapters reject Unicode-escaped runner loader identifiers',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.cjs');
+      const helper = path.join(root, 'helper.cjs');
+      await writeFile(executable, "requ\\u0069re('./helper.cjs');\n");
+      await writeFile(helper, 'module.exports = 1;\n');
+      const adapter = new CodexRunnerAdapter({
+        command: process.execPath,
+        commandPrefixArguments: [executable],
+        runnerResourceFiles: [executable],
+      });
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex runner dependencies could not be inspected safely/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'runner resource identity preserves case-sensitive canonical paths',
   { skip: process.platform !== 'win32' },
   async (context) => {

@@ -193,6 +193,8 @@ async function discoverRunnerResources(
         throw new Error('unsupported runner entry script');
       if (!SCRIPT_RESOURCE.test(canonical)) return;
       const contents = await readFile(canonical, 'utf8');
+      if (/\\u(?:\{[0-9a-f]+\}|[0-9a-f]{4})/i.test(contents))
+        throw new Error('escaped runner dependency syntax is unsupported');
       if (/\bcreateRequire\b/.test(contents))
         throw new Error('alternate runner dependency loaders are unsupported');
       for (const match of contents.matchAll(/\brequire\b/g)) {
