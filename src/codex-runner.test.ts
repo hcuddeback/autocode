@@ -4,7 +4,10 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { assertRunnerResourcesUnchanged } from './codex-runner.js';
+import {
+  assertRunnerResourcesUnchanged,
+  CodexRunnerAdapter,
+} from './codex-runner.js';
 import { preflightCodexSession } from './codex.js';
 import { snapshotQaInputs } from './qa-inputs.js';
 
@@ -45,3 +48,27 @@ test('Codex preflight rejects direct and indirect relative prefix resources', as
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test(
+  'reused Codex adapters reject changed resources during preflight',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.mjs');
+      await writeFile(executable, 'export const revision = 1;\n');
+      const adapter = new CodexRunnerAdapter({
+        command: process.execPath,
+        commandPrefixArguments: [executable],
+      });
+      await adapter.prepare(root, 'planner', { runner: 'codex' });
+      await writeFile(executable, 'export const revision = 2;\n');
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex runner resources changed/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

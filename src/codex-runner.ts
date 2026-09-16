@@ -101,6 +101,7 @@ export class CodexRunnerAdapter implements RunnerAdapter {
       throw new Error('Codex preflight resources changed between roles');
     }
     const resources = await this.resourceSnapshot.value;
+    await assertRunnerResourcesUnchanged(root, resources);
     const identity = createHash('sha256')
       .update(JSON.stringify({ configuration, resources }))
       .digest('hex');
