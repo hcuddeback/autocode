@@ -28,18 +28,19 @@ test('runner resource freshness rejects executable content changes', async () =>
   }
 });
 
-test('Codex preflight rejects an existing relative prefix resource', async () => {
+test('Codex preflight rejects direct and indirect relative prefix resources', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
   try {
     await writeFile(path.join(root, 'runner.mjs'), 'export {}\n');
-    await assert.rejects(
-      () =>
-        preflightCodexSession(root, {
-          command: process.execPath,
-          commandPrefixArguments: ['runner.mjs'],
-        }),
-      /Codex executable or resources could not be resolved safely/,
-    );
+    for (const commandPrefixArguments of [['runner.mjs'], ['-m', 'runner']])
+      await assert.rejects(
+        () =>
+          preflightCodexSession(root, {
+            command: process.execPath,
+            commandPrefixArguments,
+          }),
+        /Codex executable or resources could not be resolved safely/,
+      );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -133,18 +133,14 @@ export async function preflightCodexSession(
     copied.command = path.isAbsolute(command)
       ? await realpath(command)
       : await resolveExecutable(command, root);
-    for (const argument of copied.commandPrefixArguments) {
-      if (path.isAbsolute(argument)) continue;
-      try {
-        await lstat(path.resolve(root, argument));
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
-        throw error;
-      }
+    if (
+      copied.commandPrefixArguments.some(
+        (argument) => !path.isAbsolute(argument),
+      )
+    )
       throw new Error(
-        'relative Codex prefix resources are not supported safely',
+        'Codex prefix arguments must be absolute regular-file resources',
       );
-    }
     await preflightContainedProcess(
       copied.command,
       copied.commandPrefixArguments,
