@@ -190,6 +190,7 @@ console.log(JSON.stringify({type:'turn.completed'}));
       codex: {
         command: process.execPath,
         commandPrefixArguments: [fake],
+        runnerResourceFiles: [fake],
         timeoutMs: 10_000,
         sandboxWriteDirectories: [directory],
         sandboxWriteFiles: [calls],

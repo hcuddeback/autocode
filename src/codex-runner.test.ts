@@ -67,6 +67,7 @@ test(
       const adapter = new CodexRunnerAdapter({
         command: process.execPath,
         commandPrefixArguments: [executable],
+        runnerResourceFiles: [executable, helper],
       });
       await adapter.prepare(root, 'planner', { runner: 'codex' });
       await writeFile(helper, 'export const helper = 2;\n');
@@ -98,6 +99,7 @@ test(
       const adapter = new CodexRunnerAdapter({
         command: process.execPath,
         commandPrefixArguments: [executable],
+        runnerResourceFiles: [executable, path.join(root, 'helper.mjs')],
       });
       await assert.rejects(
         () => adapter.prepare(root, 'planner', { runner: 'codex' }),
@@ -123,6 +125,7 @@ test(
       const adapter = new CodexRunnerAdapter({
         command: process.execPath,
         commandPrefixArguments: [executable],
+        runnerResourceFiles: [executable],
       });
       await assert.rejects(
         () => adapter.prepare(root, 'planner', { runner: 'codex' }),
@@ -149,10 +152,49 @@ test(
       const adapter = new CodexRunnerAdapter({
         command: process.execPath,
         commandPrefixArguments: [executable],
+        runnerResourceFiles: [executable, path.join(root, 'helper.cjs')],
       });
       await assert.rejects(
         () => adapter.prepare(root, 'planner', { runner: 'codex' }),
         /Codex runner dependencies could not be inspected safely/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'Codex adapters require and bind manifests for filesystem-loaded dependencies',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.mjs');
+      const helper = path.join(root, 'helper.js');
+      await writeFile(
+        executable,
+        "import { readFileSync } from 'node:fs';\neval(readFileSync('./helper.js', 'utf8'));\n",
+      );
+      await writeFile(helper, 'globalThis.runnerRevision = 1;\n');
+      const missingManifest = new CodexRunnerAdapter({
+        command: process.execPath,
+        commandPrefixArguments: [executable],
+      });
+      await assert.rejects(
+        () => missingManifest.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex executable or resources could not be resolved safely/,
+      );
+      const adapter = new CodexRunnerAdapter({
+        command: process.execPath,
+        commandPrefixArguments: [executable],
+        runnerResourceFiles: [executable, helper],
+      });
+      await adapter.prepare(root, 'planner', { runner: 'codex' });
+      await writeFile(helper, 'globalThis.runnerRevision = 2;\n');
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex runner resources changed/,
       );
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -176,6 +218,7 @@ test(
       const adapter = new CodexRunnerAdapter({
         command: process.execPath,
         commandPrefixArguments: [executable],
+        runnerResourceFiles: [executable, helper],
       });
       await adapter.prepare(root, 'planner', { runner: 'codex' });
       await writeFile(helper, 'export const helper = 2;\n');
@@ -200,6 +243,7 @@ test(
       const adapter = new CodexRunnerAdapter({
         command: process.execPath,
         commandPrefixArguments: [executable],
+        runnerResourceFiles: [executable],
       });
       await assert.rejects(
         () => adapter.prepare(root, 'planner', { runner: 'codex' }),
@@ -223,6 +267,7 @@ test(
       const adapter = new CodexRunnerAdapter({
         command: process.execPath,
         commandPrefixArguments: [executable],
+        runnerResourceFiles: [executable, path.join(root, 'helper.cjs')],
       });
       await assert.rejects(
         () => adapter.prepare(root, 'planner', { runner: 'codex' }),

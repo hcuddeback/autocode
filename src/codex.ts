@@ -51,6 +51,8 @@ export interface RoleSeparatedSessionsResult {
 export interface CodexSessionOptions {
   command?: string;
   commandPrefixArguments?: string[];
+  /** Complete trusted manifest for prefix-wrapper code and its executable dependencies. */
+  runnerResourceFiles?: readonly string[];
   timeoutMs?: number;
   maxOutputBytes?: number;
   /** Adapter-owned runner-specific model selection. */
@@ -125,6 +127,7 @@ export async function preflightCodexSession(
     timeoutMs,
     maxOutputBytes,
     commandPrefixArguments: [...(options.commandPrefixArguments ?? [])],
+    runnerResourceFiles: [...(options.runnerResourceFiles ?? [])],
     sandboxWriteDirectories: [...(options.sandboxWriteDirectories ?? [])],
     sandboxWriteFiles: [...(options.sandboxWriteFiles ?? [])],
   };
@@ -136,10 +139,18 @@ export async function preflightCodexSession(
     if (
       copied.commandPrefixArguments.some(
         (argument) => !path.isAbsolute(argument),
-      )
+      ) ||
+      copied.runnerResourceFiles.some(
+        (resource) => !path.isAbsolute(resource),
+      ) ||
+      (copied.commandPrefixArguments.length > 0 &&
+        (copied.runnerResourceFiles.length === 0 ||
+          copied.commandPrefixArguments.some(
+            (argument) => !copied.runnerResourceFiles.includes(argument),
+          )))
     )
       throw new Error(
-        'Codex prefix arguments must be absolute regular-file resources',
+        'Codex prefix arguments require a complete absolute runner-resource manifest',
       );
     await preflightContainedProcess(
       copied.command,
@@ -147,9 +158,7 @@ export async function preflightCodexSession(
       root,
       copied.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
       copied.sandboxWriteDirectories,
-      copied.commandPrefixArguments.filter((argument) =>
-        path.isAbsolute(argument),
-      ),
+      copied.runnerResourceFiles,
       copied.sandboxWriteFiles,
     );
     return copied;
@@ -420,9 +429,7 @@ async function runRole(
     options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
     prompt,
     options.sandboxWriteDirectories,
-    (options.commandPrefixArguments ?? []).filter((argument) =>
-      path.isAbsolute(argument),
-    ),
+    options.runnerResourceFiles,
     options.sandboxWriteFiles,
   );
   const completedAt = new Date().toISOString();

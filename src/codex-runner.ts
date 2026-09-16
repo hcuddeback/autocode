@@ -77,6 +77,7 @@ export class CodexRunnerAdapter implements RunnerAdapter {
           assignment,
           command: options.command,
           commandPrefixArguments: options.commandPrefixArguments,
+          runnerResourceFiles: options.runnerResourceFiles,
           timeoutMs: options.timeoutMs,
           maxOutputBytes: options.maxOutputBytes,
           sandboxWriteDirectories: options.sandboxWriteDirectories,
@@ -84,10 +85,17 @@ export class CodexRunnerAdapter implements RunnerAdapter {
         }),
       )
       .digest('hex');
-    const targets = [
-      options.command!,
-      ...(await discoverRunnerResources(options.commandPrefixArguments ?? [])),
-    ].filter((target, index, values) => values.indexOf(target) === index);
+    const discovered = await discoverRunnerResources(
+      options.commandPrefixArguments ?? [],
+    );
+    const manifest = await Promise.all(
+      (options.runnerResourceFiles ?? []).map((resource) => realpath(resource)),
+    );
+    if (discovered.some((resource) => !manifest.includes(resource)))
+      throw new Error('Codex runner dependency is absent from its manifest');
+    const targets = [options.command!, ...manifest].filter(
+      (target, index, values) => values.indexOf(target) === index,
+    );
     const resourceKey = JSON.stringify({ root, targets });
     if (this.resourceSnapshot === undefined) {
       const resourceConfiguration = createHash('sha256')

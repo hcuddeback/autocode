@@ -660,6 +660,7 @@ async function sessionFixture(mode: string) {
     options: {
       command: process.execPath,
       commandPrefixArguments: [fake],
+      runnerResourceFiles: [fake],
       // Native profile/ACL setup runs inside the measured Windows host process.
       // Keep explicit short-timeout tests unchanged while allowing fixture startup.
       timeoutMs: process.platform === 'win32' ? 10_000 : 2_000,
