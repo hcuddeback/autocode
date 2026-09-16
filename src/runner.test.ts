@@ -241,8 +241,8 @@ test('aggregate runner results must fit a workflow receipt', async () => {
             executionId: `${role}-execution`,
             effectId: invocation.effectId,
             outcome: 'completed',
-            finalMessage: 'm'.repeat(400 * 1024),
-            evidence: { output: 'e'.repeat(200 * 1024) },
+            finalMessage: 'm'.repeat(200 * 1024),
+            evidence: { output: 'e'.repeat(100 * 1024) },
           };
         },
       };

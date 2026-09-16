@@ -137,3 +137,25 @@ test(
     }
   },
 );
+
+test(
+  'Codex adapters reject entry scripts with unsupported dependency semantics',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.py');
+      await writeFile(executable, 'import helper\n');
+      const adapter = new CodexRunnerAdapter({
+        command: process.execPath,
+        commandPrefixArguments: [executable],
+      });
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex runner dependencies could not be inspected safely/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

@@ -165,7 +165,7 @@ async function discoverRunnerResources(
 ): Promise<string[]> {
   const resources: string[] = [];
   const visited = new Set<string>();
-  async function visit(target: string): Promise<void> {
+  async function visit(target: string, entry = false): Promise<void> {
     try {
       const canonical = await realpath(target);
       if (visited.has(canonical.toLowerCase())) return;
@@ -175,6 +175,8 @@ async function discoverRunnerResources(
       resources.push(canonical);
       if (resources.length > 31)
         throw new Error('runner dependency limit exceeded');
+      if (entry && !SCRIPT_RESOURCE.test(canonical))
+        throw new Error('unsupported runner entry script');
       if (!SCRIPT_RESOURCE.test(canonical)) return;
       const contents = await readFile(canonical, 'utf8');
       for (const match of contents.matchAll(/\b(?:import|require)\s*\(/g)) {
@@ -194,7 +196,7 @@ async function discoverRunnerResources(
       );
     }
   }
-  for (const argument of prefixArguments) await visit(argument);
+  for (const argument of prefixArguments) await visit(argument, true);
   return resources;
 }
 

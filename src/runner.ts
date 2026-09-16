@@ -73,7 +73,8 @@ const ROLES: readonly WorkflowRole[] = [
 ];
 const MAX_FINAL_MESSAGE_BYTES = 1024 * 1024;
 const MAX_EVIDENCE_BYTES = 1024 * 1024;
-const MAX_RUNNER_RESULT_BYTES = 512 * 1024;
+// Preserve receipt headroom for worst-case secret/key redaction expansion.
+const MAX_RUNNER_RESULT_BYTES = 256 * 1024;
 const MAX_EVIDENCE_DEPTH = 16;
 const MAX_EVIDENCE_ENTRIES = 4096;
 
