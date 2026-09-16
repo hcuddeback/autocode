@@ -451,3 +451,31 @@ test(
     }
   },
 );
+
+test(
+  'reused Codex adapters reject newly created batch dependencies',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.cmd');
+      const helper = path.join(root, 'late.cmd');
+      await writeFile(
+        executable,
+        '@if exist "%~dp0late.cmd" call "%~dp0late.cmd"\r\n',
+      );
+      const adapter = new CodexRunnerAdapter({
+        command: executable,
+        runnerResourceFiles: [executable],
+      });
+      await adapter.prepare(root, 'implementer', { runner: 'codex' });
+      await writeFile(helper, '@exit /b 0\r\n');
+      await assert.rejects(
+        () => adapter.prepare(root, 'reviewer', { runner: 'codex' }),
+        /Codex executable or resources could not be resolved safely/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
