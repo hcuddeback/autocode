@@ -137,6 +137,19 @@ export async function preflightCodexSession(
       ? await realpath(command)
       : await resolveExecutable(command, root);
     const commandIsWrapper = /\.(?:cmd|bat)$/i.test(copied.command);
+    if (commandIsWrapper) {
+      const wrapperResources = await discoverBatchWrapperResources(
+        copied.command,
+      );
+      if (options.command === undefined)
+        copied.runnerResourceFiles = wrapperResources;
+      else if (
+        wrapperResources.some(
+          (resource) => !copied.runnerResourceFiles.includes(resource),
+        )
+      )
+        throw new Error('Codex command wrapper dependency is absent');
+    }
     if (
       copied.commandPrefixArguments.some(
         (argument) => !path.isAbsolute(argument),
@@ -169,6 +182,41 @@ export async function preflightCodexSession(
       'Codex executable or resources could not be resolved safely',
     );
   }
+}
+
+async function discoverBatchWrapperResources(
+  executable: string,
+): Promise<string[]> {
+  const contents = await readFile(executable, 'utf8');
+  if (Buffer.byteLength(contents) > 64 * 1024)
+    throw new Error('Codex command wrapper is too large');
+  const resources = [executable];
+  const directory = path.dirname(executable);
+  for (const match of contents.matchAll(
+    /"([^"]+\.(?:bat|cmd|cjs|js|mjs|exe))"|([^\s"'()]+\.(?:bat|cmd|cjs|js|mjs|exe))/gi,
+  )) {
+    const reference = (match[1] ?? match[2])!;
+    let candidate: string;
+    if (/^(?:%~dp0|%dp0%)/i.test(reference))
+      candidate = path.resolve(
+        directory,
+        reference.replace(/^(?:%~dp0|%dp0%)[\\/]*/i, ''),
+      );
+    else if (path.isAbsolute(reference)) candidate = reference;
+    else {
+      if (reference.includes('%'))
+        throw new Error('Codex command wrapper dependency is dynamic');
+      candidate = path.resolve(directory, reference);
+    }
+    try {
+      const canonical = await realpath(candidate);
+      if ((await lstat(canonical)).isFile() && !resources.includes(canonical))
+        resources.push(canonical);
+    } catch {
+      // A non-existent conditional branch is not an executable dependency.
+    }
+  }
+  return resources;
 }
 
 export async function runRoleSeparatedCodexSessions(

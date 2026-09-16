@@ -425,3 +425,29 @@ test(
     }
   },
 );
+
+test(
+  'default Codex batch shims bind their discovered resources automatically',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    const root = path.join(directory, 'worktree');
+    const bin = path.join(directory, 'bin');
+    const originalPath = process.env.PATH;
+    try {
+      await mkdir(root);
+      await mkdir(bin);
+      const executable = path.join(bin, 'codex.cmd');
+      const helper = path.join(bin, 'helper.cmd');
+      await writeFile(executable, '@call "%~dp0helper.cmd" %*\r\n');
+      await writeFile(helper, '@exit /b 0\r\n');
+      process.env.PATH = `${bin}${path.delimiter}${originalPath ?? ''}`;
+      const prepared = await preflightCodexSession(root);
+      assert.deepEqual(prepared.runnerResourceFiles, [executable, helper]);
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
