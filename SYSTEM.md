@@ -1,6 +1,6 @@
 # AutoCode system state
 
-**Last verified:** 2026-09-16 AC-016 implementation and review verification on `feat/AC-016-workbook-ownership` from `main` at `3dcb928`
+**Last verified:** 2026-09-16 AC-016 implementation and review verification through `e4dbc69` on `feat/AC-016-workbook-ownership` from `main` at `3dcb928`
 
 **Stage:** AC-001 through AC-015 are complete; AC-016 is the single active workbook task in review
 
