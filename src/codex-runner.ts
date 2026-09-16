@@ -181,7 +181,7 @@ const STATIC_MODULE = new RegExp(
 const DYNAMIC_MODULE =
   /\b(?:import|require)(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\r\n]*(?:\r?\n|$))*\(/g;
 const COMPUTED_MODULE_LOADER = new RegExp(
-  String.raw`\bmodule${MODULE_TRIVIA}*(?:\?\.${MODULE_TRIVIA}*)?\[`,
+  String.raw`\bmodule(?:${MODULE_TRIVIA}*(?:\.|\?\.)${MODULE_TRIVIA}*[A-Za-z_$][\w$]*)*${MODULE_TRIVIA}*(?:\?\.${MODULE_TRIVIA}*)?\[`,
 );
 const SCRIPT_RESOURCE = /\.(?:c|m)?(?:j|t)sx?$/i;
 
@@ -226,7 +226,7 @@ async function discoverRunnerResources(
       if (/\\u(?:\{[0-9a-f]+\}|[0-9a-f]{4})/i.test(contents))
         throw new Error('escaped runner dependency syntax is unsupported');
       if (COMPUTED_MODULE_LOADER.test(contents))
-        throw new Error('computed runner dependency loaders are unsupported');
+        throw new Error('computed module access is unsupported');
       if (/\b_load\b/.test(contents))
         throw new Error('private runner dependency loaders are unsupported');
       if (/\bcreateRequire\b/.test(contents))
