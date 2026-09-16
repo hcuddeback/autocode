@@ -156,6 +156,16 @@ export async function runProjectWorkflow(
     throw new Error('workflow requires a linked worktree');
   const configText = await safeRead(root, CONFIG_FILE);
   const config = validateConfig(parse(configText));
+  const configurationCredentials = await discoverWorkspaceCredentials(root);
+  if (
+    Object.values(config.roles).some(
+      (assignment) =>
+        assignment.model !== undefined &&
+        redactSecrets(assignment.model, configurationCredentials.secrets) !==
+          assignment.model,
+    )
+  )
+    throw new Error('role models must not contain workspace credentials');
   if (config.fixLoop.maxAttempts > 19)
     throw new Error(
       'integrated workflow supports at most 19 fix rounds within the 64-phase limit',

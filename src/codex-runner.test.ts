@@ -79,3 +79,32 @@ test(
     }
   },
 );
+
+test(
+  'Codex adapters reject nonliteral dynamic runner dependencies',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'autocode-runner-'));
+    try {
+      const executable = path.join(root, 'runner.mjs');
+      await writeFile(
+        executable,
+        "const dependency = './helper.mjs';\nawait import(dependency);\n",
+      );
+      await writeFile(
+        path.join(root, 'helper.mjs'),
+        'export const helper = 1;\n',
+      );
+      const adapter = new CodexRunnerAdapter({
+        command: process.execPath,
+        commandPrefixArguments: [executable],
+      });
+      await assert.rejects(
+        () => adapter.prepare(root, 'planner', { runner: 'codex' }),
+        /Codex runner dependencies could not be inspected safely/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

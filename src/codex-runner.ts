@@ -177,6 +177,11 @@ async function discoverRunnerResources(
         throw new Error('runner dependency limit exceeded');
       if (!SCRIPT_RESOURCE.test(canonical)) return;
       const contents = await readFile(canonical, 'utf8');
+      for (const match of contents.matchAll(/\b(?:import|require)\s*\(/g)) {
+        const argument = contents.slice(match.index + match[0].length);
+        if (!/^\s*['"]/.test(argument))
+          throw new Error('nonliteral runner dependency');
+      }
       for (const match of contents.matchAll(STATIC_MODULE)) {
         const specifier = match[1]!;
         if (!specifier.startsWith('./') && !specifier.startsWith('../'))

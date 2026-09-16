@@ -402,6 +402,51 @@ test('unknown configured runners fail before model or durable effects', async ()
   }
 });
 
+test('credential-bearing role models fail before runner or durable effects', async () => {
+  const secret = 'credential-model-0123456789';
+  const f = await fixture('success', 'local', [secret]);
+  try {
+    const configPath = path.join(f.root, '.autocode', 'config.yaml');
+    const config = parse(await readFile(configPath, 'utf8'));
+    config.roles = Object.fromEntries(
+      ['planner', 'implementer', 'reviewer', 'fixer'].map((role) => [
+        role,
+        { runner: 'codex', model: secret },
+      ]),
+    );
+    await writeFile(configPath, stringify(config));
+    let prepared = 0;
+    const adapter: RunnerAdapter = {
+      id: 'codex',
+      revision: 'credential-model-fixture-v1',
+      capabilities: {
+        roles: {
+          planner: 'read-only',
+          implementer: 'worktree-write',
+          reviewer: 'read-only',
+          fixer: 'worktree-write',
+        },
+        acceptsModel: true,
+      },
+      async prepare() {
+        prepared++;
+        throw new Error('runner preflight must not be reached');
+      },
+    };
+    await assert.rejects(
+      () =>
+        runProjectWorkflow(f.root, {
+          ...f.options,
+          runners: new Map([['codex', adapter]]),
+        }),
+      /role models must not contain workspace credentials/,
+    );
+    assert.equal(prepared, 0);
+  } finally {
+    await f.cleanup();
+  }
+});
+
 test('runner executable changes invalidate completed receipts without replay', async () => {
   const f = await fixture();
   try {
