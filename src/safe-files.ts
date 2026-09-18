@@ -9,6 +9,8 @@ export async function readStableRegularFile(
   maximumBytes: number,
   label: string,
 ): Promise<string> {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1)
+    throw new Error('maximum file size must be a positive safe integer');
   const pathStats = await lstat(filePath);
   if (pathStats.isSymbolicLink() || !pathStats.isFile())
     throw new Error(`${label} must be a bounded regular file`);
@@ -25,7 +27,21 @@ export async function readStableRegularFile(
       before.size > maximumBytes
     )
       throw new Error(`${label} must be a bounded regular file`);
-    const text = await handle.readFile('utf8');
+    const buffer = Buffer.allocUnsafe(maximumBytes + 1);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const result = await handle.read(
+        buffer,
+        bytesRead,
+        buffer.length - bytesRead,
+        null,
+      );
+      if (result.bytesRead === 0) break;
+      bytesRead += result.bytesRead;
+    }
+    if (bytesRead > maximumBytes)
+      throw new Error(`${label} must be a bounded regular file`);
+    const text = buffer.subarray(0, bytesRead).toString('utf8');
     const after = await handle.stat();
     if (
       before.dev !== after.dev ||

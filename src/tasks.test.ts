@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -177,6 +184,27 @@ test('rejects malformed task front matter', async () => {
     await assert.rejects(
       () => loadTaskCatalog(project),
       /missing YAML front matter/,
+    );
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test('rejects unknown pull-request policy values', async () => {
+  const project = await temporaryProject();
+  try {
+    await writeTask(project, 'AC-001', 'ready');
+    const taskPath = path.join(project, 'tasks', 'AC-001.md');
+    await writeFile(
+      taskPath,
+      (await readFile(taskPath, 'utf8')).replace(
+        'pull_request: required',
+        'pull_request: require',
+      ),
+    );
+    await assert.rejects(
+      () => loadTaskCatalog(project),
+      /pull_request is invalid: AC-001/,
     );
   } finally {
     await rm(project, { recursive: true, force: true });
@@ -470,6 +498,48 @@ test('a PR-required predecessor must be complete on the target branch', async ()
     await assert.rejects(
       () => selectProjectTask(project),
       /completed task record AC-001 is not present in main/,
+    );
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test('the target branch must be an ancestor of the selected worktree', async () => {
+  const project = await temporaryProject();
+  try {
+    await exec('git', ['init', '-b', 'main'], { cwd: project });
+    await exec('git', ['config', 'user.email', 'fixture@example.invalid'], {
+      cwd: project,
+    });
+    await exec('git', ['config', 'user.name', 'Fixture'], { cwd: project });
+    await writeFile(path.join(project, 'README.md'), 'fixture\n');
+    await exec('git', ['add', '.'], { cwd: project });
+    await exec('git', ['commit', '-m', 'base'], { cwd: project });
+    await exec('git', ['switch', '-c', 'feat/stale'], { cwd: project });
+    await exec('git', ['switch', 'main'], { cwd: project });
+    await completeTask(project, 'AC-001');
+    await exec('git', ['add', '.'], { cwd: project });
+    await exec('git', ['commit', '-m', 'merge predecessor'], { cwd: project });
+    await exec('git', ['switch', 'feat/stale'], { cwd: project });
+    await exec('git', ['checkout', 'main', '--', 'tasks/completed/AC-001.md'], {
+      cwd: project,
+    });
+    await writeTask(project, 'AC-002', 'ready', ['AC-001']);
+    await writeFile(
+      path.join(project, 'tasks', 'README.md'),
+      workbook([
+        ['AC-001', 'done'],
+        ['AC-002', 'ready'],
+      ]).contents,
+    );
+    await exec('git', ['add', '.'], { cwd: project });
+    await exec('git', ['commit', '-m', 'copy completion metadata'], {
+      cwd: project,
+    });
+
+    await assert.rejects(
+      () => selectProjectTask(project),
+      /does not contain target branch main/,
     );
   } finally {
     await rm(project, { recursive: true, force: true });

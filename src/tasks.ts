@@ -48,6 +48,7 @@ const TASK_STATUSES = [
 ] as const;
 
 export type TaskStatus = (typeof TASK_STATUSES)[number];
+export type PullRequestPolicy = 'required' | 'not_applicable';
 
 export interface TaskRecord {
   taskId: string;
@@ -55,7 +56,7 @@ export interface TaskRecord {
   status: TaskStatus;
   dependsOn: string[];
   branch: string;
-  pullRequest: string;
+  pullRequest: PullRequestPolicy;
   filePath: string;
   contents: string;
 }
@@ -651,6 +652,29 @@ async function assertCompletedRecordsInHead(
       task.pullRequest === 'required' ? 'main' : undefined,
     );
   }
+  if (
+    [...required].some((taskId) => byId.get(taskId)!.pullRequest === 'required')
+  )
+    await assertTargetBranchAncestor(root, 'main');
+}
+
+async function assertTargetBranchAncestor(
+  root: string,
+  targetBranch: string,
+): Promise<void> {
+  try {
+    await gitOutput(root, [
+      'merge-base',
+      '--is-ancestor',
+      targetBranch,
+      'HEAD',
+    ]);
+  } catch (error: unknown) {
+    throw new Error(
+      `current worktree does not contain target branch ${targetBranch}`,
+      { cause: error },
+    );
+  }
 }
 
 async function stableDirectoryIdentity(directory: string, label: string) {
@@ -790,7 +814,10 @@ function parseTask(contents: string, filePath: string): TaskRecord {
     requiredString(fields, field, filePath);
   }
   const branch = requiredString(fields, 'branch', filePath);
-  const pullRequest = requiredString(fields, 'pull_request', filePath);
+  const pullRequestValue = requiredString(fields, 'pull_request', filePath);
+  if (pullRequestValue !== 'required' && pullRequestValue !== 'not_applicable')
+    throw new Error(`pull_request is invalid: ${taskId}`);
+  const pullRequest = pullRequestValue;
   if ([...branch].some(isControlCharacter)) {
     throw new Error(`branch must not contain control characters: ${taskId}`);
   }
