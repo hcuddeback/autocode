@@ -99,21 +99,21 @@ Optional `verificationReadResources` authorizes up to 16 exact existing absolute
 
 Use `node <AutoCode-checkout>/dist/cli.js <command> <project-directory>`. The directory defaults to your current working directory when omitted. Every command accepts at most one directory; `--help` prints usage. There are no CLI flags for pause, pacing, authentication, QA adapters or automatic publication.
 
-| Command    | What it does                                                                                                                                                            |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `init`     | Safely creates configuration/state and ignore coverage; preserves existing valid configuration.                                                                         |
-| `select`   | Reports the dependency-ready materialized task, active work, dependency blockers or no ready tasks; it does not parse workbook order, reserve work, or change statuses. |
-| `prepare`  | Validates the complete task and clean linked worktree, then creates or reuses commit-bound planning artifacts.                                                          |
-| `run`      | Executes the integrated durable local workflow; prepares automatically when necessary.                                                                                  |
-| `resume`   | Continues an existing matching durable workflow; never starts a missing run.                                                                                            |
-| `sessions` | Uses prepared artifacts to run separate implementation and review sessions; lacks the integrated fix/QA/resume flow.                                                    |
-| `verify`   | Runs configured checks against a prepared task and retains deterministic evidence; does not orchestrate model work.                                                     |
+| Command    | What it does                                                                                                                                                                                                                                    |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init`     | Safely creates configuration/state and ignore coverage; preserves existing valid configuration.                                                                                                                                                 |
+| `select`   | Strictly validates the canonical sequence in `tasks/README.md` against task records and current Git history, then reports the ordered eligible task, active work, blockers, or no ready work. It does not acquire ownership or change statuses. |
+| `prepare`  | Validates the complete task and clean linked worktree, then creates or reuses commit-bound planning artifacts.                                                                                                                                  |
+| `run`      | Selects from the canonical workbook, prepares when necessary, durably owns that task, then executes the integrated local workflow.                                                                                                              |
+| `resume`   | Reuses matching durable task ownership and continues the existing workflow; never starts a missing run.                                                                                                                                         |
+| `sessions` | Uses prepared artifacts to run separate implementation and review sessions; lacks the integrated fix/QA/resume flow.                                                                                                                            |
+| `verify`   | Runs configured checks against a prepared task and retains deterministic evidence; does not orchestrate model work.                                                                                                                             |
 
-Errors exit with code 1. `run` and `resume` also exit 1 for `blocked` or `failed` results. `select` reports active work, missing dependencies and no-ready-task results with exit code 0, so inspect its output rather than assuming success means selection.
+Errors exit with code 1. `run` and `resume` also exit 1 for `blocked` or `failed` results. `select` exits 0 only when it selects a task; active work, blockers, and no-ready-task results exit 1 after printing their reason.
 
 ## Evidence and outcomes
 
-Prepared artifacts live under `.autocode/runs/`; integrated phase receipts and durable history live under `.autocode/runs/durable-workflow-<task>-<commit>/`. Use the printed paths rather than guessing a directory. Model transcripts and check output are local evidence, not authorization to bypass a failed gate.
+Prepared artifacts live under `.autocode/runs/`; integrated phase receipts and durable history live under `.autocode/runs/durable-workflow-<task>-<commit>/`, and the exclusive task binding lives under `.autocode/ownership/`. Use printed paths rather than guessing a directory. Ownership is bound to the workbook, task, Git commit, branch, and linked worktree; it is not a second task board. Model transcripts and check output are local evidence, not authorization to bypass a failed gate.
 
 | Outcome     | Operator interpretation                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |

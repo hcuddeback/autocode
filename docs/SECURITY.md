@@ -30,6 +30,8 @@ MVP 1 assumes a trusted operator and local machine. Repository content, tasks, i
 - Confirm repository root/head at gates and stage an explicit change set.
 - Record/reconcile external effects before retrying.
 
+Canonical workbook intake uses a bounded exact table grammar and treats every cell and task contract as untrusted data. Before runner effects, eligibility rejects duplicate IDs, missing dependencies, cycles, illegal order/state combinations, contradictory materialization, and completed records absent or changed in current Git history. Durable ownership is stored only under gitignored `.autocode/`, atomically published as a complete record, bound to workbook/task/Git/worktree identity, and revalidated during workflow freshness checks. A matching logical run may resume; a different, corrupt, forged, or changed binding fails closed rather than stealing ownership.
+
 ## Pre-release checklist
 
 Completion cannot be reconciled as applied from a mutable receipt; an interrupted or blocked completion requires operator reconciliation, including interruption after publication of passing evidence. All supplied nested QA, PR-exception and completion policy sections are schema-validated before preparation or model effects. Missing sections remain explicit workflow blockers; malformed supplied sections fail preflight without creating a bound run.

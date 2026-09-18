@@ -88,7 +88,8 @@ Successful existing receipts can reconcile without repeating their effect when e
 
 ## Current implementation map
 
-- `tasks.ts` loads task contracts and selects one ready task; it does not parse workbook order, detect dependency cycles, own work durably, or continue.
+- `tasks.ts` strictly loads the canonical workbook sequence, reconciles it with bounded task contracts and completed records, validates dependencies/cycles/order/state, and selects the next legal task with current Git evidence.
+- `ownership.ts` atomically binds that task to one durable workbook-run identity and linked worktree before plan artifacts or runner effects; matching resume reuses the record, while changed or competing bindings fail closed.
 - `planning.ts` prepares commit/task-bound artifacts.
 - `runner.ts` owns provider-neutral roles, capabilities, assignment resolution, invocation, and bounded result validation.
 - `codex-runner.ts` maps those roles to the contained Codex process/session implementation in `codex.ts`.
@@ -97,7 +98,7 @@ Successful existing receipts can reconcile without repeating their effect when e
 - `durable-run.ts` provides locks, effect identity, reconciliation, retry/pacing, and persisted transitions for one phase list.
 - `windows-sandbox.ts` provides the accepted Windows containment path; Linux/macOS fail closed.
 
-AC-015 separates the role/runner/model contracts while retaining Codex as the only production adapter. Later canonical workbook rows add scheduling, ownership, QA recovery, summary/state continuation, compatibility, end-to-end acceptance, and release gates in that order.
+AC-015 separates the role/runner/model contracts while retaining Codex as the only production adapter. AC-016 adds canonical selection and single-task ownership without changing workbook state. Later rows add QA recovery, summary/state continuation, compatibility, end-to-end acceptance, and release gates in that order.
 
 ## Failure and recovery
 

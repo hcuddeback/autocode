@@ -608,8 +608,13 @@ async function sessionFixture(mode: string) {
     path.join(repository, '.gitignore'),
     '.autocode/\n.env\n.credentials.json\n',
   );
-  await git(repository, ['add', 'README.md', '.gitignore']);
-  await git(repository, ['commit', '-m', 'initial']);
+  await mkdir(path.join(repository, 'tasks', 'completed'), { recursive: true });
+  await writeFile(
+    path.join(repository, 'tasks', 'completed', 'AC-003.md'),
+    completedTask(),
+  );
+  await git(repository, ['add', 'README.md', '.gitignore', 'tasks']);
+  await git(repository, ['commit', '-m', 'completed predecessor']);
   await git(repository, [
     'worktree',
     'add',
@@ -625,13 +630,12 @@ async function sessionFixture(mode: string) {
     path.join(worktree, '.credentials.json'),
     '{"client_secret":"json-file-secret"}\n',
   );
-  await mkdir(path.join(worktree, 'tasks', 'completed'), { recursive: true });
-  await writeFile(
-    path.join(worktree, 'tasks', 'completed', 'AC-003.md'),
-    completedTask(),
-  );
   const task = selectedTask();
   await writeFile(path.join(worktree, 'tasks', 'AC-004.md'), task);
+  await writeFile(
+    path.join(worktree, 'tasks', 'README.md'),
+    `# Workbook\n\n## Canonical MVP 1 sequence\n\n| Order | Task | Workbook outcome | Product criteria | State |\n| --- | --- | --- | --- | --- |\n| 1 | [AC-003](completed/AC-003.md) | Fixture | M1-01 | \`done\` |\n| 2 | [AC-004](AC-004.md) | Fixture | M1-01 | \`ready\` |\n\n## Next\n`,
+  );
   await git(worktree, ['add', 'tasks']);
   await git(worktree, ['commit', '-m', 'select task']);
   const head = (await git(worktree, ['rev-parse', 'HEAD'])).trim();

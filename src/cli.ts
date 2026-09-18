@@ -52,21 +52,26 @@ async function main(args: string[]): Promise<void> {
       console.log(
         `No task is selectable; active work must complete first: ${activeTasks}`,
       );
+      process.exitCode = 1;
       return;
     }
     if (selection.kind === 'blocked') {
-      const reasons = selection.tasks.map(
-        (task) =>
-          `${task.taskId} (${task.dependencies
+      const reasons = selection.tasks.map((task) => {
+        const reason =
+          task.reason ??
+          task.dependencies
             .map((dependency) => `${dependency.taskId}: ${dependency.status}`)
-            .join(', ')})`,
-      );
+            .join(', ');
+        return `${task.taskId} (${reason})`;
+      });
       console.log(
         `No task is selectable; blocked dependencies: ${reasons.join('; ')}`,
       );
+      process.exitCode = 1;
       return;
     }
     console.log('No ready tasks.');
+    process.exitCode = 1;
     return;
   }
   if (command === 'prepare') {
@@ -96,7 +101,7 @@ async function main(args: string[]): Promise<void> {
 function printHelp(): void {
   console.log('Usage: autocode <command> [project-directory]');
   console.log(
-    '\nCommands:\n  init      Initialize project-local configuration and state\n  select    Select the first ready task with completed dependencies\n  prepare   Validate the selected task and create commit-bound planning artifacts\n  sessions  Run separate Codex implementation and critical-review sessions\n  verify    Run configured deterministic checks and retain evidence\n  run       Run one task through the durable integrated local workflow\n  resume    Reconcile and resume the same workflow without repeating completed phases',
+    '\nCommands:\n  init      Initialize project-local configuration and state\n  select    Validate the canonical workbook and report its next eligible task\n  prepare   Validate the selected task and create commit-bound planning artifacts\n  sessions  Run separate Codex implementation and critical-review sessions\n  verify    Run configured deterministic checks and retain evidence\n  run       Own and run one canonical task through the durable local workflow\n  resume    Reconcile and resume the owned workflow without repeating effects',
   );
 }
 

@@ -39,17 +39,31 @@ async function fixtureProject(
     false,
     'LATER_SECRET_SCOPE',
   );
+  await writeFile(
+    path.join(repository, 'tasks', 'README.md'),
+    workbook([
+      ['AC-001', 'done'],
+      ['AC-002', 'done'],
+      ['AC-003', 'ready'],
+    ]),
+  );
   await git(repository, ['init', '-b', linkedWorktree ? 'main' : branch]);
   await git(repository, ['config', 'user.email', 'fixture@example.invalid']);
   await git(repository, ['config', 'user.name', 'Fixture']);
   await initializeProject(repository);
   await git(repository, ['add', '--', '.']);
   await git(repository, ['commit', '-m', 'fixture']);
+  if (!linkedWorktree && branch !== 'main')
+    await git(repository, ['branch', 'main']);
   if (linkedWorktree) {
     await git(repository, ['worktree', 'add', '-b', branch, project]);
     await initializeProject(project);
   }
   return project;
+}
+
+function workbook(entries: Array<[string, 'done' | 'ready']>): string {
+  return `# Workbook\n\n## Canonical MVP 1 sequence\n\n| Order | Task | Workbook outcome | Product criteria | State |\n| --- | --- | --- | --- | --- |\n${entries.map(([id, state], index) => `| ${index + 1} | [${id}](${state === 'done' ? `completed/${id}.md` : `${id}.md`}) | Fixture | M1-01 | \`${state}\` |`).join('\n')}\n\n## Next\n`;
 }
 
 async function removeFixture(project: string): Promise<void> {

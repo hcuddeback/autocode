@@ -2,7 +2,7 @@
 
 **Canonical sequencing/state source:** this file
 
-**Last reconciled:** 2026-09-15 against `main` at `be5b144`
+**Last reconciled:** 2026-09-16 against `main` at `3dcb928`
 
 This workbook is the authoritative ordered plan for MVP 1. `docs/PRODUCT.md` owns product acceptance, completed task files retain historical evidence, and an active task file owns the immediate implementation contract. No other roadmap, audit, or prose list may silently reorder work or declare a different next task.
 
@@ -19,7 +19,7 @@ Only one row may be `ready` (or its materialized task file's finer-grained `in_p
 
 ## Historical delivery record
 
-AC-001 through AC-014 are completed implementation-history identifiers. They are not renumbered or retroactively redefined to fit the current MVP 1 acceptance sequence.
+AC-001 through AC-015 are completed implementation-history identifiers. They are not renumbered or retroactively redefined to fit the current MVP 1 acceptance sequence.
 
 | Task                          | Historical delivered scope                                     | Reconciled status                                                      |
 | ----------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------- |
@@ -37,6 +37,7 @@ AC-001 through AC-014 are completed implementation-history identifiers. They are
 | [AC-012](completed/AC-012.md) | Integrated one-task local workflow fixture                     | `done`; it does not update task state or continue to another task      |
 | [AC-013](completed/AC-013.md) | Local operator-handoff boundary                                | `done`; remote lifecycle remains outside current automation            |
 | [AC-014](completed/AC-014.md) | Current source-checkout operator guide                         | `done`; it documents the one-task implementation, not MVP 1 completion |
+| [AC-015](completed/AC-015.md) | Provider-neutral role/runner/model contract with Codex adapter | `done`; Codex remains the only production adapter                      |
 
 See `docs/MVP_AUDIT.md` for code/evidence traceability and limitations.
 
@@ -44,17 +45,17 @@ See `docs/MVP_AUDIT.md` for code/evidence traceability and limitations.
 
 These tasks are derived from the current acceptance criteria in `docs/PRODUCT.md`. IDs after AC-014 describe new work only; they do not replace the completed history above.
 
-| Order | Task                | Workbook outcome                                                                                                                           | Product criteria | State                                  |
-| ----- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------- | -------------------------------------- |
-| 1     | [AC-015](AC-015.md) | Configure role-to-runner/model assignments behind a provider-neutral execution contract; keep Codex as the first adapter                   | M1-02            | `ready`                                |
-| 2     | AC-016              | Load the ordered workbook, derive the next eligible task, and acquire durable single-task ownership                                        | M1-01, M1-03     | `waiting` on AC-015 and JIT refinement |
-| 3     | AC-017              | Complete the role-neutral task kernel, including required CLI QA and bounded QA fix/revalidate/review/QA recovery                          | M1-04            | `waiting` on AC-016 and JIT refinement |
-| 4     | AC-018              | Retain an immutable task summary, update canonical state, recalculate eligibility, and continue/resume without repeating completed effects | M1-05            | `waiting` on AC-017 and JIT refinement |
-| 5     | AC-019              | Prove supported-platform containment and authenticated live compatibility for declared runner/model combinations                           | M1-06            | `waiting` on AC-018 and JIT refinement |
-| 6     | AC-020              | Prove the ordered workbook end to end, including blocker/waiting/resume and PR-required handoff behavior                                   | M1-01–M1-06      | `waiting` on AC-019 and JIT refinement |
-| 7     | AC-021              | Close CI, dependency/secret checks, licensing, package identity, clean install/upgrade/uninstall, and release evidence                     | M1-07            | `waiting` on AC-020 and JIT refinement |
+| Order | Task                          | Workbook outcome                                                                                                                           | Product criteria | State                                  |
+| ----- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------- | -------------------------------------- |
+| 1     | [AC-015](completed/AC-015.md) | Configure role-to-runner/model assignments behind a provider-neutral execution contract; keep Codex as the first adapter                   | M1-02            | `done`                                 |
+| 2     | [AC-016](AC-016.md)           | Load the ordered workbook, derive the next eligible task, and acquire durable single-task ownership                                        | M1-01, M1-03     | `ready`                                |
+| 3     | AC-017                        | Complete the role-neutral task kernel, including required CLI QA and bounded QA fix/revalidate/review/QA recovery                          | M1-04            | `waiting` on AC-016 and JIT refinement |
+| 4     | AC-018                        | Retain an immutable task summary, update canonical state, recalculate eligibility, and continue/resume without repeating completed effects | M1-05            | `waiting` on AC-017 and JIT refinement |
+| 5     | AC-019                        | Prove supported-platform containment and authenticated live compatibility for declared runner/model combinations                           | M1-06            | `waiting` on AC-018 and JIT refinement |
+| 6     | AC-020                        | Prove the ordered workbook end to end, including blocker/waiting/resume and PR-required handoff behavior                                   | M1-01–M1-06      | `waiting` on AC-019 and JIT refinement |
+| 7     | AC-021                        | Close CI, dependency/secret checks, licensing, package identity, clean install/upgrade/uninstall, and release evidence                     | M1-07            | `waiting` on AC-020 and JIT refinement |
 
-The single next task is AC-015. Do not materialize AC-016 until AC-015 is merged, its evidence is reconciled here, and current code is re-inspected.
+The single next task is AC-016. Do not materialize AC-017 until AC-016 is merged, its evidence is reconciled here, and current code is re-inspected.
 
 **Note on AC-015 and a second runner adapter:** a second production runner/model integration remains explicitly out of MVP 1 scope. If, while implementing AC-015's runner-adapter boundary, exposing the existing test-only fake/stub Codex runner as a second minimally configured adapter is genuinely low-cost, it may be included to prove the abstraction is real rather than a single-implementation interface — but this is opportunistic, not a gate on AC-015 completion, and must not expand AC-015's scope, timeline, or require a second live model/provider.
 

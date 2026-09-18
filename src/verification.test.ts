@@ -51,6 +51,10 @@ async function createFixture(
     path.join(parent, 'tasks', 'completed', 'AC-004.md'),
     `---\ntask_id: AC-004\ntitle: Sessions\nstatus: done\npriority: high\nrisk: high\ndepends_on: []\nbranch: feat/AC-004\nowner: unassigned\nlast_updated: 2026-09-03\nqa: not_applicable\ndeployment: not_applicable\npull_request: required\n---\n`,
   );
+  await writeFile(
+    path.join(parent, 'tasks', 'README.md'),
+    `# Workbook\n\n## Canonical MVP 1 sequence\n\n| Order | Task | Workbook outcome | Product criteria | State |\n| --- | --- | --- | --- | --- |\n| 1 | [AC-004](completed/AC-004.md) | Fixture | M1-01 | \`done\` |\n| 2 | [AC-005](AC-005.md) | Fixture | M1-01 | \`ready\` |\n\n## Next\n`,
+  );
   await writeFile(path.join(parent, '.gitignore'), '.autocode/\n.env\n');
   await writeFile(path.join(parent, 'implementation.txt'), 'initial');
   await execFileAsync('git', ['add', '.'], { cwd: parent });

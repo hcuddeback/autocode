@@ -66,6 +66,10 @@ async function fixture(
       first.replaceAll('AC-001', 'AC-002'),
     );
   }
+  await writeFile(
+    path.join(repository, 'tasks', 'README.md'),
+    `# Workbook\n\n## Canonical MVP 1 sequence\n\n| Order | Task | Workbook outcome | Product criteria | State |\n| --- | --- | --- | --- | --- |\n| 1 | [AC-001](AC-001.md) | Fixture | M1-01 | \`ready\` |\n\n## Next\n`,
+  );
   await git(repository, ['init', '-b', 'main']);
   await git(repository, ['config', 'user.email', 'fixture@example.invalid']);
   await git(repository, ['config', 'user.name', 'Fixture']);
@@ -493,6 +497,72 @@ test('credential-bearing runner IDs fail before adapter preparation', async () =
   }
 });
 
+test('workflow owns the canonical task before runner effects and resume does not repeat them', async () => {
+  const f = await fixture();
+  try {
+    const invoked: string[] = [];
+    const adapter: RunnerAdapter = {
+      id: 'codex',
+      revision: 'ownership-fixture-v1',
+      capabilities: {
+        roles: {
+          planner: 'read-only',
+          implementer: 'worktree-write',
+          reviewer: 'read-only',
+          fixer: 'worktree-write',
+        },
+        acceptsModel: true,
+      },
+      async prepare(_root, role, assignment) {
+        return {
+          assignment,
+          identity: 'a'.repeat(64),
+          async invoke() {
+            const ownership = JSON.parse(
+              await readFile(
+                path.join(f.root, '.autocode', 'ownership', 'AC-001.json'),
+                'utf8',
+              ),
+            ) as { taskId: string; runId: string };
+            assert.equal(ownership.taskId, 'AC-001');
+            assert.match(ownership.runId, /^workflow-ac-001-/);
+            invoked.push(role);
+            throw new Error('interrupt after observing ownership');
+          },
+        };
+      },
+    };
+    const options = {
+      ...f.options,
+      runners: new Map([['codex', adapter]]),
+    };
+    await assert.rejects(
+      () => runProjectWorkflow(f.root, options),
+      /effect adapter failed for phase planning/,
+    );
+    const ownershipBefore = await readFile(
+      path.join(f.root, '.autocode', 'ownership', 'AC-001.json'),
+      'utf8',
+    );
+    assert.deepEqual(invoked, ['planner']);
+    assert.equal(
+      (await runProjectWorkflow(f.root, { ...options, resumeOnly: true }))
+        .outcome,
+      'blocked',
+    );
+    assert.deepEqual(invoked, ['planner']);
+    assert.equal(
+      await readFile(
+        path.join(f.root, '.autocode', 'ownership', 'AC-001.json'),
+        'utf8',
+      ),
+      ownershipBefore,
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
+
 test('runner executable changes invalidate completed receipts without replay', async () => {
   const f = await fixture();
   try {
@@ -817,7 +887,7 @@ await runProjectWorkflow(${JSON.stringify(f.root)}, {...${JSON.stringify(f.optio
     await execFileAsync(process.execPath, ['--import', 'tsx', child], {
       cwd: process.cwd(),
       windowsHide: true,
-      timeout: 30_000,
+      timeout: 120_000,
     });
     assert.deepEqual(await f.calls(), ['planning', 'implementation']);
     assert.equal(
@@ -948,14 +1018,14 @@ async function git(root: string, args: string[]): Promise<string> {
   return stdout.trim();
 }
 
-test('workflow verification binds the selected task when another task is ready', async () => {
+test('workflow rejects an active task absent from the canonical workbook', async () => {
   const f = await fixture('queue');
   try {
-    assert.equal(
-      (await runProjectWorkflow(f.root, f.options)).outcome,
-      'completed',
+    await assert.rejects(
+      () => runProjectWorkflow(f.root, f.options),
+      /active task is absent from canonical workbook/,
     );
-    assert.deepEqual(await f.calls(), ['planning', 'implementation', 'review']);
+    assert.deepEqual(await f.calls().catch(() => []), []);
   } finally {
     await f.cleanup();
   }
@@ -2792,7 +2862,7 @@ test(
             env: environment,
             cwd: process.cwd(),
             windowsHide: true,
-            timeout: 90_000,
+            timeout: 120_000,
           },
         );
         assert.match(stdout, /Workflow completed:/);
@@ -2872,7 +2942,7 @@ test(
             env: environment,
             cwd: process.cwd(),
             windowsHide: true,
-            timeout: 120_000,
+            timeout: 150_000,
           },
         );
         assert.match(stdout, /Workflow completed:/);

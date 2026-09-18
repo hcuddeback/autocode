@@ -1,8 +1,8 @@
 # AutoCode system state
 
-**Last verified:** 2026-09-16 AC-015 review-fix verification through `0a65305` on `feat/AC-015-configurable-role-runners` from `main` at `8a842a2`
+**Last verified:** 2026-09-16 AC-016 implementation and review verification through `e4dbc69` on `feat/AC-016-workbook-ownership` from `main` at `3dcb928`
 
-**Stage:** AC-001 through AC-014 remain complete historical delivery; AC-015 is implemented on its feature branch and remains the single active workbook task pending repository gates
+**Stage:** AC-001 through AC-015 are complete; AC-016 is the single active workbook task in review
 
 **Current release target:** MVP 1 — ordered JIT task workbook
 
@@ -14,6 +14,7 @@
 - Product acceptance, target architecture, workflow, security, release, and the canonical task workbook are documented.
 - A strict TypeScript foundation initializes local state, selects one dependency-ready materialized task, prepares commit-bound planning artifacts, resolves planner/implementer/reviewer/fixer assignments, runs configured deterministic checks with retained evidence, applies reusable review/QA/fix policies, enforces configured completion gates, and executes bounded ordered effect phases through durable pause/resume checkpoints, reconciliation, and persisted pacing/retry budgets.
 - Version-1 configuration accepts a complete role-to-runner/optional-model map and safely defaults existing files without that map to Codex. Core workflow sequencing consumes provider-neutral capability and bounded result contracts; `codex-runner.ts` owns Codex role mapping, model arguments, contained invocation, event/session translation, and evidence identity.
+- On the AC-016 feature branch, canonical selection strictly parses the ordered workbook and reconciles it with task contracts, dependency/order/state rules, completed records, and current Git evidence. Workflow intake atomically creates or reuses an exclusive ownership record bound to workbook/task content, full Git commit, branch, and linked-worktree identity before runner effects.
 
 ## Evidence level
 
@@ -32,19 +33,21 @@
 | Durable pause/resume exists    | Unit and forced-interruption subprocess tests         | High                                          |
 | Durable pacing/retry exists    | Restart, budget, cooldown, and backoff tests          | High                                          |
 | Local workflow is integrated   | AC-012 phase fixtures, including process interruption | See latest AC-012 boundary verification below |
-| Configurable roles exist       | AC-015 schema, runner-contract, workflow and CLI QA   | High on the feature branch                    |
+| Configurable roles exist       | AC-015 schema, runner-contract, workflow and CLI QA   | High on merged `main`                         |
+| Canonical selection exists     | AC-016 parser, graph/state, Git-history fixtures      | High on the feature branch                    |
+| Durable task ownership exists  | AC-016 atomic/concurrent/forgery/resume fixtures      | High on the feature branch                    |
 
 ## Known gaps and blockers
 
-- The former MVP 2 sequential batch description is superseded by D-008: ordered workbook execution is the MVP 1 product target. `tasks/README.md` is the single sequencing/state authority; only AC-015 is materialized and ready.
-- Additional production runners, workbook parsing/eligibility, durable task ownership, state updates/continuation, general required-QA adapters/QA-fix rounds, and final immutable summaries are absent.
+- The former MVP 2 sequential batch description is superseded by D-008: ordered workbook execution is the MVP 1 product target. `tasks/README.md` is the single sequencing/state authority; AC-016 is the only active materialized task.
+- Additional production runners, canonical state updates/continuation, general required-QA adapters/QA-fix rounds, and final immutable summaries are absent. AC-016 implements workbook parsing/eligibility and durable ownership on its feature branch only; it does not advance a successor.
 - Remote lifecycle adapters are deferred under D-007/D-008; repository task completion updates remain operator-managed until the workbook state task implements a safe boundary. Codex remains the only production runner and authenticated compatibility remains AC-019 scope.
 - PR #13 merged as `63e8a49`. AC-012 merged in PR #14 as 6d72cfd after verified head 0a4e877. Integrated Codex, QA and verification share Windows AppContainer/Job containment; protected metadata writes and credential access are denied before execution, sanitized environments omit operator tokens, and tampering durably terminates runs. Fresh receipts cannot be pre-created; interrupted QA/completion require operator reconciliation. The latest boundary corrections below preserve concurrent ACL hardening and prevent trusted-host Git helpers from escaping containment. All review conversations and configured GitGuardian gates passed; the owner merged the PR. Node captured-child pipes, cross-volume batch execution and live authenticated compatibility remain unaccepted; unsupported commands fail closed.
 - D-005 permits owner-accepted critical chat review and scoped publication after checks/QA. The owner ended further continuous bot-review requests for PR #14; final verified dispositions and configured merge gates passed before human merge.
 - Linux and macOS subprocess execution fail closed; PRODUCT's three-platform acceptance remains open.
 - License has not been selected and added.
 
-See [the MVP audit](docs/MVP_AUDIT.md), refreshed against `main` at be5b144 on 2026-09-15, for AC-001–AC-014 reconciliation, current implementation evidence, contradictions resolved, and remaining acceptance/release gaps. Historical runtime evidence was inspected but not rerun or promoted by this documentation audit. MVP 1 is not yet accepted or released.
+See [the MVP audit](docs/MVP_AUDIT.md), refreshed against `main` at be5b144 on 2026-09-15, for its AC-001–AC-014 reconciliation snapshot. AC-015 subsequently merged as `3dcb928`; the audit has not been regenerated and cannot select or reorder work. MVP 1 is not yet accepted or released.
 
 ## Latest pnpm upgrade, 2026-09-14
 
@@ -300,7 +303,7 @@ Verified review-fix code head `0a65305` is on `feat/AC-015-configurable-role-run
 
 ## Next task
 
-Exactly one task is ready: [AC-015](tasks/AC-015.md), **Configure provider-neutral workflow roles with a Codex adapter**. Its acceptance requires validated role-to-runner/model configuration; a provider-neutral capability/result/evidence contract; preserved contained Codex behavior and safe defaults; fail-closed invalid assignments; distinct independent review; receipt freshness and interruption-safe resume; deterministic checks; and disposable fake-runner CLI QA. AC-016 remains waiting and must not be materialized until AC-015 is complete and the workbook is reconciled against then-current `main`.
+Exactly one task is active: [AC-016](tasks/AC-016.md), **Derive ordered workbook eligibility and acquire durable task ownership**. Its acceptance requires strict bounded parsing of the canonical workbook, graph/state reconciliation against task records and Git evidence, deterministic ordered eligibility, and interruption-safe exclusive ownership before runner effects. AC-017 remains waiting and must not be materialized until AC-016 is complete and the workbook is reconciled against then-current `main`.
 
 ## Recently completed
 
@@ -319,8 +322,21 @@ Exactly one task is ready: [AC-015](tasks/AC-015.md), **Configure provider-neutr
 
 - 2026-09-11 — Confirmed AC-011 merged through PR #12 as `c2625a7` and AC-010 follow-up merged through PR #13 as `63e8a49`.
 - 2026-09-11 — Created AC-012 and implemented its local durable workflow on an isolated feature worktree; acceptance audit records the remaining full MVP gaps.
+- 2026-09-16 — Merged AC-015 through PR #25 as `3dcb928`, reconciled the workbook, and selected AC-016 for ordered eligibility and durable ownership.
 
 Update this file when a major capability, blocker, milestone, or release fact changes.
+
+### AC-016 workbook selection and ownership evidence, 2026-09-16
+
+The feature branch strictly parses the one canonical workbook sequence, validates state/order/links/details, reconciles task materialization and dependency cycles, verifies completed predecessors in current Git history, reports declared blockers, and selects the canonical ready task independently of filenames. Workflow intake rechecks committed workbook/task inputs after runner/configuration preflight, atomically publishes a versioned gitignored ownership record bound to workbook/task/Git/branch/worktree identity before plan artifacts, and revalidates ownership before the first runner effect and during later freshness checks.
+
+Final formatting, lint, typecheck, build, built CLI help, diff checks, focused workbook/ownership/CLI QA, and focused workflow ownership/fail-before-effect cases pass. The unrestricted 370-test run produced 361 passes, six explicit platform/privilege skips, one transient Windows `EBUSY` cleanup failure, and two bounded CLI harness timeouts; all three failed cases passed in isolation after removing duplicate catalog reads and raising only the test harness ceilings to 120/150 seconds. The restricted-sandbox run's native `FileNotFoundException` failures are environmental and are superseded by the unrestricted containment results. Critical review findings concerning active-task resume, acquisition ordering, committed-input binding, blocker reporting, file/directory identity, and pre-effect ownership freshness are resolved with focused regression coverage. AC-016 still does not update workbook state or continue to AC-017.
+
+PR #26 follow-up review on 2026-09-18 corrected the worktree Git-directory binding (`--git-dir`), SHA-256 object-ID compatibility, target-branch evidence for PR-required predecessors, stale-intake ownership rollback, and `select`'s nonzero no-selection contract. Shared bounded-read and exclusive-publication helpers now cover workbook/ownership reads and ownership/receipt publication; obsolete selector/counting code was removed. Focused ownership, workbook, CLI, Codex/planning fixture, receipt-tampering, integrated-workflow, and interruption regressions pass; final validation is recorded in the task completion record.
+
+A second exact-head PR review now also requires the verified `main` tip to be an ancestor of the selected worktree before PR-required predecessors unlock work, rejects unknown `pull_request` policy values, and enforces the byte ceiling during bounded reads rather than only after reading. Focused workbook/safe-file, Codex/planning, and integrated workflow regressions pass.
+
+The third exact-head PR review moved task ownership into the primary repository's shared `.autocode` coordination state, preventing duplicate ownership from separate linked worktrees. `select` now reports canonical `in_progress`/`review` work as active and exits nonzero, while internal task-kernel entry points explicitly permit same-task resume. Cross-worktree ownership, CLI active reporting, internal resume, and representative end-to-end regressions pass.
 
 ### Gradle credential coverage, 2026-09-14
 

@@ -126,7 +126,7 @@ export async function runDeterministicVerification(
     throw new Error('verification requires exactly one active task');
   }
   if (options.taskId !== undefined) {
-    const selection = await selectProjectTask(root);
+    const selection = await selectProjectTask(root, { allowActive: true });
     if (selection.kind !== 'selected' || selection.task.taskId !== task.taskId)
       throw new Error(
         'workflow verification must match the dependency-ready selected task',

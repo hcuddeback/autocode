@@ -53,12 +53,11 @@ Failures, review findings, and QA findings consume one bounded recovery policy. 
 
 ## Current implementation
 
-`autocode run <worktree>` and `autocode resume <worktree>` execute one already-materialized `ready` task. They prepare a plan, invoke fresh Codex planning/implementation/review/fix roles, run deterministic checks, retain receipts, evaluate explicit QA/completion policy, and conservatively resume successful current effects.
+`autocode select <worktree>` strictly validates the ordered canonical sequence against committed task contracts, completed records, dependency order, and current Git history. `autocode run <worktree>` and `autocode resume <worktree>` atomically acquire or reuse the selected task's durable workbook-run ownership before plan artifacts or runner effects, then execute one already-materialized `ready` task. They prepare a plan, invoke fresh configured planning/implementation/review/fix roles, run deterministic checks, retain receipts, evaluate explicit QA/completion policy, and conservatively resume successful current effects.
 
 Important present limits:
 
-- `select` scans task files by filename; it does not read a canonical workbook sequence or detect graph cycles.
-- The runner does not claim/update task ownership, change task metadata, move completed records, or select a successor.
+- Ownership is exclusive and bound to workbook/task content, Git commit/branch, and linked-worktree identity, but the runner does not yet change task metadata, move completed records, or select a successor.
 - Only the Codex production adapter is registered; additional runner compatibility is not yet accepted.
 - Required QA needs an API-supplied contained adapter; the CLI does not configure scenarios.
 - QA findings do not enter automatic bounded fix/revalidation/review/QA recovery.

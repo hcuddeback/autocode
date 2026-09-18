@@ -48,7 +48,7 @@ pull_request: required
 
 This frontmatter is only part of the contract; the filled template body is also required. Explain why QA and deployment do not apply. For runtime behavior, choose required QA and define scenarios instead.
 
-Commit the completed contract through your repository's normal contribution process before preparing execution. Dependencies must exist and be `done` in `tasks/completed/`. No task may be `in_progress` or `review` when selecting new work. `tasks/README.md` is the canonical MVP 1 workbook, but the current integrated runner still expects one materialized contract to remain `ready`; it does not yet parse workbook order, manage ownership/statuses, or continue to a successor.
+Commit the completed contract and canonical `tasks/README.md` row through your repository's normal contribution process before preparing execution. The workbook's canonical sequence table must have contiguous order, one `ready` row, earlier `done` rows, and later `waiting` rows. A ready task needs its matching materialized contract; its finer task status may be `ready`, `in_progress`, or `review`. Each done predecessor needs an unchanged completed record present in current Git history. AutoCode now parses that order and acquires durable exclusive ownership before runner effects. It does not yet update statuses, move completed records, or continue to a successor.
 
 ## Create and initialize the execution worktree
 
@@ -85,7 +85,7 @@ When the project commands and model runtime are compatible, start the integrated
 node $autoCodeCli run $taskWorktree
 ```
 
-`run` prepares when needed, generates a scoped plan, implements, checks and reviews in separate phases, applies bounded fixes and evaluates QA. You do not need to run `sessions` or `verify` first. Those commands are separate tools, not prerequisite steps in the integrated workflow.
+`run` prepares when needed, atomically creates or reuses the selected task's bound ownership record, generates a scoped plan, implements, checks and reviews in separate phases, applies bounded fixes and evaluates QA. A different run, commit, workbook, task, branch, or worktree cannot take that ownership. You do not need to run `sessions` or `verify` first. Those commands are separate tools, not prerequisite steps in the integrated workflow.
 
 Current CLI execution cannot supply a required QA adapter. Such a task needs an operator integration using the contained QA API and will otherwise stop at QA. Do not relabel required QA as inapplicable to complete a run.
 
