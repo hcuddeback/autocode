@@ -16,6 +16,7 @@ import { test } from 'node:test';
 import {
   acquireTaskOwnership,
   assertTaskOwnership,
+  releaseTaskOwnership,
   type TaskOwnershipRequest,
 } from './ownership.js';
 
@@ -57,6 +58,54 @@ test('creates durable ownership once and resumes the same bound run', async () =
   }
 });
 
+test('accepts SHA-256 Git object identifiers', async () => {
+  const root = await fixture();
+  try {
+    const created = await acquireTaskOwnership(
+      root,
+      request({ headCommit: 'a'.repeat(64) }),
+    );
+    assert.equal(created.record.headCommit.length, 64);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('binds ownership to the linked worktree Git directory', async () => {
+  const repository = await mkdtemp(
+    path.join(os.tmpdir(), 'autocode-ownership-repository-'),
+  );
+  const worktree = `${repository}-worktree`;
+  try {
+    await exec('git', ['init', '-b', 'main'], { cwd: repository });
+    await exec('git', ['config', 'user.email', 'fixture@example.invalid'], {
+      cwd: repository,
+    });
+    await exec('git', ['config', 'user.name', 'Fixture'], { cwd: repository });
+    await writeFile(path.join(repository, '.gitignore'), '.autocode/\n');
+    await exec('git', ['add', '.gitignore'], { cwd: repository });
+    await exec('git', ['commit', '-m', 'fixture'], { cwd: repository });
+    await exec('git', ['worktree', 'add', '-b', 'feat/ownership', worktree], {
+      cwd: repository,
+    });
+    await mkdir(path.join(worktree, '.autocode'));
+
+    const created = await acquireTaskOwnership(worktree, request());
+    const { stdout } = await exec('git', ['rev-parse', '--git-dir'], {
+      cwd: worktree,
+    });
+    assert.equal(
+      created.record.gitDirectory,
+      await import('node:fs/promises').then(({ realpath }) =>
+        realpath(path.resolve(worktree, stdout.trim())),
+      ),
+    );
+  } finally {
+    await rm(worktree, { recursive: true, force: true });
+    await rm(repository, { recursive: true, force: true });
+  }
+});
+
 test('concurrent acquisition publishes one complete ownership record', async () => {
   const root = await fixture();
   try {
@@ -90,6 +139,25 @@ test('a different run or changed input cannot steal task ownership', async () =>
       () =>
         acquireTaskOwnership(root, request({ workbookSha256: '4'.repeat(64) })),
       /owned by another workbook run/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a newly created stale intake can release only its own ownership', async () => {
+  const root = await fixture();
+  try {
+    const created = await acquireTaskOwnership(root, request());
+    await releaseTaskOwnership(root, created.record);
+    const replacement = await acquireTaskOwnership(
+      root,
+      request({ headCommit: '4'.repeat(40) }),
+    );
+    assert.equal(replacement.kind, 'created');
+    await assert.rejects(
+      () => releaseTaskOwnership(root, created.record),
+      /changed before release/,
     );
   } finally {
     await rm(root, { recursive: true, force: true });

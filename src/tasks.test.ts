@@ -371,6 +371,7 @@ test('rejects dependency cycles before eligibility', async () => {
             status: 'ready',
             dependsOn: [],
             branch: 'feat/AC-003',
+            pullRequest: 'required',
             filePath: path.join(project, 'tasks', 'AC-003.md'),
             contents: '',
           },
@@ -433,7 +434,42 @@ test('project selection requires current Git evidence for predecessors and owner
     );
     await assert.rejects(
       () => selectProjectTask(project),
-      /completed task record AC-001 differs from current HEAD/,
+      /completed task record AC-001 differs from main/,
+    );
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test('a PR-required predecessor must be complete on the target branch', async () => {
+  const project = await temporaryProject();
+  try {
+    await exec('git', ['init', '-b', 'main'], { cwd: project });
+    await exec('git', ['config', 'user.email', 'fixture@example.invalid'], {
+      cwd: project,
+    });
+    await exec('git', ['config', 'user.name', 'Fixture'], { cwd: project });
+    await writeFile(path.join(project, 'README.md'), 'fixture\n');
+    await exec('git', ['add', '.'], { cwd: project });
+    await exec('git', ['commit', '-m', 'base'], { cwd: project });
+    await exec('git', ['switch', '-c', 'feat/local-completion'], {
+      cwd: project,
+    });
+    await completeTask(project, 'AC-001');
+    await writeTask(project, 'AC-002', 'ready', ['AC-001']);
+    await writeFile(
+      path.join(project, 'tasks', 'README.md'),
+      workbook([
+        ['AC-001', 'done'],
+        ['AC-002', 'ready'],
+      ]).contents,
+    );
+    await exec('git', ['add', '.'], { cwd: project });
+    await exec('git', ['commit', '-m', 'local completion'], { cwd: project });
+
+    await assert.rejects(
+      () => selectProjectTask(project),
+      /completed task record AC-001 is not present in main/,
     );
   } finally {
     await rm(project, { recursive: true, force: true });

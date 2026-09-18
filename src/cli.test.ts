@@ -49,14 +49,20 @@ test('CLI selects canonical work, reports a declared blocker, and rejects duplic
       path.join(tasks, 'README.md'),
       workbook('| 1 | AC-001 | Await policy | M1-01 | `blocked` by policy |'),
     );
-    const blocked = await exec(
-      process.execPath,
-      ['--import', 'tsx', cli, 'select', root],
-      { cwd: fileURLToPath(new URL('..', import.meta.url)) },
-    );
-    assert.equal(
-      blocked.stdout.trim(),
-      'No task is selectable; blocked dependencies: AC-001 (by policy)',
+    await assert.rejects(
+      () =>
+        exec(process.execPath, ['--import', 'tsx', cli, 'select', root], {
+          cwd: fileURLToPath(new URL('..', import.meta.url)),
+        }),
+      (error: unknown) => {
+        const blocked = error as { code?: number; stdout?: string };
+        assert.equal(blocked.code, 1);
+        assert.equal(
+          blocked.stdout?.trim(),
+          'No task is selectable; blocked dependencies: AC-001 (by policy)',
+        );
+        return true;
+      },
     );
 
     await writeFile(

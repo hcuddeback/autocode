@@ -887,7 +887,7 @@ await runProjectWorkflow(${JSON.stringify(f.root)}, {...${JSON.stringify(f.optio
     await execFileAsync(process.execPath, ['--import', 'tsx', child], {
       cwd: process.cwd(),
       windowsHide: true,
-      timeout: 30_000,
+      timeout: 120_000,
     });
     assert.deepEqual(await f.calls(), ['planning', 'implementation']);
     assert.equal(

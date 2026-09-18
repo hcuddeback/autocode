@@ -608,8 +608,13 @@ async function sessionFixture(mode: string) {
     path.join(repository, '.gitignore'),
     '.autocode/\n.env\n.credentials.json\n',
   );
-  await git(repository, ['add', 'README.md', '.gitignore']);
-  await git(repository, ['commit', '-m', 'initial']);
+  await mkdir(path.join(repository, 'tasks', 'completed'), { recursive: true });
+  await writeFile(
+    path.join(repository, 'tasks', 'completed', 'AC-003.md'),
+    completedTask(),
+  );
+  await git(repository, ['add', 'README.md', '.gitignore', 'tasks']);
+  await git(repository, ['commit', '-m', 'completed predecessor']);
   await git(repository, [
     'worktree',
     'add',
@@ -624,11 +629,6 @@ async function sessionFixture(mode: string) {
   await writeFile(
     path.join(worktree, '.credentials.json'),
     '{"client_secret":"json-file-secret"}\n',
-  );
-  await mkdir(path.join(worktree, 'tasks', 'completed'), { recursive: true });
-  await writeFile(
-    path.join(worktree, 'tasks', 'completed', 'AC-003.md'),
-    completedTask(),
   );
   const task = selectedTask();
   await writeFile(path.join(worktree, 'tasks', 'AC-004.md'), task);

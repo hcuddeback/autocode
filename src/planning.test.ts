@@ -53,6 +53,8 @@ async function fixtureProject(
   await initializeProject(repository);
   await git(repository, ['add', '--', '.']);
   await git(repository, ['commit', '-m', 'fixture']);
+  if (!linkedWorktree && branch !== 'main')
+    await git(repository, ['branch', 'main']);
   if (linkedWorktree) {
     await git(repository, ['worktree', 'add', '-b', branch, project]);
     await initializeProject(project);

@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { parse } from 'yaml';
 import { gitInspectionArguments } from './git-inspection.js';
+import { readStableRegularFile } from './safe-files.js';
 
 const TASK_DIRECTORY = 'tasks';
 const COMPLETED_TASK_DIRECTORY = 'completed';
@@ -54,6 +55,7 @@ export interface TaskRecord {
   status: TaskStatus;
   dependsOn: string[];
   branch: string;
+  pullRequest: string;
   filePath: string;
   contents: string;
 }
@@ -279,42 +281,6 @@ async function readTaskFile(
   }
 }
 
-export function selectReadyTask(tasks: TaskRecord[]): TaskSelection {
-  const byId = new Map(tasks.map((task) => [task.taskId, task]));
-  const activeTasks = tasks.flatMap((task) =>
-    task.status === 'in_progress' || task.status === 'review'
-      ? [{ taskId: task.taskId, status: task.status }]
-      : [],
-  );
-  if (activeTasks.length > 0) {
-    return { kind: 'active', tasks: activeTasks };
-  }
-  const blocked: Array<{
-    taskId: string;
-    dependencies: DependencyBlocker[];
-  }> = [];
-
-  for (const task of tasks) {
-    if (task.status !== 'ready') {
-      continue;
-    }
-    const dependencies = task.dependsOn.flatMap((taskId) => {
-      const dependency = byId.get(taskId);
-      return dependency?.status === 'done'
-        ? []
-        : [{ taskId, status: dependency?.status ?? ('missing' as const) }];
-    });
-    if (dependencies.length === 0) {
-      return { kind: 'selected', task };
-    }
-    blocked.push({ taskId: task.taskId, dependencies });
-  }
-
-  return blocked.length > 0
-    ? { kind: 'blocked', tasks: blocked }
-    : { kind: 'none' };
-}
-
 export async function selectProjectTask(
   projectDirectory: string,
 ): Promise<ProjectTaskSelection> {
@@ -470,18 +436,16 @@ export function parseCanonicalWorkbook(
   if (entries.length > 128)
     throw new Error('canonical workbook contains too many tasks');
   const ids = new Set<string>();
-  let readyCount = 0;
   let phase: WorkbookState = 'done';
   for (const entry of entries) {
     if (ids.has(entry.taskId))
       throw new Error(`duplicate workbook task: ${entry.taskId}`);
     ids.add(entry.taskId);
-    if (entry.state === 'ready') readyCount += 1;
     if (entry.state === 'done') {
       if (phase !== 'done')
         throw new Error('done workbook tasks must precede unfinished tasks');
     } else if (entry.state === 'ready') {
-      if (phase !== 'done' || readyCount > 1)
+      if (phase !== 'done')
         throw new Error('canonical workbook may contain only one ready task');
       phase = 'ready';
     } else {
@@ -492,8 +456,6 @@ export function parseCanonicalWorkbook(
       if (phase === 'ready' || phase === 'done') phase = entry.state;
     }
   }
-  if (readyCount > 1)
-    throw new Error('canonical workbook may contain only one ready task');
   return Object.freeze(entries);
 }
 
@@ -686,6 +648,7 @@ async function assertCompletedRecordsInHead(
       `tasks/completed/${taskId}.md`,
       task.contents,
       `completed task record ${taskId}`,
+      task.pullRequest === 'required' ? 'main' : undefined,
     );
   }
 }
@@ -710,18 +673,20 @@ async function assertTrackedInputInHead(
   relativePath: string,
   contents: string,
   label: string,
+  revision = 'HEAD',
 ): Promise<void> {
   const root = await realpath(path.resolve(projectDirectory));
+  const revisionLabel = revision === 'HEAD' ? 'current HEAD' : revision;
   let committed: string;
   try {
-    committed = await gitOutput(root, ['show', `HEAD:${relativePath}`]);
+    committed = await gitOutput(root, ['show', `${revision}:${relativePath}`]);
   } catch (error: unknown) {
-    throw new Error(`${label} is not present in current Git history`, {
+    throw new Error(`${label} is not present in ${revisionLabel}`, {
       cause: error,
     });
   }
   if (committed.replaceAll('\r\n', '\n') !== contents.replaceAll('\r\n', '\n'))
-    throw new Error(`${label} differs from current HEAD`);
+    throw new Error(`${label} differs from ${revisionLabel}`);
 }
 
 async function readBoundedRegularFile(
@@ -729,50 +694,15 @@ async function readBoundedRegularFile(
   maximumBytes: number,
   label: string,
 ): Promise<string> {
-  let pathStats;
   try {
-    pathStats = await lstat(filePath);
+    return await readStableRegularFile(filePath, maximumBytes, label);
   } catch (error: unknown) {
+    if (
+      error instanceof Error &&
+      /bounded regular file|changed while/.test(error.message)
+    )
+      throw error;
     throw new Error(`${label} must be a regular file`, { cause: error });
-  }
-  if (pathStats.isSymbolicLink() || !pathStats.isFile())
-    throw new Error(`${label} must be a regular file`);
-  let handle;
-  try {
-    handle = await open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-  } catch (error: unknown) {
-    throw new Error(`${label} must be a regular file`, { cause: error });
-  }
-  try {
-    const before = await handle.stat();
-    if (
-      !before.isFile() ||
-      before.dev !== pathStats.dev ||
-      before.ino !== pathStats.ino ||
-      before.size > maximumBytes
-    )
-      throw new Error(`${label} must be a bounded regular file`);
-    const contents = await handle.readFile('utf8');
-    const after = await handle.stat();
-    if (
-      before.dev !== after.dev ||
-      before.ino !== after.ino ||
-      before.size !== after.size ||
-      before.mtimeMs !== after.mtimeMs ||
-      before.ctimeMs !== after.ctimeMs
-    )
-      throw new Error(`${label} changed while being read`);
-    const currentPathStats = await lstat(filePath);
-    if (
-      currentPathStats.isSymbolicLink() ||
-      !currentPathStats.isFile() ||
-      currentPathStats.dev !== before.dev ||
-      currentPathStats.ino !== before.ino
-    )
-      throw new Error(`${label} changed while being read`);
-    return contents;
-  } finally {
-    await handle.close();
   }
 }
 
@@ -856,11 +786,11 @@ function parseTask(contents: string, filePath: string): TaskRecord {
     'last_updated',
     'qa',
     'deployment',
-    'pull_request',
   ]) {
     requiredString(fields, field, filePath);
   }
   const branch = requiredString(fields, 'branch', filePath);
+  const pullRequest = requiredString(fields, 'pull_request', filePath);
   if ([...branch].some(isControlCharacter)) {
     throw new Error(`branch must not contain control characters: ${taskId}`);
   }
@@ -876,6 +806,7 @@ function parseTask(contents: string, filePath: string): TaskRecord {
     status,
     dependsOn: [...dependsOn],
     branch,
+    pullRequest,
     filePath,
     contents,
   };

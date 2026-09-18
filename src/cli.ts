@@ -52,6 +52,7 @@ async function main(args: string[]): Promise<void> {
       console.log(
         `No task is selectable; active work must complete first: ${activeTasks}`,
       );
+      process.exitCode = 1;
       return;
     }
     if (selection.kind === 'blocked') {
@@ -66,9 +67,11 @@ async function main(args: string[]): Promise<void> {
       console.log(
         `No task is selectable; blocked dependencies: ${reasons.join('; ')}`,
       );
+      process.exitCode = 1;
       return;
     }
     console.log('No ready tasks.');
+    process.exitCode = 1;
     return;
   }
   if (command === 'prepare') {

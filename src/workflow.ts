@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
-import { link, lstat, open, realpath, unlink } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { lstat, open, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { gitInspectionArguments } from './git-inspection.js';
 import { promisify } from 'node:util';
@@ -13,7 +13,11 @@ import {
   type QaInputSnapshot,
 } from './qa-inputs.js';
 import { assertSelectedInputsInHead, selectProjectTask } from './tasks.js';
-import { acquireTaskOwnership, assertTaskOwnership } from './ownership.js';
+import {
+  acquireTaskOwnership,
+  assertTaskOwnership,
+  releaseTaskOwnership,
+} from './ownership.js';
 import { prepareImplementationPlan } from './planning.js';
 import {
   assertCredentialFilesUnchanged,
@@ -39,6 +43,7 @@ import {
   snapshotWorktree,
   VerificationStateTamperingError,
 } from './verification.js';
+import { publishExclusiveFile } from './safe-files.js';
 import {
   runDurableRun,
   type DurableRunOptions,
@@ -248,6 +253,18 @@ export async function runProjectWorkflow(
     headCommit: head,
     branch,
   });
+  try {
+    if (
+      (await git(root, ['rev-parse', '--verify', 'HEAD'])) !== head ||
+      (await git(root, ['branch', '--show-current'])) !== branch
+    )
+      throw new Error('workflow Git identity changed during ownership intake');
+    await assertSelectedInputsInHead(root, selected);
+  } catch (error: unknown) {
+    if (ownership.kind === 'created')
+      await releaseTaskOwnership(root, ownership.record);
+    throw error;
+  }
   const preparedRelative = `.autocode/runs/${task.taskId}-${head.slice(0, 12)}`;
   if (
     (await optionalRead(root, `${preparedRelative}/planning.json`)) ===
@@ -413,24 +430,12 @@ export async function runProjectWorkflow(
       `${receiptDirectory}/${phaseId}.json`,
       false,
     );
-    const temporary = `${destination}.tmp-${randomUUID()}`;
-    const handle = await open(temporary, 'wx');
-    try {
-      await handle.writeFile(`${contents}\n`);
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await safePath(root, receiptDirectory, true);
-    try {
-      await link(temporary, destination);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST')
-        throw new WorkflowReceiptTamperingError();
-      throw error;
-    } finally {
-      await unlink(temporary);
-    }
+    const created = await publishExclusiveFile(
+      destination,
+      `${contents}\n`,
+      async () => void (await safePath(root, receiptDirectory, true)),
+    );
+    if (!created) throw new WorkflowReceiptTamperingError();
   }
 
   async function roundPassed(round: number): Promise<boolean> {

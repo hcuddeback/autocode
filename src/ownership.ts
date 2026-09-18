@@ -1,23 +1,14 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { constants } from 'node:fs';
-import {
-  lstat,
-  link,
-  mkdir,
-  open,
-  realpath,
-  stat,
-  unlink,
-} from 'node:fs/promises';
-import process from 'node:process';
+import { lstat, mkdir, open, realpath, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { gitInspectionArguments } from './git-inspection.js';
+import { publishExclusiveFile, readStableRegularFile } from './safe-files.js';
 
 const RUN_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const TASK_ID_PATTERN = /^AC-\d{3}$/;
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
-const COMMIT_PATTERN = /^[a-f0-9]{40}$/;
+const COMMIT_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const MAX_RECORD_BYTES = 16 * 1024;
 const OWNERSHIP_DIRECTORY = 'ownership';
 
@@ -60,50 +51,18 @@ export async function acquireTaskOwnership(
     .update(JSON.stringify(expected), 'utf8')
     .digest('hex');
   const record = Object.freeze({ ...expected, ownershipId });
-  const candidate = path.join(
-    paths.directory,
-    `.${request.taskId}.${process.pid}.${randomUUID()}.candidate`,
+  const created = await publishExclusiveFile(
+    paths.record,
+    `${JSON.stringify(record, null, 2)}\n`,
+    () => assertOwnershipDirectory(paths),
   );
-  let alreadyExists = false;
-  try {
-    await assertOwnershipDirectory(paths);
-    const handle = await open(candidate, 'wx', 0o600);
-    try {
-      await handle.writeFile(`${JSON.stringify(record, null, 2)}\n`, 'utf8');
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    try {
-      await assertOwnershipDirectory(paths);
-      await link(candidate, paths.record);
-      await assertOwnershipDirectory(paths);
-      await syncDirectory(paths.directory);
-    } catch (error: unknown) {
-      if (!hasCode(error, 'EEXIST')) throw error;
-      alreadyExists = true;
-    }
-  } catch (error: unknown) {
-    await removeCandidate(candidate);
-    throw error;
-  }
-  await removeCandidate(candidate);
-  await syncDirectory(paths.directory);
   await assertOwnershipDirectory(paths);
-  if (!alreadyExists)
+  if (created)
     return Object.freeze({ kind: 'created', filePath: paths.record, record });
   const existing = await readOwnershipRecord(paths.record);
   if (JSON.stringify(existing) !== JSON.stringify(record))
     throw new Error(`task ${request.taskId} is owned by another workbook run`);
   return Object.freeze({ kind: 'resumed', filePath: paths.record, record });
-}
-
-async function removeCandidate(candidate: string): Promise<void> {
-  try {
-    await unlink(candidate);
-  } catch (error: unknown) {
-    if (!hasCode(error, 'ENOENT')) throw error;
-  }
 }
 
 export async function assertTaskOwnership(
@@ -206,13 +165,28 @@ async function assertOwnershipIgnored(
 }
 
 async function projectIdentity(root: string) {
-  const gitDirectory = await resolveGitPath(root, '.git');
+  const gitDirectory = await resolveGitPath(root, '--git-dir');
   const commonDirectory = await resolveGitPath(root, '--git-common-dir');
   return Object.freeze({
     projectRoot: root,
     gitDirectory,
     gitCommonDirectory: commonDirectory,
   });
+}
+
+export async function releaseTaskOwnership(
+  projectDirectory: string,
+  expected: Readonly<TaskOwnershipRecord>,
+): Promise<void> {
+  validateRecord(expected);
+  const paths = await resolveOwnershipPaths(projectDirectory, expected.taskId);
+  await assertOwnershipDirectory(paths);
+  const actual = await readOwnershipRecord(paths.record);
+  if (JSON.stringify(actual) !== JSON.stringify(expected))
+    throw new Error('durable task ownership changed before release');
+  await unlink(paths.record);
+  await syncDirectory(paths.directory);
+  await assertOwnershipDirectory(paths);
 }
 
 async function resolveGitPath(root: string, argument: string): Promise<string> {
@@ -230,57 +204,28 @@ async function resolveGitPath(root: string, argument: string): Promise<string> {
 async function readOwnershipRecord(
   filePath: string,
 ): Promise<TaskOwnershipRecord> {
-  let pathStats;
+  let text: string;
   try {
-    pathStats = await lstat(filePath);
+    text = await readStableRegularFile(
+      filePath,
+      MAX_RECORD_BYTES,
+      'durable task ownership',
+    );
   } catch (error: unknown) {
+    if (
+      error instanceof Error &&
+      /bounded regular file|changed while/.test(error.message)
+    )
+      throw error;
     throw new Error('durable task ownership is unavailable', { cause: error });
   }
-  if (pathStats.isSymbolicLink() || !pathStats.isFile())
-    throw new Error('durable task ownership must be a bounded regular file');
-  let handle;
+  let value: unknown;
   try {
-    handle = await open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    value = JSON.parse(text);
   } catch (error: unknown) {
-    throw new Error('durable task ownership is unavailable', { cause: error });
+    throw new Error('durable task ownership is invalid', { cause: error });
   }
-  try {
-    const before = await handle.stat();
-    if (
-      !before.isFile() ||
-      before.dev !== pathStats.dev ||
-      before.ino !== pathStats.ino ||
-      before.size > MAX_RECORD_BYTES
-    )
-      throw new Error('durable task ownership must be a bounded regular file');
-    const text = await handle.readFile('utf8');
-    const after = await handle.stat();
-    if (
-      before.dev !== after.dev ||
-      before.ino !== after.ino ||
-      before.size !== after.size ||
-      before.mtimeMs !== after.mtimeMs ||
-      before.ctimeMs !== after.ctimeMs
-    )
-      throw new Error('durable task ownership changed while being read');
-    const currentPathStats = await lstat(filePath);
-    if (
-      currentPathStats.isSymbolicLink() ||
-      !currentPathStats.isFile() ||
-      currentPathStats.dev !== before.dev ||
-      currentPathStats.ino !== before.ino
-    )
-      throw new Error('durable task ownership changed while being read');
-    let value: unknown;
-    try {
-      value = JSON.parse(text);
-    } catch (error: unknown) {
-      throw new Error('durable task ownership is invalid', { cause: error });
-    }
-    return validateRecord(value);
-  } finally {
-    await handle.close();
-  }
+  return validateRecord(value);
 }
 
 function validateRequest(value: TaskOwnershipRequest): TaskOwnershipRequest {

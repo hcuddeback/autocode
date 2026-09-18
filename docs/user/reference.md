@@ -109,7 +109,7 @@ Use `node <AutoCode-checkout>/dist/cli.js <command> <project-directory>`. The di
 | `sessions` | Uses prepared artifacts to run separate implementation and review sessions; lacks the integrated fix/QA/resume flow.                                                                                                                            |
 | `verify`   | Runs configured checks against a prepared task and retains deterministic evidence; does not orchestrate model work.                                                                                                                             |
 
-Errors exit with code 1. `run` and `resume` also exit 1 for `blocked` or `failed` results. `select` reports active work, missing dependencies and no-ready-task results with exit code 0, so inspect its output rather than assuming success means selection.
+Errors exit with code 1. `run` and `resume` also exit 1 for `blocked` or `failed` results. `select` exits 0 only when it selects a task; active work, blockers, and no-ready-task results exit 1 after printing their reason.
 
 ## Evidence and outcomes
 
