@@ -125,7 +125,7 @@ export async function prepareImplementationPlan(
 ): Promise<PlanningResult> {
   const root = await verifiedProjectRoot(projectDirectory);
   await validateInitializedState(root);
-  const selection = await selectProjectTask(root);
+  const selection = await selectProjectTask(root, { allowActive: true });
   if (selection.kind !== 'selected') {
     throw new Error(selectionFailure(selection.kind));
   }
@@ -414,14 +414,16 @@ async function assertPlanningIdentity(
   const [currentBranch, currentHead, currentSelection] = await Promise.all([
     gitOutput(root, ['branch', '--show-current']),
     gitOutput(root, ['rev-parse', '--verify', 'HEAD']),
-    selectProjectTask(root),
+    selectProjectTask(root, { allowActive: true }),
   ]);
   await assertCleanWorktree(root);
   const [confirmedBranch, confirmedHead] = await Promise.all([
     gitOutput(root, ['branch', '--show-current']),
     gitOutput(root, ['rev-parse', '--verify', 'HEAD']),
   ]);
-  const confirmedSelection = await selectProjectTask(root);
+  const confirmedSelection = await selectProjectTask(root, {
+    allowActive: true,
+  });
   await assertCleanWorktree(root);
   if (
     currentBranch !== branch ||

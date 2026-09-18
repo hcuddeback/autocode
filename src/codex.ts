@@ -341,7 +341,7 @@ async function runPreparedSessions(
   )
     throw new Error('invalid Codex role');
   const root = await verifiedProjectRoot(projectDirectory);
-  const selection = await selectProjectTask(root);
+  const selection = await selectProjectTask(root, { allowActive: true });
   if (selection.kind !== 'selected') {
     throw new Error(
       'sessions require exactly one dependency-ready selected task',

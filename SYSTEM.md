@@ -336,6 +336,8 @@ PR #26 follow-up review on 2026-09-18 corrected the worktree Git-directory bindi
 
 A second exact-head PR review now also requires the verified `main` tip to be an ancestor of the selected worktree before PR-required predecessors unlock work, rejects unknown `pull_request` policy values, and enforces the byte ceiling during bounded reads rather than only after reading. Focused workbook/safe-file, Codex/planning, and integrated workflow regressions pass.
 
+The third exact-head PR review moved task ownership into the primary repository's shared `.autocode` coordination state, preventing duplicate ownership from separate linked worktrees. `select` now reports canonical `in_progress`/`review` work as active and exits nonzero, while internal task-kernel entry points explicitly permit same-task resume. Cross-worktree ownership, CLI active reporting, internal resume, and representative end-to-end regressions pass.
+
 ### Gradle credential coverage, 2026-09-14
 
 Published-head code finding 4004315550 identifies ignored gradle.properties credentials. Shared discovery now recognizes that filename and protects it through sandbox isolation and raw-byte freshness. Literal Java Properties values using equals, colon or whitespace separators are redacted without treating quotes or inline comment markers as syntax. Backslash escaping, continuation and NUL layouts fail generically before launch. Containment version 13 rejects v12 and earlier evidence. A disposable production control reproduces the prior build's readable synthetic Gradle credential.

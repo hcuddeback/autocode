@@ -41,7 +41,7 @@ export async function acquireTaskOwnership(
 ): Promise<Readonly<TaskOwnershipResult>> {
   const request = validateRequest(requestValue);
   const paths = await resolveOwnershipPaths(projectDirectory, request.taskId);
-  const identity = await projectIdentity(paths.root);
+  const identity = paths.identity;
   const expected = {
     version: 1 as const,
     ...request,
@@ -76,7 +76,7 @@ export async function assertTaskOwnership(
   await assertOwnershipDirectory(paths);
   if (JSON.stringify(actual) !== JSON.stringify(expected))
     throw new Error('durable task ownership changed');
-  const identity = await projectIdentity(paths.root);
+  const identity = paths.identity;
   if (
     identity.projectRoot !== expected.projectRoot ||
     identity.gitDirectory !== expected.gitDirectory ||
@@ -89,12 +89,18 @@ async function resolveOwnershipPaths(projectDirectory: string, taskId: string) {
   const root = await realpath(path.resolve(projectDirectory));
   if (!(await stat(root)).isDirectory())
     throw new Error('project directory must be a directory');
-  const state = path.join(root, '.autocode');
+  const identity = await projectIdentity(root);
+  if (path.basename(identity.gitCommonDirectory) !== '.git')
+    throw new Error('repository uses an unsupported shared Git directory');
+  const coordinationRoot = await realpath(
+    path.dirname(identity.gitCommonDirectory),
+  );
+  const state = path.join(coordinationRoot, '.autocode');
   const stateReal = await requireRealDirectory(state, 'state directory');
-  if (path.dirname(stateReal) !== root)
-    throw new Error('state directory escapes project');
+  if (path.dirname(stateReal) !== coordinationRoot)
+    throw new Error('state directory escapes repository coordination root');
   await assertOwnershipIgnored(
-    root,
+    coordinationRoot,
     `.autocode/${OWNERSHIP_DIRECTORY}/${taskId}.json`,
   );
   const directory = path.join(stateReal, OWNERSHIP_DIRECTORY);
@@ -112,6 +118,7 @@ async function resolveOwnershipPaths(projectDirectory: string, taskId: string) {
   const directoryStats = await stat(directoryReal);
   return {
     root,
+    identity,
     directory: directoryReal,
     record: path.join(directoryReal, `${taskId}.json`),
     directoryDev: directoryStats.dev,

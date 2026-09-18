@@ -134,7 +134,7 @@ export async function runProjectWorkflow(
 ): Promise<Readonly<DurableRunResult>> {
   assertSecureProcessPlatform();
   const root = await realpath(projectDirectory);
-  const selected = await selectProjectTask(root);
+  const selected = await selectProjectTask(root, { allowActive: true });
   if (selected.kind !== 'selected')
     throw new Error('workflow requires one dependency-ready ready task');
   const task = selected.task;
@@ -326,7 +326,9 @@ export async function runProjectWorkflow(
       (await git(root, ['branch', '--show-current'])) !== branch
     )
       throw new Error('workflow Git identity changed');
-    const currentSelection = await selectProjectTask(root);
+    const currentSelection = await selectProjectTask(root, {
+      allowActive: true,
+    });
     if (
       currentSelection.kind !== 'selected' ||
       currentSelection.task.taskId !== task.taskId ||

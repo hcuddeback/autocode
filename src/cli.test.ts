@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -43,6 +50,29 @@ test('CLI selects canonical work, reports a declared blocker, and rejects duplic
       { cwd: fileURLToPath(new URL('..', import.meta.url)) },
     );
     assert.equal(selected.stdout.trim(), 'AC-001: CLI fixture');
+
+    const taskPath = path.join(tasks, 'AC-001.md');
+    const readyTask = await readFile(taskPath, 'utf8');
+    await writeFile(
+      taskPath,
+      readyTask.replace('status: ready', 'status: review'),
+    );
+    await assert.rejects(
+      () =>
+        exec(process.execPath, ['--import', 'tsx', cli, 'select', root], {
+          cwd: fileURLToPath(new URL('..', import.meta.url)),
+        }),
+      (error: unknown) => {
+        const active = error as { code?: number; stdout?: string };
+        assert.equal(active.code, 1);
+        assert.equal(
+          active.stdout?.trim(),
+          'No task is selectable; active work must complete first: AC-001: review',
+        );
+        return true;
+      },
+    );
+    await writeFile(taskPath, readyTask);
 
     await unlink(path.join(tasks, 'AC-001.md'));
     await writeFile(

@@ -105,6 +105,10 @@ export type ProjectTaskSelection =
     >)
   | Exclude<TaskSelection, { kind: 'selected' }>;
 
+export interface ProjectTaskSelectionOptions {
+  readonly allowActive?: boolean;
+}
+
 export async function loadTaskCatalog(
   projectDirectory: string,
 ): Promise<TaskRecord[]> {
@@ -284,6 +288,7 @@ async function readTaskFile(
 
 export async function selectProjectTask(
   projectDirectory: string,
+  options: ProjectTaskSelectionOptions = {},
 ): Promise<ProjectTaskSelection> {
   const root = await realpath(path.resolve(projectDirectory));
   const taskDirectory = path.join(root, TASK_DIRECTORY);
@@ -301,12 +306,15 @@ export async function selectProjectTask(
   )
     throw new Error('tasks directory changed while project inputs were read');
   const selection = selectWorkbookTask(workbook, tasks);
-  await assertCompletedRecordsInHead(
-    root,
-    workbook,
-    tasks,
-    selection.kind === 'selected' ? selection.task : undefined,
-  );
+  const selectedTask =
+    selection.kind === 'selected'
+      ? selection.task
+      : selection.kind === 'active' && options.allowActive
+        ? tasks.find((task) => task.taskId === selection.tasks[0]!.taskId)
+        : undefined;
+  await assertCompletedRecordsInHead(root, workbook, tasks, selectedTask);
+  if (selection.kind === 'active' && selectedTask !== undefined)
+    return { kind: 'selected', task: selectedTask, workbook };
   if (selection.kind !== 'selected') return selection;
   return { ...selection, workbook };
 }
@@ -316,7 +324,7 @@ export async function assertSelectedInputsInHead(
   selection: Extract<ProjectTaskSelection, { kind: 'selected' }>,
 ): Promise<void> {
   const root = await realpath(path.resolve(projectDirectory));
-  const current = await selectProjectTask(root);
+  const current = await selectProjectTask(root, { allowActive: true });
   if (current.kind !== 'selected')
     throw new Error('selected workbook inputs changed during intake');
   await assertTrackedInputInHead(
@@ -558,9 +566,10 @@ export function selectWorkbookTask(
       ? []
       : [{ taskId, status: dependency?.status ?? ('missing' as const) }];
   });
-  return dependencies.length === 0
-    ? { kind: 'selected', task }
-    : { kind: 'blocked', tasks: [{ taskId: task.taskId, dependencies }] };
+  if (dependencies.length > 0)
+    return { kind: 'blocked', tasks: [{ taskId: task.taskId, dependencies }] };
+  if (activeTasks.length === 1) return { kind: 'active', tasks: activeTasks };
+  return { kind: 'selected', task };
 }
 
 function parseWorkbookRow(line: string): string[] {

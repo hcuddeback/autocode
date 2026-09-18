@@ -83,13 +83,12 @@ test('binds ownership to the linked worktree Git directory', async () => {
     });
     await exec('git', ['config', 'user.name', 'Fixture'], { cwd: repository });
     await writeFile(path.join(repository, '.gitignore'), '.autocode/\n');
+    await mkdir(path.join(repository, '.autocode'));
     await exec('git', ['add', '.gitignore'], { cwd: repository });
     await exec('git', ['commit', '-m', 'fixture'], { cwd: repository });
     await exec('git', ['worktree', 'add', '-b', 'feat/ownership', worktree], {
       cwd: repository,
     });
-    await mkdir(path.join(worktree, '.autocode'));
-
     const created = await acquireTaskOwnership(worktree, request());
     const { stdout } = await exec('git', ['rev-parse', '--git-dir'], {
       cwd: worktree,
@@ -102,6 +101,46 @@ test('binds ownership to the linked worktree Git directory', async () => {
     );
   } finally {
     await rm(worktree, { recursive: true, force: true });
+    await rm(repository, { recursive: true, force: true });
+  }
+});
+
+test('coordinates one task owner across linked worktrees', async () => {
+  const repository = await mkdtemp(
+    path.join(os.tmpdir(), 'autocode-shared-ownership-'),
+  );
+  const first = `${repository}-first`;
+  const second = `${repository}-second`;
+  try {
+    await exec('git', ['init', '-b', 'main'], { cwd: repository });
+    await exec('git', ['config', 'user.email', 'fixture@example.invalid'], {
+      cwd: repository,
+    });
+    await exec('git', ['config', 'user.name', 'Fixture'], { cwd: repository });
+    await writeFile(path.join(repository, '.gitignore'), '.autocode/\n');
+    await mkdir(path.join(repository, '.autocode'));
+    await exec('git', ['add', '.gitignore'], { cwd: repository });
+    await exec('git', ['commit', '-m', 'fixture'], { cwd: repository });
+    await exec('git', ['worktree', 'add', '-b', 'feat/shared', first], {
+      cwd: repository,
+    });
+    await exec('git', ['worktree', 'add', '--force', second, 'feat/shared'], {
+      cwd: repository,
+    });
+
+    const created = await acquireTaskOwnership(first, request());
+    assert.equal(created.kind, 'created');
+    await assert.rejects(
+      () =>
+        acquireTaskOwnership(
+          second,
+          request({ runId: 'workflow-ac-016-second-worktree' }),
+        ),
+      /owned by another workbook run/,
+    );
+  } finally {
+    await rm(first, { recursive: true, force: true });
+    await rm(second, { recursive: true, force: true });
     await rm(repository, { recursive: true, force: true });
   }
 });

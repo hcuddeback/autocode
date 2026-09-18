@@ -130,7 +130,7 @@ test('rejects missing dependency records before selection', async () => {
   }
 });
 
-test('selects the canonical ready task while its finer status is active', async () => {
+test('reports the canonical ready task separately while its finer status is active', async () => {
   const project = await temporaryProject();
   try {
     await writeTask(project, 'AC-001', 'review');
@@ -140,9 +140,36 @@ test('selects the canonical ready task while its finer status is active', async 
       workbook([['AC-001', 'ready']]),
       await loadTaskCatalog(project),
     );
-    assert.equal(selection.kind, 'selected');
-    if (selection.kind === 'selected')
-      assert.equal(selection.task.taskId, 'AC-001');
+    assert.deepEqual(selection, {
+      kind: 'active',
+      tasks: [{ taskId: 'AC-001', status: 'review' }],
+    });
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test('project selection can opt into resuming the canonical active task', async () => {
+  const project = await temporaryProject();
+  try {
+    await writeTask(project, 'AC-001', 'review');
+    await writeFile(
+      path.join(project, 'tasks', 'README.md'),
+      workbook([['AC-001', 'ready']]).contents,
+    );
+    await exec('git', ['init', '-b', 'main'], { cwd: project });
+    await exec('git', ['config', 'user.email', 'fixture@example.invalid'], {
+      cwd: project,
+    });
+    await exec('git', ['config', 'user.name', 'Fixture'], { cwd: project });
+    await exec('git', ['add', '.'], { cwd: project });
+    await exec('git', ['commit', '-m', 'active fixture'], { cwd: project });
+
+    assert.equal((await selectProjectTask(project)).kind, 'active');
+    const resumable = await selectProjectTask(project, { allowActive: true });
+    assert.equal(resumable.kind, 'selected');
+    if (resumable.kind === 'selected')
+      assert.equal(resumable.task.status, 'review');
   } finally {
     await rm(project, { recursive: true, force: true });
   }
